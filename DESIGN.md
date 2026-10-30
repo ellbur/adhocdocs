@@ -27,6 +27,11 @@ a user interface.
 Rule of thumb: GUI elements are for *identifying* and *viewing*; Claude is for
 *doing*.
 
+This governs the default displays. A display that Claude builds for a
+particular task, because the user asked for that workflow, may have whatever
+controls the task needs (Principle 3). See
+[VIEWER.md](VIEWER.md#principle-1-and-custom-panes).
+
 ## 2. Safety and data isolation do not depend on Claude
 
 Principle 1 has one exception. Operations that control what data is reachable
@@ -125,4 +130,6 @@ because Claude never typed it.
 - **Seamless containers.** The container that enforces isolation
   (Principle 2) should be close to invisible to the user. How to achieve that
   while respecting Anthropic's rule against proxying Claude Code is not yet
-  worked out.
+  worked out. One part is decided: the viewer runs on the host, outside the
+  container. It gets its scope from the connect mechanism, and Claude reaches
+  it through a narrow API ([VIEWER.md](VIEWER.md)).
