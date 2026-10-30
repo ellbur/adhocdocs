@@ -87,7 +87,7 @@ The document list display shows these.
 
 ## Writing
 
-### Pages — *planned*
+### Pages — *planned, format drafted in [PAGES.md](PAGES.md)*
 Pages that link to documents. Quotations in pages are literate references
 (Principle 5). The renderer shows the text at each referenced range, and
 quoted text can be clicked to open the viewer there.

@@ -115,13 +115,13 @@ because Claude never typed it.
 
 ## Open questions
 
-- **Verbatim relative to what?** Quotes are drawn from extracted text, which
-  can differ from the original (OCR errors, hyphenation, ligatures,
-  whitespace). We need a defined text normalization, and for scanned documents
-  probably a way to show the page-image region beside the quote.
-- **Unbacked quotes in pages.** Should a checker flag text in a page that
-  looks like a quotation but isn't a reference?
-
+- **Verbatim relative to what?** *Mostly answered.* Layers are literal
+  ([TEXTLAYERS.md](TEXTLAYERS.md)). Pages apply a small, fixed set of display
+  rules, and any other change is a marked alteration
+  ([PAGES.md](PAGES.md)). OCR errors remain; low-confidence quotes are marked
+  and can be compared with the page image.
+- **Unbacked quotes in pages.** *Proposed:* a lint warning
+  ([PAGES.md](PAGES.md#checking)).
 - **Seamless containers.** The container that enforces isolation
   (Principle 2) should be close to invisible to the user. How to achieve that
   while respecting Anthropic's rule against proxying Claude Code is not yet

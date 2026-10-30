@@ -6,3 +6,4 @@ Tools for working with evidentiary documents from Claude Code.
 - [TOOLS.md](TOOLS.md): the starting set of tools
 - [LOCATORS.md](LOCATORS.md): how tools refer to documents and places in them
 - [TEXTLAYERS.md](TEXTLAYERS.md): extracted text and its structure
+- [PAGES.md](PAGES.md): literate pages that quote and cite documents
