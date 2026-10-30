@@ -27,6 +27,12 @@ a user interface.
 Rule of thumb: GUI elements are for *identifying* and *viewing*; Claude is for
 *doing*.
 
+**Exception: tags and notes.** The user can create, edit and delete tags and
+notes directly in the GUI. Rapid review needs one-key tagging, and a note is
+the user's own words, so relaying it through Claude adds nothing. Tags and
+notes stay fully programmable for Claude. See
+[ANNOTATIONS.md](ANNOTATIONS.md).
+
 This applies to displays Claude builds too. Claude acts when the user
 prompts it, and it can't react to GUI events as they happen. So a display
 Claude builds for a task stays **thin**: it shows things and collects simple

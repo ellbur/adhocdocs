@@ -358,11 +358,14 @@ view history [--limit N]
   several things at once ("these three passages"). Claude can read them, and
   the user or Claude can clear them. They don't persist beyond the session
   state.
+- **Tag and annotate:** apply tags by hotkey or from a palette, and write,
+  edit or reply to notes ([ANNOTATIONS.md](ANNOTATIONS.md)). This is the
+  one kind of editing the viewer allows.
 - **Fill in** form controls in panes that have them.
 - **Arrange panes and windows.**
 
-The default panes have no search, filter, tag, annotate or edit controls. The
-user asks Claude for those. A pane Claude builds may have simple input
+Apart from tags and notes, the default panes have no search, filter or edit
+controls. The user asks Claude for those. A pane Claude builds may have simple input
 controls when the task calls for them. It still stays thin (see
 [Thin panes](#thin-panes)).
 
@@ -370,8 +373,9 @@ Exporting a document or opening it in another application is not possible
 from the viewer. That is an isolation operation (Principle 2), handled by the
 connect mechanism.
 
-The keyboard comes first: next and previous page, next and previous
-document, mark, and moving focus between panes all have single-key bindings.
+The keyboard comes first. Next and previous page, next and previous
+document, mark, tag hotkeys, and moving focus between panes all have
+single-key bindings.
 
 ## Safety
 
@@ -397,7 +401,8 @@ document, mark, and moving focus between panes all have single-key bindings.
   use, the position (page *n* of *m* in page mode), the printed page label,
   the Bates number, and the position in the sequence.
 - **Tags and notes** on the document, and notes anchored to ranges, as
-  margin markers. They are read-only here.
+  margin markers. The user can create, edit and delete them directly (see
+  [ANNOTATIONS.md](ANNOTATIONS.md)).
 - **Family:** the parent document and attachments, as links.
 - **Duplicates:** other documents with the same content hash, as links.
 
@@ -416,6 +421,8 @@ append-only audit log.
 - Any GUI toolkit that can host both engines is acceptable.
 - No content scripts in any web pane. Panes are static HTML plus declarative
   attributes. Logic stays in the container.
+- Tags and notes can be edited directly in the viewer
+  ([ANNOTATIONS.md](ANNOTATIONS.md)).
 
 ## Decisions to confirm
 
@@ -423,5 +430,3 @@ append-only audit log.
   optional `svc:` services for immediate responses.
 - **Default list and results panes built on the same mechanism** as custom
   panes.
-- **No authoring of notes or tags in the default panes,** including the
-  user's own. The user dictates them to Claude.

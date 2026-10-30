@@ -77,9 +77,10 @@ Several kinds, each usable on its own and from code:
 
 ## Annotation
 
-### Tags and notes — *planned*
+### Tags and notes — *planned, drafted in [ANNOTATIONS.md](ANNOTATIONS.md)*
 Attached to documents or to locations within them. Both the user and Claude
-can create them, and each records who made it.
+can create them, and each records who made it. The user can edit them
+directly in the viewer.
 
 ### Saved sets / collections — *proposed*
 Named, persistent lists of documents ("hot docs", "responsive to RFP 12").
