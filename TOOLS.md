@@ -60,7 +60,7 @@ written from outside Claude's reach.
 Shows a list of documents. Has no search, filter or sort controls; the user
 asks Claude for those (Principle 1). Selection can be read by Claude.
 
-### Search results display — *planned; proposed in [INDEXING.md](INDEXING.md#search-results-are-lists) as a preset of the list display*
+### Search results display — *planned, as a preset of the list display in [INDEXING.md](INDEXING.md#search-results-are-lists)*
 Shows results with snippets and highlighting. Clicking a snippet opens the
 document at that location. That is navigation, which Principle 1 allows.
 

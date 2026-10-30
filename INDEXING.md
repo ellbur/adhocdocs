@@ -235,10 +235,10 @@ locators. With `--by hit`, each item is a range locator, grouped by
 document. Score and snippet go in `fields`, so the `snippet` and `score`
 columns work.
 
-*Proposed:* the default results display is the list display with a
+*Decided:* the default results display is the list display with a
 `snippet` column, rather than a separate kind of pane. The `results` pane
-kind in [VIEWER.md](VIEWER.md#display-server-and-panes) would become a
-preset of `view list`. That means search results get the preview pane,
+kind in [VIEWER.md](VIEWER.md#display-server-and-panes) is a preset of
+`view list`. That means search results get the preview pane,
 multi-selection, tagging and paging for free.
 
 Because lists are versioned with git, a saved search result keeps its query
@@ -411,16 +411,6 @@ then, a search saved as a list keeps its query, its index settings and its
   index can only cause misses, which `idx verify` finds. If catching up at
   session start proves too slow for large matters, that is a performance
   problem to solve in the container, not a reason to move indexing.
-
-## Decisions to make
-
-- **Embedding model.** It must run on a CPU in the container, have a license
-  that allows redistribution in the image the user builds, and handle long
-  legal and business text. Candidates should be measured for speed and
-  quality on representative documents before choosing.
-
-## Decisions to confirm
-
 - **No stemming by default** in the keyword index.
 - **Tags read live** from the annotation log at query time, not indexed.
 - **Every layer indexed,** keyed by text hash, so primary changes and
@@ -430,3 +420,10 @@ then, a search saved as a list keeps its query, its index settings and its
 - **Search results as list files,** with the results display as a preset of
   the list display.
 - **Withdrawals delete index rows,** not just hide them.
+
+## Decisions to make
+
+- **Embedding model.** It must run on a CPU in the container, have a license
+  that allows redistribution in the image the user builds, and handle long
+  legal and business text. Candidates should be measured for speed and
+  quality on representative documents before choosing.

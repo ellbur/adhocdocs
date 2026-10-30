@@ -103,7 +103,7 @@ windows, each window is split into **panes**, and each pane has a kind:
 | `document` | MuPDF or web view | a document, in page mode or flow mode (below) | ingestion (presentations) |
 | `page` | web view | a rendered literate page ([PAGES.md](PAGES.md)) | `page render` |
 | `list` | web view | a list of documents ([LISTS.md](LISTS.md)) | `view list` |
-| `results` | web view | search results with snippets (default display, to be designed) | the search tool |
+| `results` | web view | search results with snippets, as a preset of the list display ([INDEXING.md](INDEXING.md#search-results-are-lists)) | `search --list`, then `view list` |
 | `custom` | web view | a display built by Claude | Claude, in the container |
 
 - **Layout:** panes tile within a window (split vertically, split
