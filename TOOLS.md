@@ -17,7 +17,7 @@ tags, notes, selections, literate-page references (Principle 5) and the viewer
 all use it. This is most of the "plain, documented data" that Principle 4
 says tools communicate through, which is why it comes first.
 
-### Ingestion and text extraction — *proposed*
+### Ingestion and text extraction — *proposed; layer format drafted in [TEXTLAYERS.md](TEXTLAYERS.md)*
 - Extract text from every supported format, with OCR for scanned documents.
 - Unpack containers (zip, PST/mbox, email attachments) and record
   parent/child relationships, e.g. an email and its attachments.

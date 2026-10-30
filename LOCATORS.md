@@ -118,24 +118,19 @@ control numbers, Bates numbers, and file names.
 
 ## Text layers
 
-Character positions only make sense relative to a particular extracted text.
-A document can have several, such as native text, OCR, or a later and better
-OCR. Each is a **text layer**.
+Character positions only make sense relative to a particular extracted text,
+called a **text layer**. [TEXTLAYERS.md](TEXTLAYERS.md) specifies layers. The
+parts that matter for locators:
 
-- **Layer ID:** the SHA-256 of the layer's text, after normalization, encoded
-  as UTF-8. Because the ID is a hash of the text, a locator that names a layer
-  can check itself: if the layer hashes to its ID, the offsets are exact.
-- **Normalization:** Unicode NFC and `\n` line endings, nothing else. Changes
-  such as de-hyphenation or whitespace collapsing would make it harder to
-  match the original, so they are not part of the layer. Search may normalize
-  further, internally.
-- **Offsets:** counted in Unicode code points, starting at 0. Ranges are
-  half-open, `[start, end)`.
-- **Page boundaries:** for documents with pages, the layer records the offset
-  where each page starts. That lets page selectors and text selectors convert
-  into each other.
-- **Highlight boxes:** the extraction tool may record the bounding box of each
-  character. That is what lets the viewer highlight a text range on a page.
+- **Layer ID:** the hash of the layer object, which contains the hash of the
+  text. A locator that names a layer can therefore check itself.
+- **Text:** UTF-8, NFC, `\n` line endings, otherwise literal. Pages are
+  separated by form feeds.
+- **Offsets:** counted in Unicode code points from 0. Ranges are half-open,
+  `[start, end)`.
+- **Structure:** segments (labeled ranges) and geometry (positions on the
+  page) let page, transcript and cell selectors convert to and from text
+  ranges, and let the viewer highlight a range.
 
 ## Selectors
 
@@ -221,15 +216,19 @@ Before showing or relying on a locator, a tool resolves it:
    - If the layer is present, read the text at the offsets and compare it with
      `quote.exact`. If they match, the locator is **exact**. If they don't,
      that is an error, because the data is inconsistent.
-   - If the layer is missing (for example, the document was re-extracted),
-     search the current layer for `quote.exact`, using `prefix` and `suffix`
-     to choose between multiple matches.
+   - If the layer is missing, but another layer of the same content has the
+     same text hash, the offsets still hold. The locator is **re-anchored**,
+     with the offsets unchanged.
+   - Otherwise (for example, the document was re-extracted), search the
+     primary layer for `quote.exact`, using `prefix` and `suffix` to choose
+     between multiple matches.
      - Exactly one match: the locator is **re-anchored**. The tool reports the
        new locator, and can rewrite the old one if asked.
      - No match, or more than one: the locator is **broken**. Show this
        clearly. Never fall back to showing whatever text is now at the old
        offsets.
-3. A locator without a quote can only be exact or broken.
+3. A locator without a quote can be exact, re-anchored through a matching
+   text hash, or broken. It can't be found again by searching.
 
 Every resolution reports its status: `exact`, `re-anchored`, or `broken`. The
 literate-page renderer and the quote checker show that status to the user.
@@ -243,9 +242,9 @@ shown to the user (Bates, page:line, and so on) from it at display time.
 | Alias | Example | Resolves via |
 |---|---|---|
 | Bates | `bates:ABC000123` or `bates:ABC000123-ABC000130` | Production load file or Bates-stamping record. |
-| Transcript | `tr:<doc-id>#pl=14:3,15:7` | The transcript's page:line structure in its layer. |
+| Transcript | `tr:<doc-id>#pl=14:3,15:7` | `line` segments in the transcript layer. |
 | Control number | `ctl:SMITH-0042` | Ingestion records. |
-| Printed page | `doc:<id>#label=iv` | PDF page labels, or a detected page footer. |
+| Printed page | `doc:<id>#label=iv` | `page-label` segments. |
 
 A Bates range can span several documents. In that case it resolves to a
 *list* of locators, because a single locator always refers to one document.
@@ -260,9 +259,6 @@ belongs to the pages spec.
 
 ## Decisions to confirm
 
-- **Locators that point at content.** Locators always name a document. We
-  may also want `blob:` locators that mean "this content, from any
-  custodian", for notes about the text itself. For now these are left out.
 - **Code-point offsets.** Python counts strings in code points, but JavaScript
   counts in UTF-16 units, so browser-side tools need a conversion.
 - **Coordinates as page fractions,** rather than PDF points. Fractions work
