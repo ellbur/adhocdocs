@@ -81,7 +81,43 @@ sees fit, rather than a monolithic framework that owns the workflow.
 - When a new need arises, the default answer is a new tool or a new option on
   an existing one — not a new mode of a central system.
 
+## 5. Quotations that matter are checkable by machine
+
+Claude does not produce text and claim it is verbatim from a document. Where
+accuracy matters (pages, exports, anything that may be relied on), quotations
+must be checkable automatically. Accuracy comes from how the text gets there,
+not from trusting Claude to copy carefully.
+
+- In conversation, Claude may quote and paraphrase freely without claiming
+  accuracy.
+- In pages and other durable output, quotations are **references** to ranges
+  of document text, not text typed by Claude.
+
+The main strategy is **literate pages**, analogous to literate programming.
+The page source embeds a reference to a range of text, and the renderer shows
+the user the text at that range. The quote is verbatim by construction,
+because Claude never typed it.
+
+- Quoted text is rendered so it looks different from Claude's prose, and it
+  can be clicked to open the viewer at that location.
+- A reference records both its location and a fingerprint of the text it
+  expects to find. If the underlying text changes (e.g. after re-OCR), the
+  reference fails loudly instead of quietly showing different text.
+- Elisions and alterations (ellipses, bracketed insertions, *[sic]*) are part
+  of the reference structure and produced by the renderer, never hand-edited
+  into the quote.
+- When a page is exported to a format that must hold literal text (e.g. a
+  brief as .docx), the export resolves each reference into text and keeps a
+  record of where every quotation came from.
+
 ## Open questions
+
+- **Verbatim relative to what?** Quotes are drawn from extracted text, which
+  can differ from the original (OCR errors, hyphenation, ligatures,
+  whitespace). We need a defined text normalization, and for scanned documents
+  probably a way to show the page-image region beside the quote.
+- **Unbacked quotes in pages.** Should a checker flag text in a page that
+  looks like a quotation but isn't a reference?
 
 - **Seamless containers.** The container that enforces isolation
   (Principle 2) should be close to invisible to the user. How to achieve that
