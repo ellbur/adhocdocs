@@ -29,7 +29,7 @@ A single piece of content can have several layers:
 
 ## Parts of a layer
 
-A layer is made of up to three stored files, tied together by a small layer
+A layer is made of up to four stored files, tied together by a small layer
 object:
 
 | Part | File | Required |
@@ -37,6 +37,7 @@ object:
 | text | UTF-8 plain text | yes |
 | segments | JSON Lines: labeled ranges of the text | no |
 | geometry | JSON Lines: where ranges of the text sit on the page | no |
+| presentation | HTML with text tagged by layer offsets | no |
 
 ### The layer object
 
@@ -59,8 +60,8 @@ object:
 - `presentation`: optional HTML rendering whose text is tagged with layer
   offsets, used by the viewer for formats without fixed pages (see
   [VIEWER.md](VIEWER.md#presentations)).
-- `text`, `segments`, `geometry`, `presentation`: hashes of the stored part files. If a part
-  is absent, its field is left out.
+- `text`, `segments`, `geometry`, `presentation`: hashes of the stored
+  part files. If a part is absent, its field is left out.
 
 The **layer ID** is the SHA-256 of this object, serialized with the JSON
 Canonicalization Scheme (RFC 8785), the same way as document objects.
