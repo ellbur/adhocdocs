@@ -420,10 +420,13 @@ then, a search saved as a list keeps its query, its index settings and its
 - **Search results as list files,** with the results display as a preset of
   the list display.
 - **Withdrawals delete index rows,** not just hide them.
+- **Any suitable embedding model for now.** It must run on a CPU in the
+  container and have a license that allows redistribution in the image the
+  user builds. Choosing a better one can wait until there are real
+  documents to measure on. Swapping it later is cheap: the model is part of
+  the semantic index's settings, so a new model means a rebuild of that
+  index and nothing else.
 
 ## Decisions to make
 
-- **Embedding model.** It must run on a CPU in the container, have a license
-  that allows redistribution in the image the user builds, and handle long
-  legal and business text. Candidates should be measured for speed and
-  quality on representative documents before choosing.
+None open at the moment.
