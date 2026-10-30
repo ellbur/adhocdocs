@@ -35,7 +35,7 @@ A page is a single `.md` file in three parts:
 2. Markdown body (CommonMark plus footnotes), with directives for references
 3. a fenced `refs` block at the end that defines the references
 
-```markdown
+~~~~markdown
 ---
 title: Chronology of the March shipment
 cite-style: default
@@ -58,7 +58,7 @@ The full email chain is [here](ref:smith-email).
 {"id": "jones-dep-pallet", "doc": "sha256:e19b…", "layer": "sha256:0a4d…", "parts": [{"select": {"char": [5120, 5388]}, "quote": {"exact": "…"}}, {"select": {"char": [5610, 5702]}, "quote": {"exact": "…"}}]}
 {"id": "smith-email", "doc": "sha256:3f9a…"}
 ```
-```
+~~~~
 
 ### Directives
 
