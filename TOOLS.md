@@ -10,7 +10,7 @@ decided).
 
 ## Foundations
 
-### Document IDs and locators — *planned, next to design*
+### Document IDs and locators — *planned, draft in [LOCATORS.md](LOCATORS.md)*
 A shared, stable way to refer to a document and to a location inside it:
 page, character range, Bates range, deposition page:line. Search snippets,
 tags, notes, selections, literate-page references (Principle 5) and the viewer
