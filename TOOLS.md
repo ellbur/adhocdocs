@@ -60,7 +60,7 @@ written from outside Claude's reach.
 Shows a list of documents. Has no search, filter or sort controls; the user
 asks Claude for those (Principle 1). Selection can be read by Claude.
 
-### Search results display — *planned*
+### Search results display — *planned; proposed in [INDEXING.md](INDEXING.md#search-results-are-lists) as a preset of the list display*
 Shows results with snippets and highlighting. Clicking a snippet opens the
 document at that location. That is navigation, which Principle 1 allows.
 
@@ -69,11 +69,13 @@ Events tied to source locators.
 
 ## Search and indexing
 
-### Indices — *planned*
+### Indices — *planned, drafted in [INDEXING.md](INDEXING.md)*
 Several kinds, each usable on its own and from code:
-- traditional keyword index
-- embeddings
-- others as needed
+- fields (metadata) index
+- keyword index, with Boolean and proximity search
+- embeddings, computed by a local model
+- `grep` over layer text, which needs no index
+- others as needed, kept up to date through the same change feed
 
 ## Annotation
 
