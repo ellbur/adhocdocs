@@ -263,13 +263,14 @@ already shows which account is in use.
   the user or their firm.
 - **Podman, run rootless,** on every platform (see
   [Host platforms](#host-platforms)).
+- **Check with Anthropic later, not now.** If the project goes anywhere, we
+  confirm our reading behind B, and ask whether a locally run open source
+  launcher counts as "your products or services". Until then we build as
+  designed, with A as the fallback.
 
 ## Decisions to make
 
-1. **Should we confirm with Anthropic** our reading behind B, and whether a
-   locally run open source launcher counts as "your products or services"?
-   This doesn't block building B.
-2. **Network allowlist:** enforced by the container runtime's network
+1. **Network allowlist:** enforced by the container runtime's network
    settings, or by a small egress proxy the launcher runs. A proxy for
    *network traffic* is not the same as proxying Claude Code, but it should
    only filter by host, never read or change content.
