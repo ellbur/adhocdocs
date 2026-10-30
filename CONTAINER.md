@@ -1,6 +1,6 @@
 # The Container
 
-*Status: draft. Nothing here is decided yet; see [Decisions to make](#decisions-to-make).*
+*Status: draft. Sign-in is decided (see [Decided](#decided)); the rest is open, see [Decisions to make](#decisions-to-make).*
 
 ## The problem, in plain terms
 
@@ -171,14 +171,15 @@ Anthropic's flow. There's no browser in the container, so Claude Code shows
 a URL. The user opens it on the host, signs in, and pastes back the code.
 adhocdocs is not involved.
 
-The open question is how often the user has to do this. Three options:
+How often the user has to do this was the question. *Decided: B, once per
+matter.* The three options considered:
 
-**A. Sign in every session.** The container's `~/.claude` lives only as long
+**A. Sign in every session.** *Not chosen; kept as the fallback.* The container's `~/.claude` lives only as long
 as the container. *Clearly allowed*, and nothing about a session outlives it.
 But it costs a browser round-trip every time, which works against
 "invisible", and it loses `claude --resume`.
 
-**B. Sign in once per matter** *(recommended)*. Each matter has a
+**B. Sign in once per matter.** *Decided.* Each matter has a
 `claude-home/` directory next to its documents, mounted as the container's
 `~/.claude`. Claude Code writes its own credentials there, as it would on any
 machine, and they last until the user signs out or the matter is closed.
@@ -191,10 +192,11 @@ machine, and they last until the user signs out or the matter is closed.
 - The risk is that "store" in "collect, store, or intermediate" might be read
   to cover providing that directory. We think it doesn't: the credentials are
   written by Claude Code, into the user's own storage, and are never handled
-  by our code. But this is the one interpretation the design depends on. The
+  by our code. This is the one interpretation the design depends on. The
   legal page says to "contact sales" with questions about allowed
-  authentication. If the answer is no, we fall back to A, and the rest of the
-  design is unchanged.
+  authentication. If Anthropic ever reads it differently, we fall back to A
+  by making `claude-home/` last only as long as the container; nothing else
+  changes.
 
 **C. Sign in once per machine.** One `~/.claude` is shared by every matter.
 *Rejected:* it carries transcripts and memory from one matter into the next.
@@ -231,18 +233,25 @@ whether they're read-only, the network allowlist, and the viewer's status.
 It doesn't report anything about credentials. Claude Code's own `/status`
 already shows which account is in use.
 
+## Decided
+
+- **Sign in once per matter (option B).** Each matter has its own
+  `claude-home/`, mounted as the container's `~/.claude`. The unmodified
+  `claude` signs in there through Anthropic's flow, and adhocdocs never reads,
+  copies or sends what it writes. Transcripts stay with the matter too.
+- **Never once per machine (option C).** It carries one matter's transcripts
+  into the next.
+
 ## Decisions to make
 
-1. **Sign-in persistence:** A (every session), or B (once per matter, which
-   depends on the reading above). Possibly start with A and move to B after
-   asking Anthropic.
-2. **Should we ask Anthropic** about B (and about whether a locally run open
-   source launcher counts as "your products or services") before building?
-3. **Account guidance:** do we just inform users about Consumer vs.
+1. **Should we confirm with Anthropic** our reading behind B, and whether a
+   locally run open source launcher counts as "your products or services"?
+   This doesn't block building B.
+2. **Account guidance:** do we just inform users about Consumer vs.
    Commercial terms for confidential documents, or recommend (or require) a
    Team, Enterprise or API account?
-4. **Runtime:** Docker and Podman both, or just one to start with?
-5. **Network allowlist:** enforced by the container runtime's network
+3. **Runtime:** Docker and Podman both, or just one to start with?
+4. **Network allowlist:** enforced by the container runtime's network
    settings, or by a small egress proxy the launcher runs. A proxy for
    *network traffic* is not the same as proxying Claude Code, but it should
    only filter by host, never read or change content.
