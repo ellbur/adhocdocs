@@ -48,7 +48,7 @@ written from outside Claude's reach.
 
 ## Viewing
 
-### Document viewer — *planned*
+### Document viewer — *planned, drafted in [VIEWER.md](VIEWER.md)*
 - Formats: PDF, .eml, .docx, and other formats common in legal work.
   Proposed additions: .msg, .xlsx/.csv, images, HTML, plain text, deposition
   transcripts with page:line display; audio/video with transcripts later.

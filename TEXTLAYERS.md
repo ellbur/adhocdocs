@@ -48,14 +48,18 @@ object:
   "view": "native",
   "text": "sha256:8b21…07fd",
   "segments": "sha256:51c0…e2a9",
-  "geometry": "sha256:d4e7…1f30"
+  "geometry": "sha256:d4e7…1f30",
+  "presentation": "sha256:91ab…44c2"
 }
 ```
 
 - `content`: the content hash this layer was extracted from. Layers belong to
   content, not to documents, so every copy of the same bytes shares them.
 - `view`: which reading of the content this is (see [Views](#views)).
-- `text`, `segments`, `geometry`: hashes of the stored part files. If a part
+- `presentation`: optional HTML rendering whose text is tagged with layer
+  offsets, used by the viewer for formats without fixed pages (see
+  [VIEWER.md](VIEWER.md#presentations)).
+- `text`, `segments`, `geometry`, `presentation`: hashes of the stored part files. If a part
   is absent, its field is left out.
 
 The **layer ID** is the SHA-256 of this object, serialized with the JSON
