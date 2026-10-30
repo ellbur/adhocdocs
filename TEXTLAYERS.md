@@ -37,7 +37,7 @@ object:
 | text | UTF-8 plain text | yes |
 | segments | JSON Lines: labeled ranges of the text | no |
 | geometry | JSON Lines: where ranges of the text sit on the page | no |
-| presentation | HTML with text tagged by layer offsets | no |
+| rendition | PDF rendering of content that has no pages of its own | no |
 
 ### The layer object
 
@@ -50,17 +50,18 @@ object:
   "text": "sha256:8b21…07fd",
   "segments": "sha256:51c0…e2a9",
   "geometry": "sha256:d4e7…1f30",
-  "presentation": "sha256:91ab…44c2"
+  "rendition": "sha256:91ab…44c2"
 }
 ```
 
 - `content`: the content hash this layer was extracted from. Layers belong to
   content, not to documents, so every copy of the same bytes shares them.
 - `view`: which reading of the content this is (see [Views](#views)).
-- `presentation`: optional HTML rendering whose text is tagged with layer
-  offsets, used by the viewer for formats without fixed pages (see
-  [VIEWER.md](VIEWER.md#presentations)).
-- `text`, `segments`, `geometry`, `presentation`: hashes of the stored
+- `rendition`: optional PDF rendering, for content without fixed pages
+  (email, .docx, HTML), so that the viewer can show it as pages (see
+  [VIEWER.md](VIEWER.md#renditions)). When present, the geometry refers to
+  the rendition's pages.
+- `text`, `segments`, `geometry`, `rendition`: hashes of the stored
   part files. If a part is absent, its field is left out.
 
 The **layer ID** is the SHA-256 of this object, serialized with the JSON
@@ -142,7 +143,9 @@ reads locators.
 
 ## Geometry
 
-Geometry links ranges of text to positions on a page, for content with pages.
+Geometry links ranges of text to positions on a page, for content with pages
+or a rendition. Pages in a rendition can be shown and highlighted, but they
+are never cited.
 Each line of the file is one span:
 
 ```json
@@ -212,13 +215,14 @@ under the rules above.
   From, To, Cc, Bcc, Date and Subject, one line each as `Name: value`, each
   marked with a `header` segment. A blank line and then the body follow. The
   body is the `text/plain` part if there is one, otherwise the HTML converted
-  to text. Quoted replies are marked with `quoted` segments. Attachments are
-  separate documents, as covered by the document identity rules.
+  to text. Quoted replies are marked with `quoted` segments. A rendition
+  shows the email for display. Attachments are separate documents, as covered
+  by the document identity rules.
 - **.docx:** a `native` view with tracked changes accepted. A `markup` view
   is added whenever the file contains tracked changes or comments.
   Footnotes, comments, headers and footers come after the main text, each
-  with its segment. Neither view has pages. To cite by page, use a rendered
-  PDF, which is a separate derived document.
+  with its segment. Each view has a rendition for display. To cite by page,
+  use a PDF made as a separate derived document.
 - **.xlsx and .csv:** a `native` view. Each sheet is a `sheet` segment. Rows
   are lines and cells are separated by tabs, and each cell has a `cell`
   segment with its `ref`. The text holds cell values. Formulas can go in a

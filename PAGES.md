@@ -172,8 +172,8 @@ style, and Claude can write one.
 
 ## Rendering
 
-`page render page.md` produces an HTML view, which is a display in the sense
-of Principle 1:
+`page render page.md` lays the page out for a `page` pane in the viewer
+([VIEWER.md](VIEWER.md)). It is a display in the sense of Principle 1:
 
 - Quoted text is styled differently from prose. Clicking it opens the viewer
   at the locator, with the range highlighted.
