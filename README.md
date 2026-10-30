@@ -2,4 +2,5 @@
 
 Tools for working with evidentiary documents from Claude Code.
 
-See [DESIGN.md](DESIGN.md) for the design principles.
+- [DESIGN.md](DESIGN.md): design principles
+- [TOOLS.md](TOOLS.md): the starting set of tools

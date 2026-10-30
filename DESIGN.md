@@ -17,6 +17,9 @@ a user interface.
   document, highlighting a passage, marking a page range. These exist because
   pointing is often easier than describing ("this paragraph" vs. "the third
   paragraph on page 14 of the March 3 deposition").
+- *Navigating* counts as viewing. For example, clicking a search-result
+  snippet to open the document at that spot is fine; it is not an exception
+  to this principle. Claude must still be able to see where the user went.
 - Whatever the user points at must be **inspectable by Claude**. The current
   selection, highlight, or view is state that Claude can query, so "summarize
   what I've selected" just works.
