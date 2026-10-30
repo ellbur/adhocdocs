@@ -1,6 +1,6 @@
 # The Container
 
-*Status: draft. Sign-in is decided (see [Decided](#decided)); the rest is open, see [Decisions to make](#decisions-to-make).*
+*Status: decided (see [Decided](#decided)), not yet built.*
 
 ## The problem, in plain terms
 
@@ -160,10 +160,31 @@ There is nothing else: no host home directory, no other matter, and no
 Podman socket (which would let Claude start containers of its own).
 
 **Network:** outbound traffic is allowed only to what Claude Code needs
-(the Anthropic API, and the sign-in and update hosts), through an allowlist
-the launcher sets up. Without this, Claude could send documents anywhere,
-which Principle 2 doesn't allow. The exact host list needs checking against
-Claude Code's network documentation when we build it.
+(the Anthropic API, and the sign-in and update hosts). Without this, Claude
+could send documents anywhere, which Principle 2 doesn't allow.
+
+*Decided: an internal Podman network plus a host-filtering proxy.* Podman
+has no setting that allows only certain hosts, so the job is split in two:
+
+- **Podman blocks everything.** The session container sits on a Podman
+  network created with `--internal`, which has no route out at all.
+- **A small proxy lets the allowed hosts through.** The launcher starts it,
+  in its own container, attached to both the internal network and the
+  outside. The session container's `HTTPS_PROXY` points at it, which Claude
+  Code supports. For each connection it checks the host name against the
+  allowlist and passes the encrypted traffic through untouched, or refuses.
+  It never decrypts, reads or changes anything.
+- **Claude can't get around it.** If Claude unsets `HTTPS_PROXY` or connects
+  directly, the connection fails, because Podman's network has no way out.
+  The proxy's allowlist is set by the launcher on the host, and Claude has
+  no way to change it.
+
+This proxy only filters network traffic by destination. It is not a proxy
+for Claude Code in the sense of the terms: it doesn't see or relay the
+conversation.
+
+The exact host list needs checking against Claude Code's network
+documentation when we build it.
 
 ### Signing in
 
@@ -268,9 +289,11 @@ already shows which account is in use.
   launcher counts as "your products or services". Until then we build as
   designed, with A as the fallback.
 
+- **Network: an internal Podman network plus a host-filtering proxy**
+  (see [What the container can reach](#what-the-container-can-reach)). The
+  proxy checks host names only and never decrypts traffic.
+
 ## Decisions to make
 
-1. **Network allowlist:** enforced by the container runtime's network
-   settings, or by a small egress proxy the launcher runs. A proxy for
-   *network traffic* is not the same as proxying Claude Code, but it should
-   only filter by host, never read or change content.
+None open at the moment. Still to check while building: the exact list of
+hosts Claude Code needs.

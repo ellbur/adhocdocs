@@ -135,13 +135,12 @@ because Claude never typed it.
   and can be compared with the page image.
 - **Unbacked quotes in pages.** *Proposed:* a lint warning
   ([PAGES.md](PAGES.md#checking)).
-- **Seamless containers.** The container that enforces isolation
-  (Principle 2) should be close to invisible to the user. How to achieve that
-  while respecting Anthropic's rule against proxying Claude Code is not yet
-  worked out. One part is decided: the viewer runs on the host, outside the
-  container. It gets its scope from the connect mechanism, and Claude reaches
-  it through a narrow API ([VIEWER.md](VIEWER.md)).
-  The rest is drafted in [CONTAINER.md](CONTAINER.md): the user's terminal
-  is attached straight to the unmodified `claude`, sign-in happens inside the
-  container through Anthropic's own flow, and adhocdocs never handles
-  credentials.
+- **Seamless containers.** *Answered* in [CONTAINER.md](CONTAINER.md). The
+  container that enforces isolation (Principle 2) should be close to
+  invisible, while respecting Anthropic's rule against proxying Claude Code.
+  The user's terminal is attached straight to the unmodified `claude` in a
+  rootless Podman container, one matter per container. Sign-in happens inside
+  it through Anthropic's own flow, once per matter, and adhocdocs never
+  handles credentials. The network allows only Claude Code's hosts. The
+  viewer runs on the host, gets its scope from the connect mechanism, and
+  Claude reaches it through a narrow API ([VIEWER.md](VIEWER.md)).
