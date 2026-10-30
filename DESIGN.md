@@ -141,3 +141,7 @@ because Claude never typed it.
   worked out. One part is decided: the viewer runs on the host, outside the
   container. It gets its scope from the connect mechanism, and Claude reaches
   it through a narrow API ([VIEWER.md](VIEWER.md)).
+  The rest is drafted in [CONTAINER.md](CONTAINER.md): the user's terminal
+  is attached straight to the unmodified `claude`, sign-in happens inside the
+  container through Anthropic's own flow, and adhocdocs never handles
+  credentials.

@@ -10,3 +10,4 @@ Tools for working with evidentiary documents from Claude Code.
 - [VIEWER.md](VIEWER.md): the document viewer and the display server
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [LISTS.md](LISTS.md): document lists and the list display
+- [CONTAINER.md](CONTAINER.md): the container, sign-in, and Anthropic's terms
