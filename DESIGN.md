@@ -27,10 +27,12 @@ a user interface.
 Rule of thumb: GUI elements are for *identifying* and *viewing*; Claude is for
 *doing*.
 
-This governs the default displays. A display that Claude builds for a
-particular task, because the user asked for that workflow, may have whatever
-controls the task needs (Principle 3). See
-[VIEWER.md](VIEWER.md#principle-1-and-custom-panes).
+This applies to displays Claude builds too. Claude acts when the user
+prompts it, and it can't react to GUI events as they happen. So a display
+Claude builds for a task stays **thin**: it shows things and collects simple
+input (pointing, ticking boxes, picking options). Logic stays in the
+container, and the prompt remains the main way to interact. See
+[VIEWER.md](VIEWER.md#thin-panes).
 
 ## 2. Safety and data isolation do not depend on Claude
 

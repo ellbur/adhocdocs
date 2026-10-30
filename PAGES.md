@@ -172,8 +172,11 @@ style, and Claude can write one.
 
 ## Rendering
 
-`page render page.md` produces HTML for a `page` pane, a web view in the
-viewer ([VIEWER.md](VIEWER.md)). It is a display in the sense of Principle 1:
+`page render page.md` produces static HTML for a `page` pane in the viewer
+([VIEWER.md](VIEWER.md)). Like every web pane, it has no scripts. Quotations
+are emitted as `data-text` elements that the viewer fills in from the
+document, and clicks are handled through `loc:` links. It is a display in the
+sense of Principle 1:
 
 - Quoted text is styled differently from prose. Clicking it opens the viewer
   at the locator, with the range highlighted.
