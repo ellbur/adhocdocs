@@ -200,7 +200,7 @@ A list pane's entry in `view state`:
 what the user is looking at. For example: "make a new list of the ones
 I've selected, sorted by recipient".
 
-## Decisions to confirm
+## Decided
 
 - **Lists as files in the workspace,** versioned with git, rather than in
   the object store or the annotation log.
