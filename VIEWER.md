@@ -102,7 +102,7 @@ windows, each window is split into **panes**, and each pane has a kind:
 |---|---|---|---|
 | `document` | MuPDF or web view | a document, in page mode or flow mode (below) | ingestion (presentations) |
 | `page` | web view | a rendered literate page ([PAGES.md](PAGES.md)) | `page render` |
-| `list` | web view | a list of documents (default display, to be designed) | the list tool |
+| `list` | web view | a list of documents ([LISTS.md](LISTS.md)) | `view list` |
 | `results` | web view | search results with snippets (default display, to be designed) | the search tool |
 | `custom` | web view | a display built by Claude | Claude, in the container |
 
@@ -214,11 +214,12 @@ carries it out.
 | Markup | Behavior |
 |---|---|
 | `<a href="loc:<locator>">` | opens the locator in a document pane |
-| `data-locator="<locator>"` on any element | makes the element pointable: clicking selects it (the pane's selection becomes that locator), double-clicking or Enter opens it, and the mark key adds it to marks |
+| `data-locator="<locator>"` on any element | makes the element pointable: clicking selects it (shift- or ctrl-click selects several), double-clicking or Enter opens it, the mark key adds it to marks, and tag hotkeys tag it. If the pane is linked to a document pane, that pane follows the selection |
 | `data-sequence` on a list | its `data-locator` items become the next/previous-document sequence of the linked document pane |
 | `<span data-text="<locator>"></span>` | the viewer fills in the document text at the locator, inserted as text, never as HTML |
 | `<span data-snippet="<locator>" data-context="80"></span>` | the viewer fills in a snippet around the locator, with the range highlighted |
 | `data-status="<locator>"` | the viewer adds a resolution marker (exact, re-anchored, broken) |
+| `data-tags="<locator>"`, `data-notes="<locator>"` | the viewer fills in the current tags or note count, and keeps them up to date as annotations change |
 
 `data-text` and `data-snippet` work like literate quotation (Principle 5).
 The text shown comes from the document, filled in by the viewer, and is not
@@ -247,7 +248,8 @@ recorded input.
 ### Producing a custom pane
 
 Claude writes static HTML (plus CSS and images) in the container and sends
-it:
+it. A pane can be a single file or a directory bundle, and relative links
+within a bundle navigate inside the pane:
 
 ```
 view pane --new --title "Smith emails by week" ./triage/index.html
@@ -282,7 +284,8 @@ view open <locator> [--pane <id>|--new-pane|--window <id>] [--layer <view>] [--m
 view highlight <locator> [--label <text>] [--pane <id>]
 view clear-highlights [--pane <id>]
 view sequence <list-of-locators> [--pane <id>]
-view pane --new|--update <id> <html-file> [--title <t>]
+view pane --new|--update <id> <html-file|bundle-dir> [--title <t>] [--link <doc-pane-id>]
+view list <list-file> [--pane <id>|--new-pane] [--preview <doc-pane-id>]
 view service <name> <command|port>
 view close <pane-id>
 view layout <single|split-v|split-h|grid> [--window <id>]

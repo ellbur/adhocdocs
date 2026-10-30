@@ -56,7 +56,7 @@ written from outside Claude's reach.
 - What the user has open, selected or highlighted can be read by Claude
   (Principle 1).
 
-### Document list display — *planned*
+### Document list display — *planned, drafted in [LISTS.md](LISTS.md)*
 Shows a list of documents. Has no search, filter or sort controls; the user
 asks Claude for those (Principle 1). Selection can be read by Claude.
 
@@ -82,7 +82,7 @@ Attached to documents or to locations within them. Both the user and Claude
 can create them, and each records who made it. The user can edit them
 directly in the viewer.
 
-### Saved sets / collections — *proposed*
+### Saved sets / collections — *planned, as list files in [LISTS.md](LISTS.md)*
 Named, persistent lists of documents ("hot docs", "responsive to RFP 12").
 The document list display shows these.
 

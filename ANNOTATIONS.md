@@ -151,7 +151,7 @@ ann define-tag <name> [--color] [--hotkey] [--group] [--description]
 All output is JSON. Reads go directly to the log, which is mounted
 read-only. Writes go through the API.
 
-## Decisions to confirm
+## Decided
 
 - **Editing tags and notes in the GUI** as an exception to Principle 1.
 - **Authorship stamped by the write path**, with the container read-only, so

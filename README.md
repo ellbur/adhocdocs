@@ -9,3 +9,4 @@ Tools for working with evidentiary documents from Claude Code.
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer and the display server
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
+- [LISTS.md](LISTS.md): document lists and the list display
