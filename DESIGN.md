@@ -37,9 +37,10 @@ Principle 1 has one exception. Operations that control what data is reachable
   use it.
 - Because Claude Code can run arbitrary code (see Principle 3), isolation
   cannot be enforced merely by what the adhocdocs tools choose to expose. It
-  must be enforced at a boundary that holds even if Claude bypasses the tools
-  entirely — e.g. what is mounted or otherwise reachable from the session's
-  environment at all.
+  is enforced at the environment level: Claude Code runs inside a container,
+  and the only data it can reach is what has been made available to that
+  container from outside. This boundary holds even if Claude bypasses the
+  tools entirely.
 - Claude may *observe* isolation state (e.g. "which matters are connected?")
   so it can explain it to the user, but it cannot change it.
 
@@ -79,3 +80,10 @@ sees fit, rather than a monolithic framework that owns the workflow.
   particular pipeline.
 - When a new need arises, the default answer is a new tool or a new option on
   an existing one — not a new mode of a central system.
+
+## Open questions
+
+- **Seamless containers.** The container that enforces isolation
+  (Principle 2) should be close to invisible to the user. How to achieve that
+  while respecting Anthropic's rule against proxying Claude Code is not yet
+  worked out.
