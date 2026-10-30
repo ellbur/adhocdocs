@@ -100,8 +100,9 @@ documents are usually confidential:
   information (Commercial Terms B and E.1). Zero Data Retention is available
   for some organizations.
 
-adhocdocs can't enforce which kind of account is used. It can say this
-plainly at setup, and leave the choice to the user or their firm.
+adhocdocs can't enforce which kind of account is used. *Decided:* it says
+this plainly at setup, and leaves the choice to the user or their firm. It
+doesn't recommend or require any kind of account.
 
 ### What this rules out
 
@@ -241,17 +242,20 @@ already shows which account is in use.
   copies or sends what it writes. Transcripts stay with the matter too.
 - **Never once per machine (option C).** It carries one matter's transcripts
   into the next.
+- **Inform users about account types, nothing more.** At setup, adhocdocs
+  explains plainly that Free, Pro and Max fall under the Consumer Terms (which
+  allow training unless the user opts out), and that Team, Enterprise and API
+  accounts fall under the Commercial Terms (no training on customer content).
+  It doesn't recommend or require any kind of account; that choice belongs to
+  the user or their firm.
 
 ## Decisions to make
 
 1. **Should we confirm with Anthropic** our reading behind B, and whether a
    locally run open source launcher counts as "your products or services"?
    This doesn't block building B.
-2. **Account guidance:** do we just inform users about Consumer vs.
-   Commercial terms for confidential documents, or recommend (or require) a
-   Team, Enterprise or API account?
-3. **Runtime:** Docker and Podman both, or just one to start with?
-4. **Network allowlist:** enforced by the container runtime's network
+2. **Runtime:** Docker and Podman both, or just one to start with?
+3. **Network allowlist:** enforced by the container runtime's network
    settings, or by a small egress proxy the launcher runs. A proxy for
    *network traffic* is not the same as proxying Claude Code, but it should
    only filter by host, never read or change content.
