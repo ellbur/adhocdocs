@@ -373,6 +373,7 @@ idx changes [--since <cursor>]
 idx new <name> --kind <kind> [--settings …]      e.g. a stemmed keyword index
 ```
 
+Indexing runs in the container (*decided*; see [Decided](#decided)).
 Indexes live in the workspace, under `.adhoc/indexes/<name>/`, and are left
 out of git: they are large, and they can always be rebuilt. `idx status` is
 the place to look when Claude needs to explain to the user why a search may
@@ -402,18 +403,21 @@ to be written on the host. That belongs with the audit log design. Until
 then, a search saved as a list keeps its query, its index settings and its
 `as_of`, which is enough to rerun it.
 
+## Decided
+
+- **Indexing runs in the container,** not on the host during ingestion.
+  Keeping it off the host keeps the host-side code small, as Principle 2
+  suggests, and lets Claude's own indexes use the same mechanism. A damaged
+  index can only cause misses, which `idx verify` finds. If catching up at
+  session start proves too slow for large matters, that is a performance
+  problem to solve in the container, not a reason to move indexing.
+
 ## Decisions to make
 
 - **Embedding model.** It must run on a CPU in the container, have a license
   that allows redistribution in the image the user builds, and handle long
   legal and business text. Candidates should be measured for speed and
   quality on representative documents before choosing.
-- **Where indexing runs.** *Proposed: in the container*, as above. The
-  alternative is for the host to index during ingestion, so indexes are
-  ready when a session starts and Claude can't damage them. That puts more
-  code on the host, which Principle 2 suggests keeping small, and a damaged
-  index can only cause misses, which `idx verify` finds. Revisit if
-  start-up catch-up turns out too slow for large matters.
 
 ## Decisions to confirm
 
