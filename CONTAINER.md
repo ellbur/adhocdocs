@@ -138,11 +138,11 @@ doesn't recommend or require any kind of account.
   session for a matter is the connect operation of Principle 2. The user does
   it on the host with `adhoc`, and Claude can't.
 - **The user's terminal is attached straight to `claude`** in the container,
-  the same as `docker run -it`. adhocdocs doesn't read, rewrite or relay what
+  the same as `podman run -it`. adhocdocs doesn't read, rewrite or relay what
   passes through it. That's what keeps this a terminal and not a proxy.
-- **The image is built on the user's machine.** The Dockerfile installs Claude
+- **The image is built on the user's machine.** The Containerfile installs Claude
   Code with Anthropic's official installer, plus the adhocdocs tools. We
-  publish the Dockerfile, not an image containing Claude Code.
+  publish the Containerfile, not an image containing Claude Code.
 - **Claude Code runs as published**, with its normal auto-update. We don't
   ship settings that hide login methods.
 
@@ -156,8 +156,8 @@ doesn't recommend or require any kind of account.
 | matter's Claude home (`~/.claude`) | read-write | See [Signing in](#signing-in) |
 | viewer and annotation API sockets | as provided | The only way out to the host |
 
-There is nothing else: no host home directory, no other matter, no Docker
-socket.
+There is nothing else: no host home directory, no other matter, and no
+Podman socket (which would let Claude start containers of its own).
 
 **Network:** outbound traffic is allowed only to what Claude Code needs
 (the Anthropic API, and the sign-in and update hosts), through an allowlist
@@ -219,9 +219,22 @@ which is the same as running two `claude` processes on one machine.
 
 ### Host platforms
 
-- **Linux:** Docker or Podman. Rootless Podman is preferred where available.
-- **macOS and Windows:** containers need a Linux VM (Docker Desktop, Podman
-  machine, Colima, WSL2). The viewer still runs natively on the host. File
+*Decided: Podman, run rootless.* Reasons:
+
+- **Rootless by default.** The container runs as the user, not as root, and
+  there is no root daemon. If Claude ever got out of the container, it would
+  have the user's own rights, not root's. That fits Principle 2.
+- **Free everywhere.** Docker Desktop, which is how most macOS and Windows
+  users get Docker, needs a paid license at larger organizations. Many law
+  firms would be in that group. Podman and Podman Desktop are free.
+- **Nothing is lost.** Podman builds the same files and takes the same
+  `run` options as Docker, so switching later would be cheap.
+
+Per platform:
+
+- **Linux:** Podman, installed from the distribution's packages.
+- **macOS and Windows:** containers need a Linux VM, which `podman machine`
+  (or Podman Desktop) sets up. The viewer still runs natively on the host. File
   sharing into the VM is slower, which matters for the 100 ms viewer target
   only if the viewer reads through the VM. It shouldn't: the viewer reads the
   matter store on the host directly.
@@ -248,14 +261,15 @@ already shows which account is in use.
   accounts fall under the Commercial Terms (no training on customer content).
   It doesn't recommend or require any kind of account; that choice belongs to
   the user or their firm.
+- **Podman, run rootless,** on every platform (see
+  [Host platforms](#host-platforms)).
 
 ## Decisions to make
 
 1. **Should we confirm with Anthropic** our reading behind B, and whether a
    locally run open source launcher counts as "your products or services"?
    This doesn't block building B.
-2. **Runtime:** Docker and Podman both, or just one to start with?
-3. **Network allowlist:** enforced by the container runtime's network
+2. **Network allowlist:** enforced by the container runtime's network
    settings, or by a small egress proxy the launcher runs. A proxy for
    *network traffic* is not the same as proxying Claude Code, but it should
    only filter by host, never read or change content.
