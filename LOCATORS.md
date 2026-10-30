@@ -36,18 +36,79 @@ Where an existing standard fits, this format borrows from it:
 
 ## Document identity
 
-A document's ID is the **SHA-256 of its original bytes**, written
-`sha256:<64 lowercase hex>`.
+Identity follows git's model. Content and identity are separate hashed
+objects, and the identity object refers to the content by its hash.
 
-- **Verifiable:** anyone can re-hash the original to confirm which file is
-  meant. This supports the integrity tools.
-- **No central counter:** IDs don't depend on ingestion order and stay the
-  same if documents are ingested again.
-- **Duplicates:** byte-identical files share an ID. Where each copy came from
-  (custodian, source path, date collected) is kept in separate provenance
-  records, and one document can have many.
-- **Attachments and archive members** are documents in their own right, each
-  hashed from its decoded bytes. A family relation links them to their parent.
+- **Content (blob):** the original bytes, identified by their SHA-256,
+  written `sha256:<64 lowercase hex>`. Byte-identical files share a content
+  hash.
+- **Document:** a small object that records everything that makes a document
+  "that document": its content hash, plus whichever facts we care about, such
+  as custodian, source, or parent. The **document ID** is the SHA-256 of this
+  object's canonical serialization.
+
+So if the same file came from two custodians and custodian matters, the two
+copies are two documents with two IDs that share one content hash.
+
+### The document object
+
+```json
+{
+  "type": "document",
+  "v": 1,
+  "content": "sha256:3f9a…c41e",
+  "custodian": "cust:smith-j",
+  "source": { "collection": "smith-laptop-2026-03", "path": "Users/jsmith/Desktop/memo.pdf" }
+}
+```
+
+An attachment or archive member names its parent document, plus where it sits
+inside the parent:
+
+```json
+{
+  "type": "document",
+  "v": 1,
+  "content": "sha256:a17e…9b02",
+  "parent": "sha256:<parent document ID>",
+  "part": "2"
+}
+```
+
+Because the parent's ID is in the hash, a child inherits its parent's identity
+the way a git tree inherits from the trees it contains. The same attachment in
+Smith's copy and in Jones's copy of an email gets two different IDs.
+
+- **Serialization:** JSON Canonicalization Scheme (RFC 8785), then SHA-256.
+  `type` and `v` are part of the hashed object, so the format can change later
+  without IDs from different versions colliding.
+- **Stored and verifiable:** document objects are stored alongside the
+  content. Anyone can re-serialize an object to check its ID, and re-hash the
+  content to check the content hash.
+- **Which fields count is an ingestion choice.** Whatever is in the object is
+  hashed. If a matter doesn't care about custodians, its ingestion leaves
+  `custodian` out, and identical files collapse into one document. The same
+  file ingested under different choices gets different IDs. That is
+  intentional: they are different documents by definition.
+- **Only fixed facts.** A field belongs in the object only if changing it
+  would make the thing a different document. Things that are added or change
+  later attach to the ID from outside: tags, notes, text layers, Bates numbers
+  assigned at production, and review status.
+- **Corrections create new IDs.** If an identity fact was recorded wrongly
+  (say, the wrong custodian), the corrected object has a new ID. A
+  `supersedes` record links the old ID to the new one, so existing locators
+  can be redirected. Nothing is edited in place.
+- **Use stable identifiers inside the object.** For example, write
+  `cust:smith-j` rather than a free-text "Jane Smith", so that spelling
+  variations don't split one custodian's documents across different IDs.
+- **Duplicates:** documents that share a content hash are exact duplicates.
+  Dedup and tag propagation tools find them that way.
+- **Text layers belong to content.** Extraction depends only on the bytes,
+  so layers are keyed by content hash and shared by every document with that
+  content.
+- **Not identity:** facts like who ingested a document and when are
+  chain-of-custody events. They are kept in a separate, append-only log, and
+  they don't change the ID.
 - **Short forms:** tools accept a unique prefix (at least 8 hex digits) as
   input, like git does, and always write the full hash. Displays may show the
   short form.
@@ -154,8 +215,9 @@ fills it in. Claude never types it.
 
 Before showing or relying on a locator, a tool resolves it:
 
-1. Find the document by `doc`. If it isn't there, that is an error.
-2. Find the layer by `layer`.
+1. Find the document by `doc`. If it isn't there, follow any `supersedes`
+   record. If there is no such record, that is an error.
+2. Find the layer by `layer`, among the layers of the document's content.
    - If the layer is present, read the text at the offsets and compare it with
      `quote.exact`. If they match, the locator is **exact**. If they don't,
      that is an error, because the data is inconsistent.
@@ -198,9 +260,9 @@ belongs to the pages spec.
 
 ## Decisions to confirm
 
-- **Content IDs, not instance IDs.** With hash-based IDs, a tag on a document
-  applies to every byte-identical copy. If tags need to apply to a single copy
-  (e.g. "Smith's copy only"), we would add an instance ID on top.
+- **Locators that point at content.** Locators always name a document. We
+  may also want `blob:` locators that mean "this content, from any
+  custodian", for notes about the text itself. For now these are left out.
 - **Code-point offsets.** Python counts strings in code points, but JavaScript
   counts in UTF-16 units, so browser-side tools need a conversion.
 - **Coordinates as page fractions,** rather than PDF points. Fractions work
