@@ -131,3 +131,79 @@ def test_cli(matter, tmp_path, capsys):
     assert any(unrelated in x["loc"] and "fields" not in x for x in items)  # a restates uncover isn't marked kept
     with pytest.raises(SystemExit):
         cli.list_(["set", str(out), notes, "novalue", *args])
+
+
+def test_points(matter, tmp_path):
+    src = candidates(matter, tmp_path / "c.list.jsonl")
+    out = tmp_path / "set.list.jsonl"
+    h, items, _ = sets.condense(matter, [(str(src), *lists.read(src))], question="Delivered?")
+    assert h["title"] == "Delivered?"
+    docs = by_name(matter)
+    sets.set_point(h, "delivered", "It reached Dock 4")
+    sets.set_point(h, "signed", "Someone signed")
+    sets.set_point(h, "signed", "Someone signed for it")
+    assert [p["text"] for p in h["points"]] == ["It reached Dock 4", "Someone signed for it"]
+    assert h["columns"].index("points") == h["columns"].index("why") + 1
+    with pytest.raises(ValueError, match="bad point id"):
+        sets.set_point(h, "Not_OK", "x")
+    with pytest.raises(ValueError, match="no such point: nope"):
+        sets.set_fields(items, docs["unrelated.txt"], {"points": "delivered,nope"}, h)
+    sets.set_fields(items, docs["2026-03-17_RE_proof-of-delivery.eml"], {"points": "delivered"}, h)
+    # a covered email's point counts for the reply that covers it
+    sets.set_fields(items, docs["2026-03-12_proof-of-delivery.eml"], {"points": "delivered, signed"}, h)
+    r = sets.points_report(h, items)
+    reply = "doc:" + docs["2026-03-17_RE_proof-of-delivery.eml"]
+    assert [x["loc"] for x in r["points"][0]["supported_by"]] == [reply, reply]
+    assert r["points"][1]["supported_by"] == [{"loc": reply, "via": "doc:" + docs["2026-03-12_proof-of-delivery.eml"]}]
+    assert r["unsupported"] == [] and reply not in r["supporting_nothing"]
+    sets.set_point(h, "disputed", "Bellwether disputed it")
+    assert sets.points_report(h, items)["unsupported"] == ["disputed"]
+
+    lists.write(out, h, items)
+    h2, items2, _ = sets.condense(matter, [(str(out), *lists.read(out))])
+    assert [p["id"] for p in h2["points"]] == ["delivered", "signed", "disputed"]
+    assert sets.points_report(h2, items2)["points"][1]["supported_by"] == r["points"][1]["supported_by"]
+
+    sets.remove_point(h, items, "signed")
+    assert all("signed" not in (x.get("fields") or {}).get("points", [])
+               for it in items for x in (it, *it.get("children", [])))
+    with pytest.raises(ValueError, match="no such point"):
+        sets.remove_point(h, items, "signed")
+
+
+def test_ls_and_page_docs(matter, tmp_path, capsys):
+    from adhocdocs import locators, pages
+    ws = matter.workspace
+    candidates(matter, ws / "c.list.jsonl")
+    (ws / ".hidden").mkdir(exist_ok=True)
+    candidates(matter, ws / ".hidden" / "x.list.jsonl")
+    (ws / "not-a-list.list.jsonl").write_text('{"type": "other"}\n')
+    args = ["--matter", str(matter.root)]
+    (ws / "sets").mkdir(exist_ok=True)
+    cli.list_(["condense", str(ws / "c.list.jsonl"), "--out", str(ws / "sets" / "pod.list.jsonl"),
+               "--question", "Delivered?", *args])
+    cli.list_(["point", str(ws / "sets" / "pod.list.jsonl"), "signed", "Someone signed", *args])
+    capsys.readouterr()
+    cli.list_(["ls", *args])
+    rows = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert [r["file"] for r in rows] == ["sets/pod.list.jsonl", "c.list.jsonl"]
+    assert rows[0]["question"] == "Delivered?" and rows[0]["unsupported"] == ["signed"] and rows[0]["covered"] > 0
+    assert rows[1]["query"] == "delivery" and "covered" not in rows[1]
+
+    state = matter.state
+    docs = by_name(matter)
+
+    def loc(name):
+        d = docs[name]
+        layer = state.primary_layer(state.documents[d])
+        text = matter.objects.get_text(layer.text)
+        return json.dumps(locators.char_locator(d, layer.id, text, 0, 20))
+    memo = ws / "memo.md"
+    memo.write_text("First :q{#b}, then [this](ref:a), and :cite{#b} again.\n")
+    pages.add_ref(matter, memo, "a", [loc("unrelated.txt")], False)
+    pages.add_ref(matter, memo, "b", [loc("account.txt")], False)
+    pages.add_ref(matter, memo, "unused", [loc("account-v2.txt")], False)
+    assert pages.cited_docs(pages.Page(matter, memo)) == [(docs["account.txt"], ["b"]), (docs["unrelated.txt"], ["a"])]
+    cli.page(["docs", str(memo), "--list", str(ws / "sets" / "memo.list.jsonl"), *args])
+    h, items = lists.read(ws / "sets" / "memo.list.jsonl")
+    assert h["page"] == "../memo.md" and [it["fields"]["refs"] for it in items] == ["b", "a"]

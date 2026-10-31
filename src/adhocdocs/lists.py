@@ -64,3 +64,39 @@ def group(items, fields: dict, by: str):
     # groups appear in order of first occurrence; keep items together
     order = list(dict.fromkeys(it["group"] for it in out))
     return sorted(out, key=lambda it: order.index(it["group"]))
+
+
+def catalog(root) -> list[dict]:
+    """Every list file under ``root`` (not under hidden directories), newest
+    first: title, question, size, and for key sets how much is covered and
+    which points nothing supports."""
+    from pathlib import Path
+    root = Path(root)
+    out = []
+    for f in root.rglob("*.list.jsonl"):
+        rel = f.relative_to(root)
+        if any(part.startswith(".") for part in rel.parts[:-1]):
+            continue
+        try:
+            header, items = read(f)
+        except (ValueError, OSError):
+            continue
+        row = {"file": str(rel), "title": header.get("title"), "made_by": header.get("made_by"),
+               "items": len(items), "modified": f.stat().st_mtime}
+        for k in ("question", "query", "page"):
+            if header.get(k):
+                row[k] = header[k]
+        covered = sum(1 for it in items for c in it.get("children", []) if (c.get("fields") or {}).get("covered"))
+        if covered or "sources" in header:
+            row["covered"] = covered
+        if header.get("points"):
+            from .sets import points_report
+            r = points_report(header, items)
+            row["points"] = len(r["points"])
+            row["unsupported"] = r["unsupported"]
+        out.append(row)
+    out.sort(key=lambda r: -r["modified"])
+    for r in out:
+        from datetime import datetime, timezone
+        r["modified"] = datetime.fromtimestamp(r["modified"], timezone.utc).isoformat(timespec="seconds")
+    return out

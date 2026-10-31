@@ -16,6 +16,12 @@ convention:
 - The **header** may say what the set answers (``question``) and where its
   candidates came from (``sources``: each input list's file, query and
   search coverage), so "these 4 of 23" can be checked.
+- **Points** say what the set must establish: ``header.points`` is a list
+  of ``{"id", "text"}`` ("delivered": "The pallet reached Dock 4 on Feb.
+  24"), and an item's ``fields.points`` lists the IDs it supports.
+  :func:`points_report` finds points no document supports. A covered
+  document's points count for its representative, since it adds nothing
+  the representative lacks.
 
 Nothing is dropped: a covered document stays in the file, under what
 covers it, and can be promoted back with :func:`uncover`, which marks it
@@ -24,7 +30,8 @@ Condensing a key set again, with new candidates, keeps ``why``, ``kept``
 and ``restates`` judgments.
 """
 
-from . import locators, textnorm
+from . import lists, locators, textnorm
+from .literate import ID
 from .matter import Matter
 
 REASONS = ("duplicate", "same-text", "same-message", "quoted-in-later-email", "near-duplicate", "restates")
@@ -195,7 +202,7 @@ def condense(m: Matter, sources: list[tuple[str, dict, list[dict]]], title=None,
             pass
 
     first = sources[0][1] if sources else {}
-    header = {"type": "list", "v": 1, "title": title or first.get("title") or "key set",
+    header = {"type": "list", "v": 1, "title": title or question or first.get("title") or "key set",
               "columns": SET_COLUMNS, "made_by": "claude"}
     question = question or next((h["question"] for _, h, _ in sources if h.get("question")), None)
     if question:
@@ -207,6 +214,12 @@ def condense(m: Matter, sources: list[tuple[str, dict, list[dict]]], title=None,
         else:
             header["sources"].append({"file": f, "items": len(i),
                                       **{k: h[k] for k in ("title", "query", "search") if k in h}})
+    points = []
+    for _, h, _ in sources:
+        points += [p for p in h.get("points", []) if p["id"] not in {x["id"] for x in points}]
+    if points:
+        header["points"] = points
+        header["columns"] = _with_points_column(header["columns"])
     header["condensed"] = {"candidates": len(cands), "representatives": len(reps), "near": near, "quoted": quoted}
     counts = {}
     for it in items:
@@ -243,11 +256,19 @@ def _take(items, doc) -> list[dict]:
     return [it, *it.pop("children", [])]
 
 
-def set_fields(items, doc, values: dict):
-    """Set (or, with a value of None, remove) fields on an item or child."""
+def set_fields(items, doc, values: dict, header=None):
+    """Set (or, with a value of None, remove) fields on an item or child.
+    ``points`` is a comma-separated list of the header's point IDs."""
     i, j = _find(items, doc)
     it = items[i] if j is None else items[i]["children"][j]
     f = it.setdefault("fields", {})
+    if values.get("points") is not None:
+        known = [p["id"] for p in (header or {}).get("points", [])]
+        ids = [x.strip() for x in values["points"].split(",") if x.strip()]
+        unknown = [x for x in ids if x not in known]
+        if unknown:
+            raise ValueError(f"no such point: {', '.join(unknown)} (points: {', '.join(known) or 'none yet; add one with list point'})")
+        values = {**values, "points": list(dict.fromkeys(ids))}
     for k, v in values.items():
         if v is None:
             f.pop(k, None)
@@ -312,3 +333,66 @@ def uncover(items, docs):
         if moving:
             c["children"] = moving
         items.insert(i + 1, c)
+
+
+# -- points ----------------------------------------------------------------------------------------
+
+def _with_points_column(columns):
+    if "points" in columns:
+        return columns
+    i = columns.index("why") + 1 if "why" in columns else len(columns)
+    return [*columns[:i], "points", *columns[i:]]
+
+
+def set_point(header, pid: str, text: str):
+    """Add a point the set must establish, or change its text."""
+    if not ID.match(pid):
+        raise ValueError(f"bad point id {pid!r}: use lowercase letters, digits and hyphens")
+    points = header.setdefault("points", [])
+    for p in points:
+        if p["id"] == pid:
+            p["text"] = text
+            break
+    else:
+        points.append({"id": pid, "text": text})
+    header["columns"] = _with_points_column(header.get("columns") or lists.DEFAULT_COLUMNS)
+
+
+def remove_point(header, items, pid: str):
+    """Remove a point, and its ID from every item that supported it."""
+    before = len(header.get("points", []))
+    header["points"] = [p for p in header.get("points", []) if p["id"] != pid]
+    if len(header["points"]) == before:
+        raise ValueError(f"no such point: {pid}")
+    for it in items:
+        for x in (it, *it.get("children", [])):
+            f = x.get("fields") or {}
+            if pid in f.get("points", []):
+                f["points"] = [p for p in f["points"] if p != pid]
+                if not f["points"]:
+                    del f["points"]
+
+
+def points_report(header, items) -> dict:
+    """Which representatives support each point (directly, or ``via`` a
+    document they cover), the points nothing supports, and the
+    representatives that support no point."""
+    points = header.get("points", [])
+    support = {p["id"]: [] for p in points}
+    idle = []
+    for it in items:
+        mine = False
+        for x in (it, *it.get("children", [])):
+            for pid in (x.get("fields") or {}).get("points", []):
+                if pid in support:
+                    mine = True
+                    entry = {"loc": it["loc"], **({"why": it["fields"]["why"]} if (it.get("fields") or {}).get("why") else {})}
+                    if x is not it:
+                        entry["via"] = x["loc"]
+                    support[pid].append(entry)
+        if not mine:
+            idle.append(it["loc"])
+    return {"question": header.get("question"),
+            "points": [{**p, "supported_by": support[p["id"]]} for p in points],
+            "unsupported": [p["id"] for p in points if not support[p["id"]]],
+            "supporting_nothing": idle}

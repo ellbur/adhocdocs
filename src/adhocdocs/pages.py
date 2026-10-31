@@ -560,3 +560,19 @@ def update_refs(m: Matter, path: Path) -> list[dict]:
     if changed:
         Path(path).write_text(literate.replace_refs(source, new_refs))
     return changed
+
+
+def cited_docs(page: Page) -> list[tuple[str, list[str]]]:
+    """The documents a page quotes, cites or links to, in the order the prose
+    first does, each with the reference IDs that name it. References the
+    prose doesn't use are left out (``page check`` reports them)."""
+    out = {}
+    for d in literate.directives(page.prose):
+        ref = page.refs.get(d.id)
+        if not ref or not ref.get("doc"):
+            continue
+        doc = locators.parse({"doc": ref["doc"]}, page.m.objects)["doc"]
+        ids = out.setdefault(doc, [])
+        if d.id not in ids:
+            ids.append(d.id)
+    return list(out.items())

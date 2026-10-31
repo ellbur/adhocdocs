@@ -88,6 +88,10 @@ through to its source.
   each quotation's locators, rendered text, alterations, status and
   citation. It records an `export` event with both hashes in the workspace
   log.
+- **The documents a page cites** (`page docs`), in the order the prose
+  first quotes, cites or links them, as JSON or a list file (`--list`)
+  that names the page. A page and a key set ([LISTS.md](LISTS.md#key-sets))
+  can then describe the same documents.
 
 ## Not built yet
 
