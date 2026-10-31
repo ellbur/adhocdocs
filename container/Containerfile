@@ -10,7 +10,13 @@ RUN apt-get update \
 
 COPY pyproject.toml uv.lock /opt/adhocdocs/src/
 COPY src /opt/adhocdocs/src/src
-RUN pip install --no-cache-dir /opt/adhocdocs/src
+# exactly the locked versions
+RUN pip install --no-cache-dir uv \
+ && cd /opt/adhocdocs/src \
+ && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+ && pip install --no-cache-dir -r /tmp/requirements.txt \
+ && pip install --no-cache-dir --no-deps . \
+ && pip uninstall -y uv && rm /tmp/requirements.txt
 
 # The embedding model ships in the image: the session has no network to fetch it.
 ENV ADHOC_MODELS=/opt/adhocdocs/models

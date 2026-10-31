@@ -22,8 +22,11 @@ design doc), or **proposed**.
 These partly belong under Principle 2: Claude must not be able to undermine
 them.
 
-- **Read-only originals.** *Designed*: the store is mounted read-only
-  ([CONTAINER.md](CONTAINER.md)).
+- **Read-only originals.** *Built*: the store is mounted read-only in the
+  session container ([CONTAINER.md](CONTAINER.md)).
+- **The session container.** *Built* on Linux: `adhoc open <matter>` runs
+  Claude Code with the matter's documents only and no network except an
+  allowlist proxy ([CONTAINER.md](CONTAINER.md)).
 - **Hashing and provenance.** *Built*: content-addressed store, and every
   change recorded in the provenance log; exact duplicates share a content
   hash.

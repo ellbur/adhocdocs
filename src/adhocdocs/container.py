@@ -110,7 +110,8 @@ def session_args(m: Matter, name: str, sockets: Path, command=()) -> list[str]:
     root = m.root
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
            "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name}
-    args = ["run", "--rm", "-it", "--name", name, "--hostname", "adhoc",
+    tty = ["-it"] if sys.stdin.isatty() else ["-i"]
+    args = ["run", "--rm", *tty, "--name", name, "--hostname", "adhoc",
             "--network", "none",          # loopback only: no route out, no DNS
             f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
@@ -124,7 +125,7 @@ def session_args(m: Matter, name: str, sockets: Path, command=()) -> list[str]:
     for k in PASS_THROUGH:
         if os.environ.get(k):
             args += ["-e", k]          # podman copies the value from our environment
-    return args + [IMAGE, *command]
+    return args + [IMAGE, *(["--", *command] if command else [])]
 
 
 def wait_for(path: Path, seconds=10) -> bool:

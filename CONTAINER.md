@@ -137,6 +137,20 @@ firms, and the files and options are the same as Docker's. On macOS and
 Windows it runs in `podman machine`. The viewer stays native and reads the
 matter store on the host directly, not through the VM.
 
+**Tested** on Linux with Podman 6.1 (rootless):
+- The store and annotations are read-only in the session; the workspace and `claude-home` are writable.
+- The session has only a loopback interface, no DNS, and no direct route out.
+- The proxy refuses `example.com` and passes `api.anthropic.com`.
+- `claude` reaches the API through the proxy and keeps its config in the matter's `claude-home`.
+- `ann` writes are recorded as `claude`, and writing the log directly fails.
+- `search`, `idx`, semantic search (offline, model in the image) and `view` all work from inside.
+
+Signing in has to be done by a person, so it hasn't been tested yet.
+
+**Not built yet:**
+- macOS and Windows: Unix sockets don't cross `podman machine`'s file sharing, so there the proxy, viewer and annotation API would need another way into the VM.
+- Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc image build --no-cache` gets the latest.
+
 **Observable, not changeable:** `adhoc status` in the container reports the
 matter, mounts, read-only state, allowlist and viewer status, and nothing
 about credentials.
