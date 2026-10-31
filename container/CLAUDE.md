@@ -34,8 +34,10 @@ has `--help` with the details. Read the help before first using a tool.
 
 1. **Never type a quotation into durable work.** In pages, notes and
    exports, every quotation is a reference (`:q{#id}` plus a `refs` entry
-   made by `page ref add` from a locator), and the renderer fills in the
-   words. A quotation can also show the words' formatting (`as=rich`), a
+   made by `page ref add`), and the renderer fills in the words. To quote
+   a passage you've read, give its words: `page ref add page.md <id> --in
+   <doc> --words "…"` (repeat `--words` to elide); from a search hit or
+   selection, pass its locator. A quotation can also show the words' formatting (`as=rich`), a
    picture of the page (`as=image`), or spreadsheet cells (`as=table`). In conversation you may quote freely, but say when you're
    paraphrasing.
 2. **Searches have coverage.** Every search reports what it searched

@@ -768,6 +768,8 @@ PAGE_HELP = """\
 Literate pages: Markdown whose quotations are references to document text.
 
   page ref add page.md <id> <locator>...   add a reference (several locators: an elided quotation)
+  page ref add page.md <id> --in <doc> --words "<the document's words>" [--words …]
+                                           the same, found from the words to quote
   page check page.md                       resolve every reference and lint
   page refs update page.md                 rewrite re-anchored references
   page render page.md [-o out.html]        static HTML (the viewer fills in quotations)
@@ -808,10 +810,19 @@ def page(argv=None):
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
     s.add_argument("-o", "--out", required=True)
     s.add_argument("--allow-reanchored", action="store_true")
-    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>...")
+    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>... | --in DOC --words WORDS...",
+                       description="Add a reference from locators, or from the words to quote: "
+                       "--words is matched exactly in the document's text, except that whitespace "
+                       "(line breaks too) and straight/curly quote marks may differ, and must occur "
+                       "once. Repeat --words for an elided quotation (in order).")
     s.add_argument("file")
     s.add_argument("id")
-    s.add_argument("locators", nargs="+", help="string or JSON locators (e.g. a search hit's loc)")
+    s.add_argument("locators", nargs="*", help="string or JSON locators (e.g. a search hit's loc)")
+    s.add_argument("--in", dest="in_doc", metavar="DOC",
+                   help="with --words: a doc locator or hash prefix, or part of its file name; "
+                        "default: whichever one document has the words")
+    s.add_argument("--words", action="append", help="the words to quote, as they appear in the document")
+    s.add_argument("--layer", metavar="VIEW", help="with --words: search this layer view (e.g. ocr), not the primary")
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
@@ -848,7 +859,10 @@ def page(argv=None):
         elif a.cmd == "export":
             out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
         elif a.cmd == "ref-add":
-            out(pages.add_ref(m, a.file, a.id, a.locators, a.replace))
+            if bool(a.locators) == bool(a.words):
+                raise pages.PageError("give locators, or --words (with --in), not both")
+            locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
+            out(pages.add_ref(m, a.file, a.id, locs, a.replace))
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)

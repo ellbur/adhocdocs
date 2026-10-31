@@ -32,7 +32,10 @@ through to its source.
 
 - **References come from the store.** `page ref add page.md <id>
   <locator>...` takes a search hit's `loc` (or several, for an elided
-  quotation) and writes the layer and quote fingerprint. A hand-written
+  quotation) and writes the layer and quote fingerprint. `--in <doc>
+  --words "…"` finds the locator from the words instead: they must occur
+  once in the document's text, matched exactly except for whitespace and
+  straight or curly quote marks, so the quotation is still the layer's. A hand-written
   fingerprint that doesn't match makes the reference broken; it can't
   change the text.
 - **Every change to the words is marked** (`[T]`, `[the vendor]`, `[sic]`,
