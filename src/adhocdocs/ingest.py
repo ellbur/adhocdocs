@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from .extract import Extraction, extract
+from .extract import Extraction, extract, unextracted_kind
 from .matter import Matter
 from .objects import object_id
 
@@ -58,7 +58,7 @@ def ingest_bytes(m: Matter, data: bytes, name: str | None, identity: dict, repor
         ext = extract(name, data)
     except Exception as e:  # an unreadable original is still in the matter, just unextracted
         print(f"warning: could not extract {name}: {e}", file=sys.stderr)
-        ext = Extraction(kind="other")
+        ext = Extraction(kind=unextracted_kind(name, data))
     if content not in state.layers:
         store_layers(m, content, ext)
 

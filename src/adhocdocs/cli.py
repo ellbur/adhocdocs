@@ -211,7 +211,7 @@ def layers_ocr(argv):
     """A new OCR layer, made in the workspace (the store is read-only). It
     joins the workspace change feed, so indexes pick it up; search it with
     --layers ocr or --layers all."""
-    from .extract import Extraction
+    from .extract import Extraction, unextracted_kind
     from .extract.pdf import ocr_layer
     from .ingest import store_layers
     p = parser("layers ocr", layers_ocr.__doc__)
@@ -224,11 +224,16 @@ def layers_ocr(argv):
     state = m.state
     content = state.documents[doc]
     meta = m.objects.get_object(state.metadata[doc])
-    if meta.get("kind") not in ("pdf", "image"):
+    data = m.objects.get_bytes(content)
+    kind = meta.get("kind")
+    if kind not in ("pdf", "image"):
+        # matters ingested before failed extractions kept their kind recorded a PDF as "other"
+        kind = unextracted_kind(meta.get("name"), data)
+    if kind not in ("pdf", "image"):
         raise ValueError(f"only PDFs and images can be OCRed (this is {meta.get('kind')})")
-    layer = ocr_layer(m.objects.get_bytes(content), meta["kind"], meta.get("name"), a.dpi, a.psm)
+    layer = ocr_layer(data, kind, meta.get("name"), a.dpi, a.psm)
     before = {l.id for l in state.layers.get(content, [])}
-    store_layers(m, content, Extraction(kind=meta["kind"], layers=[layer]), log="workspace", objects=m.workspace_objects)
+    store_layers(m, content, Extraction(kind=kind, layers=[layer]), log="workspace", objects=m.workspace_objects)
     new = [l for l in m.state.layers.get(content, []) if l.id not in before]
     confs = [g["conf"] for g in layer.geometry if "conf" in g]
     out({"doc": doc, "layer": new[0].id if new else "(identical to an existing layer)", "view": "ocr",
