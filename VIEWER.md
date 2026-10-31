@@ -93,7 +93,13 @@ needs no thought (open, step, point) is handled by the viewer at once.
 | `data-tags="…"`, `data-notes="…"` | live tags and note counts |
 
 **Input:** form controls' values are pane state in `view state`, so Claude
-reads them at the next prompt ("log the ones I ticked").
+reads them at the next prompt ("log the ones I ticked"). A form with
+`action="svc:NAME"` is answered at once by a service Claude runs in the
+container (`view serve NAME -- cmd`). The service gets the form values and
+the pane's selection as JSON and prints the pane's new HTML. It listens on
+a socket in the directory the session shares with the host. The viewer
+connects only to `svc-*.sock` there, and sanitizes the reply like any
+pane.
 
 ## State
 
@@ -106,15 +112,12 @@ whether the user, Claude or a pane went there.
 
 ## Not built yet
 
-- `svc:` services (a form submitted to code in the container that answers
-  with new HTML). Form values are recorded, but submitting does nothing.
 - Multiple top-level windows (panes tile in one window).
 - The spreadsheet grid view (sheets show as text), and selecting cells.
-- In the status bar: printed page labels and Bates numbers.
-- A visible placeholder with the URL for remote images in email (they are
-  removed), and `cid:` inline images.
-- Shading low-confidence OCR words exists; a marker on literate-page quotes
-  that opens the page image does not.
+- `cid:` inline images in email. Remote images are not loaded; each shows a
+  placeholder with its URL, since its presence may be evidence.
+- A marker on literate-page quotes that opens the page image (shading
+  low-confidence OCR words exists).
 - The 100 ms target hasn't been measured. Pages render on demand at the
   pane's width, and the next documents' metadata is prefetched, but page
   images are not.
@@ -128,5 +131,6 @@ whether the user, Claude or a pane went there.
   served with `script-src 'none'`.
 - Tags and notes editable in the viewer, written as the user by a host-only
   command.
-- Form values as pane state read at the next prompt; `svc:` services later.
+- Form values as pane state read at the next prompt; `svc:` services for
+  immediate answers.
 - Default list panes built on the same mechanism as Claude's panes.

@@ -75,8 +75,8 @@ shows its tags as chips and lists range tags and note threads beside it,
 with Claude's marked differently from the user's. These are the viewer's
 own UI, not web content.
 
-*Not built:* applying a tag to a family or duplicates from the viewer (`ann
-tag --family/--dupes` does it from the CLI).
+In the palette, Shift+Enter tags the document's whole family and Ctrl+Enter
+tags it and its exact duplicates (`ann tag --family/--dupes` from the CLI).
 
 ## Decided
 

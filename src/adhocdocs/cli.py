@@ -637,8 +637,14 @@ Drive the document viewer. The viewer runs on the host (the user starts it);
 this only talks to it. Locators are string or JSON; hash prefixes work.
 
 Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
-Space page, m mark, t tag palette, N note, tag hotkeys, v layer, f mode,
-Tab pane, Alt-drag a region on a page, ? help.
+Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
+the duplicates), N note, tag hotkeys, v layer, f mode, Tab pane, Alt-drag
+a region on a page, ? help.
+
+Services: a pane's <form action="svc:NAME"> is answered immediately by
+`view serve NAME -- cmd …` (run it in the background), without waiting for
+the next prompt. cmd gets {"form", "selection", "pane"} as JSON on stdin and
+prints the pane's new HTML.
 """
 
 
@@ -684,13 +690,22 @@ def view(argv=None):
     s.add_argument("--limit", type=int, default=50)
     s = sub.add_parser("clear-marks")
     s.add_argument("--pane")
+    s = sub.add_parser("serve", help="answer a pane's <form action=\"svc:NAME\"> with a command (run in the background)")
+    s.add_argument("name")
+    s.add_argument("command", nargs="+", help="after --: gets {form, selection, pane} as JSON on stdin, prints the new HTML")
     matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
 
     def loc(x):
+        if x.startswith("bates:"):            # the first document the Bates range touches
+            from .produce import resolve_bates
+            return locators.format(resolve_bates(m, x)[0]["loc"])
         return locators.format(locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects))
 
+    if a.cmd == "serve":
+        viewmod.serve(m, a.name, a.command)
+        return
     c = {"cmd": a.cmd}
     if a.cmd in ("open", "highlight"):
         c["loc"] = loc(a.loc)

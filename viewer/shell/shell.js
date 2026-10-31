@@ -518,7 +518,13 @@ class DocumentPane {
     if (this.mode === "page" && this.pageEls) {
       const top = this.body.scrollTop, bottom = top + this.body.clientHeight;
       const vis = this.pageEls.filter((p) => p.offsetTop < bottom && p.offsetTop + p.clientHeight > top).map((p) => Number(p.dataset.page));
-      if (vis.length) { this.visible = { page: [vis[0], vis[vis.length - 1]] }; text = `page ${vis[0]} of ${this.pageEls.length}`; }
+      if (vis.length) {
+        this.visible = { page: [vis[0], vis[vis.length - 1]] };
+        const n = vis[0], label = this.info.page_labels?.[n];
+        text = `page ${n} of ${this.pageEls.length}` + (label && label !== String(n) ? ` (p. ${label})` : "");
+        const bates = this.batesFor(n);
+        if (bates) text += " · " + bates;
+      }
     } else if (this.mode === "text") {
       const spans = [...this.body.querySelectorAll("[data-s]")];
       const top = this.body.getBoundingClientRect().top, bottom = top + this.body.clientHeight;
@@ -531,6 +537,17 @@ class DocumentPane {
     st.textContent = text;
   }
 
+  batesFor(page) {
+    for (const r of [...(this.info?.bates || [])].reverse()) {
+      if (!r.page_map) return page === 1 ? r.begin : null;
+      const i = r.page_map.indexOf(page);
+      if (i >= 0) {
+        const m = /^(.*?)(\d+)$/.exec(r.begin);
+        return m[1] + String(Number(m[2]) + i).padStart(m[2].length, "0");
+      }
+    }
+    return null;
+  }
   async step(delta) {
     if (!this.sequence) return toast("No sequence in this pane");
     const s = this.sequence;
@@ -624,7 +641,12 @@ class WebPane {
     });
     d.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      toast("Form submissions to services are not supported yet; the values are recorded for Claude.");
+      const action = ev.target.getAttribute("action") || "";
+      if (!action.startsWith("svc:")) return toast("Form values are recorded for Claude; this form has no service.");
+      const values = {};
+      for (const [k, v] of new FormData(ev.target, ev.submitter)) (values[k] ??= []).push(v);
+      for (const k in values) if (values[k].length === 1) values[k] = values[k][0];
+      serve(this, action.slice(4), { form: values, selection: this.selected, pane: this.id });
     });
     const record = (ev) => {
       const f = ev.target;
@@ -754,6 +776,27 @@ function fillTags(d) {
   }
 }
 
+// -- services: a pane's form, answered by code Claude runs in the container ------------------
+
+const serving = new Map();
+let serveSeq = 0;
+function serve(p, name, values) {
+  const id = ++serveSeq;
+  serving.set(id, p);
+  $(".status", p.head).textContent = "asking " + name + "…";
+  post({ type: "svc", id, name, values });
+}
+adhoc.served = (id, result) => {
+  const p = serving.get(id);
+  serving.delete(id);
+  if (!p) return;
+  $(".status", p.head).textContent = "";
+  if (result.error) return toast(result.error);
+  p.sequence = null;
+  p.load(result.content);
+  changed();
+};
+
 // -- annotations ----------------------------------------------------------------------------
 
 async function refreshAnnotations() {
@@ -775,10 +818,29 @@ adhoc.annotated = (id, result) => {
   refreshAnnotations();
   res?.(result);
 };
-async function applyTag(tag) {
+async function familyOf(doc) {
+  let top = await docInfo(doc);
+  while (top.parent) top = await docInfo(top.parent.doc);
+  const out = [], todo = [top];
+  while (todo.length) {
+    const d = todo.shift();
+    out.push({ doc: d.doc });
+    for (const c of d.children) todo.push(await docInfo(c.doc));
+  }
+  return out;
+}
+async function applyTag(tag, scope = "selection") {
   const p = focusedPane();
   if (!p) return;
-  const targets = p.targets();
+  let targets = p.targets();
+  if (scope !== "selection") {
+    const docs = [...new Set(targets.map((t) => t.doc))];
+    targets = [];
+    for (const d of docs) {
+      if (scope === "family") targets.push(...await familyOf(d));
+      else targets.push({ doc: d }, ...(await docInfo(d)).duplicates.map((x) => ({ doc: x })));
+    }
+  }
   if (!targets.length) return toast("Nothing selected to tag");
   const has = (t) => adhoc.annotations.tags.some((x) => x.tag === tag && JSON.stringify([x.target.doc, x.target.layer || null, x.target.select || null]) ===
     JSON.stringify([t.doc, t.layer || null, t.select || null]));
@@ -808,6 +870,7 @@ function openPalette() {
     else if (ev.key === "ArrowDown") { on = Math.min(on + 1, ms.length - 1); draw(); }
     else if (ev.key === "ArrowUp") { on = Math.max(on - 1, 0); draw(); }
     else if (ev.key === "Enter") {
+      // Enter: the selection (or document); Shift+Enter: its whole family; Ctrl+Enter: it and its exact duplicates
       box.hidden = true;
       let tag = ms[on]?.tag;
       if (!tag && input.value.trim()) {
@@ -815,7 +878,7 @@ function openPalette() {
         const r = await annotate({ op: "define-tag", tag });
         if (r.error || r.refused) return;
       }
-      if (tag) applyTag(tag);
+      if (tag) applyTag(tag, ev.shiftKey ? "family" : ev.ctrlKey ? "dupes" : "selection");
     }
   };
 }

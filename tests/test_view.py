@@ -27,8 +27,9 @@ def test_socket_path_rule(tmp_path, monkeypatch):
     long = Matter.create(tmp_path / ("x" * 120))
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1")
     # the same hash the viewer computes (see viewer/src/api.rs)
-    assert view.socket_path(long).parent == Path("/run/user/1/adhocdocs")
-    assert view.socket_path(long).name.endswith(".view.sock")
+    assert view.socket_path(long).parent.parent == Path("/run/user/1/adhocdocs")
+    assert view.socket_path(long).name == "viewer.sock"
+    assert view.service_socket(long, "x").parent == view.socket_path(long).parent      # services are per matter
 
 
 def test_list_html(m, tmp_path):
