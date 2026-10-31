@@ -1,8 +1,9 @@
 # Document Lists
 
-*Status: list files and the `list` CLI are implemented in
-[`lists.py`](src/adhocdocs/lists.py) (the format is in its docstring);
-`search --list` writes them. The list display is designed, not built.*
+*Status: built. List files and the `list` CLI are in
+[`lists.py`](src/adhocdocs/lists.py) (the format is in its docstring), and
+`search --list` writes them. `view list` shows one in the viewer
+([`view.py`](src/adhocdocs/view.py)).*
 
 A **list** is an ordered set of documents or locators with columns. The
 **list display** shows one in a viewer pane and is the usual way to browse
@@ -23,10 +24,11 @@ render time from the `fields` index: `id`, `custodian`, `name`, `kind`,
 `date`, `from`, `to`, `cc`, `subject`, `pages`, `family`, `dupes`, plus the
 live columns `tags` and `notes`.
 
-## The list display (not built)
+## The list display
 
-`view list <file> [--preview <doc-pane>]` renders the file to static HTML for
-a web pane ([VIEWER.md](VIEWER.md)).
+`view list <file>` renders the file to static HTML for a web pane
+([VIEWER.md](VIEWER.md)), with a new linked preview pane unless given one
+(`--preview`).
 
 - **Linked preview pane.** Moving the selection (arrows, `j`/`k`) opens the
   row in a linked document pane at once; the viewer prefetches the next few.
@@ -40,10 +42,6 @@ a web pane ([VIEWER.md](VIEWER.md)).
 - **Large lists** are split into HTML pages of about 500 rows in one bundle.
   Selection, sequence and preview work across pages because they use the
   file.
-
-This needs from the viewer, for every web pane: directory bundles,
-multi-selection of `data-locator` elements, live `data-tags`/`data-notes`
-attributes, linked panes, and sequences taken from a list file.
 
 `view state` reports a list pane's file path, position, length, selection
 and visible rows, so Claude can work on exactly what the user sees ("make a

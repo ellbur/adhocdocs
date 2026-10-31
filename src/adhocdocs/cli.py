@@ -6,11 +6,12 @@ directory above the current one that has a ``store/``.
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
-from . import annapi, annotations, lists, locators
+from . import annapi, annotations, lists, locators, view as viewmod
 from .matter import Matter, MatterNotFound
 
 
@@ -32,7 +33,8 @@ def run(fn):
         except annotations.Refused as e:
             print(json.dumps({"refused": str(e)}), file=sys.stderr)
             sys.exit(1)
-        except (MatterNotFound, locators.LocatorError, annapi.Unavailable, ValueError, KeyError) as e:
+        except (MatterNotFound, locators.LocatorError, annapi.Unavailable, viewmod.NotRunning, viewmod.ViewerError,
+                ValueError, KeyError) as e:
             print(json.dumps({"error": str(e).strip("'\"")}), file=sys.stderr)
             sys.exit(1)
         except BrokenPipeError:
@@ -55,6 +57,11 @@ def adhoc(argv=None):
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
+    s = sub.add_parser("view", help="start the document viewer for this matter")
+    s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
+    s.add_argument("--wait", action="store_true", help="run in the foreground")
+    s = sub.add_parser("annotate-as-user", help=argparse.SUPPRESS)
+    s.add_argument("--user", required=True)
     s = sub.add_parser("ann-api", help="serve the annotation API (writes stamped `claude`) on a Unix socket")
     s.add_argument("--socket", help="default: $ADHOC_ANN_SOCKET or <matter>/run/annotations.sock")
     a = p.parse_args(argv)
@@ -75,6 +82,11 @@ def adhoc(argv=None):
     elif a.cmd == "withdraw":
         doc = locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"]
         out(m.logs["store"].append(op="withdraw", doc=doc, reason=a.reason))
+    elif a.cmd == "view":
+        out({"viewer": viewmod.launch(m, a.user, a.wait), "socket": str(viewmod.socket_path(m))})
+    elif a.cmd == "annotate-as-user":
+        # The viewer's write path for the user's own tags and notes (host only).
+        out({"events": annotations.write(m, f"user:{a.user}", json.loads(sys.stdin.read()))})
     elif a.cmd == "ann-api":
         path = a.socket or annapi.socket_path(m)
         print(json.dumps({"serving": str(path)}), file=sys.stderr, flush=True)
@@ -579,9 +591,103 @@ def page(argv=None):
         sys.exit(1)
 
 
+# -- view ------------------------------------------------------------------------------------
+
+VIEW_HELP = """\
+Drive the document viewer. The viewer runs on the host (the user starts it);
+this only talks to it. Locators are string or JSON; hash prefixes work.
+
+Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
+Space page, m mark, t tag palette, N note, tag hotkeys, v layer, f mode,
+Tab pane, Alt-drag a region on a page, ? help.
+"""
+
+
+@run
+def view(argv=None):
+    p = parser("view", VIEW_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("open", help="open a locator, scrolled to and briefly highlighted")
+    s.add_argument("loc")
+    s.add_argument("--pane")
+    s.add_argument("--new-pane", action="store_true")
+    s.add_argument("--layer", dest="view_", help="layer view: native, ocr, transcript, …")
+    s.add_argument("--mode", choices=["page", "flow", "text"])
+    s = sub.add_parser("highlight", help="mark a place for the user; stays until cleared")
+    s.add_argument("loc")
+    s.add_argument("--label")
+    s.add_argument("--pane")
+    s = sub.add_parser("clear-highlights")
+    s.add_argument("--pane")
+    s = sub.add_parser("sequence", help="give a document pane an ordered list to step through")
+    s.add_argument("locs", nargs="*", help="locators, a list file (--list), or - for stdin")
+    s.add_argument("--list", dest="list_file")
+    s.add_argument("--pane")
+    s = sub.add_parser("pane", help="show static HTML (a file or a directory bundle with index.html)")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--new", action="store_true")
+    g.add_argument("--update", metavar="PANE")
+    s.add_argument("path")
+    s.add_argument("--title")
+    s.add_argument("--link", metavar="DOC_PANE", help="a document pane that follows the selection")
+    s.add_argument("--preview-new", action="store_true", help="make a new linked document pane")
+    s = sub.add_parser("list", help="show a list file, with a linked preview pane")
+    s.add_argument("file")
+    s.add_argument("--pane", help="replace this list pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE")
+    s = sub.add_parser("close")
+    s.add_argument("pane")
+    s = sub.add_parser("layout")
+    s.add_argument("layout", choices=["single", "split-v", "split-h", "grid"])
+    sub.add_parser("state", help="windows, panes, what's visible, selections, marks, form values")
+    sub.add_parser("selection", help="the focused pane's selection and marks")
+    s = sub.add_parser("history")
+    s.add_argument("--limit", type=int, default=50)
+    s = sub.add_parser("clear-marks")
+    s.add_argument("--pane")
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+
+    def loc(x):
+        return locators.format(locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects))
+
+    c = {"cmd": a.cmd}
+    if a.cmd in ("open", "highlight"):
+        c["loc"] = loc(a.loc)
+        c.update(pane=a.pane, label=getattr(a, "label", None))
+        if a.cmd == "open":
+            c.update(new_pane=a.new_pane, view=a.view_, mode=a.mode)
+    elif a.cmd == "sequence":
+        if a.list_file:
+            _, items = lists.read(a.list_file)
+            raw = [it["loc"] for it in items]
+        elif a.locs == ["-"]:
+            raw = [line.strip() for line in sys.stdin if line.strip()]
+        else:
+            raw = a.locs
+        c.update(locs=[loc(x if isinstance(x, str) else json.dumps(x)) for x in raw], pane=a.pane)
+    elif a.cmd == "pane":
+        c.update(files=viewmod.files_of(Path(a.path)), title=a.title, link=a.link, preview_new=a.preview_new, update=a.update)
+    elif a.cmd == "list":
+        files, sequence = viewmod.list_html(m, Path(a.file))
+        header, _ = lists.read(a.file)
+        c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence,
+             "title": header.get("title") or Path(a.file).stem, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd in ("close",):
+        c["pane"] = a.pane
+    elif a.cmd == "layout":
+        c["layout"] = a.layout
+    elif a.cmd == "history":
+        c["limit"] = a.limit
+    elif a.cmd in ("clear-highlights", "clear-marks"):
+        c["pane"] = a.pane
+    out(viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False}))
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

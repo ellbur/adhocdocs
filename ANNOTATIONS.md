@@ -1,9 +1,9 @@
 # Tags and Notes
 
-*Status: the log, its rules, the annotation API and the `ann` CLI are built
-([`annotations.py`](src/adhocdocs/annotations.py) has the event format,
-[`annapi.py`](src/adhocdocs/annapi.py) the API, `ann --help` the usage).
-Editing in the viewer is designed, not built.*
+*Status: built: the log and its rules
+([`annotations.py`](src/adhocdocs/annotations.py) has the event format), the
+annotation API ([`annapi.py`](src/adhocdocs/annapi.py)) and `ann` CLI for
+Claude, and editing in the viewer for the user.*
 
 **Tags** and **notes** record judgments about documents ("hot",
 "privileged", "contradicts Jones's testimony"). Both the user and Claude
@@ -50,7 +50,8 @@ validate and append, so the viewer must too.
 
 ## Authorship doesn't depend on Claude
 
-- The viewer writes as `user:<id>`, in its own process on the host.
+- The viewer writes as `user:<id>`, through a host-only command (`adhoc
+  annotate-as-user`) that applies the same rules.
 - The container writes only through the **annotation API**: a server the
   launcher runs on the host (`adhoc ann-api`), on a Unix socket mounted into
   the container. It stamps every write `claude`, whatever the request says.
@@ -65,15 +66,17 @@ validate and append, so the viewer must too.
 Until the container exists, Claude runs on the host and could append to the
 log directly. The guarantee only holds once the log is mounted read-only.
 
-## In the viewer (not built)
+## In the viewer
 
-Keyboard first: tag hotkeys (on the document, or on the selection); a
-one-key type-ahead tag palette that can also define tags; a note key that
-opens a plain text box on the selection or document; margin markers by tag
-color, distinguishing the user's from Claude's; a palette command to apply a
-tag to family or duplicates. These are native UI, not web content. Until the
-viewer exists, the user has no direct way to tag; they ask Claude, which
-tags as itself.
+Keyboard first: tag hotkeys (on the selection, else the document, or on the
+selected rows of a list); `t` opens a type-ahead tag palette that can also
+define a tag; `N` opens a note on the selection or document. A document pane
+shows its tags as chips and lists range tags and note threads beside it,
+with Claude's marked differently from the user's. These are the viewer's
+own UI, not web content.
+
+*Not built:* applying a tag to a family or duplicates from the viewer (`ann
+tag --family/--dupes` does it from the CLI).
 
 ## Decided
 
