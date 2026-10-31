@@ -246,6 +246,7 @@ class DocumentPane {
     }).observe(this.body);
   }
   async relayout() {
+    this.updateStatus();                      // where it is now, even if the scroll hasn't been reported yet
     const top = this.visible?.page?.[0];
     await this.render();
     if (top && this.pageEls?.[top - 1]) this.body.scrollTop = this.pageEls[top - 1].offsetTop - 8;
@@ -790,6 +791,8 @@ class DocumentPane {
         text = `page ${n} of ${this.pageEls.length}` + (label && label !== String(n) ? ` (p. ${label})` : "");
         const bates = this.batesFor(n);
         if (bates) text += " · " + bates;
+        const ex = this.exhibitFor(n);
+        if (ex) text += " · " + ex;
       }
     } else if (this.mode === "grid" && this.grid) {
       text = this.gridStatus();
@@ -813,6 +816,15 @@ class DocumentPane {
         const m = /^(.*?)(\d+)$/.exec(r.begin);
         return m[1] + String(Number(m[2]) + i).padStart(m[2].length, "0");
       }
+    }
+    return null;
+  }
+  // the latest exhibit with this page in it, and the page's number in the exhibit
+  exhibitFor(page) {
+    for (const x of [...(this.info?.exhibits || [])].reverse()) {
+      if (!x.page_map) return x.label;
+      const i = x.page_map.indexOf(page);
+      if (i >= 0) return `${x.label}, p. ${i + 1}`;
     }
     return null;
   }

@@ -219,7 +219,8 @@ impl Handler {
             }
             let info = json!({"doc": doc, "content": content, "meta": meta, "custodian": obj.get("custodian"),
                               "layers": layers, "children": children, "parent": parent,
-                              "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc)});
+                              "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
+                              "exhibits": exhibits_for(&m.root, &doc)});
             (doc, content, info, kind, name)
         };
         let mut info = info;
@@ -352,6 +353,23 @@ fn bates_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
         for r in lines.filter(|r| r["doc"] == doc) {
             out.push(json!({"production": head["name"], "prefix": head["prefix"], "digits": head["digits"],
                             "begin": r["begin"], "end": r["end"], "page_map": r["page_map"]}));
+        }
+    }
+    out
+}
+
+/// The exhibits a document became (workspace/exhibits/*/exhibits.jsonl), oldest set first.
+fn exhibits_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
+    let mut out = vec![];
+    let Ok(dirs) = std::fs::read_dir(root.join("workspace/exhibits")) else { return out };
+    let mut dirs: Vec<_> = dirs.flatten().map(|d| d.path()).collect();
+    dirs.sort();
+    for d in dirs {
+        let Ok(text) = std::fs::read_to_string(d.join("exhibits.jsonl")) else { continue };
+        let mut lines = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok());
+        let Some(head) = lines.next() else { continue };
+        for r in lines.filter(|r| r["doc"] == doc) {
+            out.push(json!({"set": head["name"], "label": r["label"], "page_map": r["page_map"]}));
         }
     }
     out
