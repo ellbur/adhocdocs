@@ -1,299 +1,130 @@
 # The Container
 
-*Status: decided (see [Decided](#decided)), not yet built.*
+*Status: decided, not built. The matter layout the tools use is in
+[`matter.py`](src/adhocdocs/matter.py).*
 
-## The problem, in plain terms
+Claude Code can run any code, so the only way to be sure it sees one
+matter's documents and nothing else (Principle 2) is a box holding only that
+matter. The box must:
 
-Claude Code can run any code it likes. So the only way to be sure it sees
-one matter's documents and nothing else (Principle 2) is to run it in a
-box that holds only that matter's documents. That box is the container.
-
-The container has to do three things at once:
-
-1. **Keep matters apart.** Nothing from matter A is reachable while working
-   on matter B: not documents, not old transcripts, not caches.
-2. **Feel close to invisible.** The user types `adhoc open smith-v-jones`
-   and is talking to Claude, inside the box, a moment later.
-3. **Follow Anthropic's rules.** Each user signs in with their own Claude
-   account, and adhocdocs never touches those credentials or sits between
-   the user and Claude Code.
-
-The third point decides more of the design than it first seems to, so it
-comes first.
+1. **Keep matters apart:** no documents, transcripts or caches cross over.
+2. **Feel close to invisible:** `adhoc open smith-v-jones`, and the user is
+   talking to Claude inside it.
+3. **Follow Anthropic's rules:** each user signs in with their own account,
+   and adhocdocs never touches credentials or sits between the user and
+   Claude Code.
 
 ## What Anthropic's terms require
 
-Sources, read on 2026-10-30:
-[Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
-(and the [authentication](https://code.claude.com/docs/en/authentication)
-page it links), the
-[Commercial Terms](https://www.anthropic.com/legal/commercial-terms), and
-the [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), which
-govern Free, Pro and Max plans. This is our reading, not legal advice.
+Our reading on 2026-10-30, not legal advice, of
+[Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance),
+[authentication](https://code.claude.com/docs/en/authentication), the
+[Commercial Terms](https://www.anthropic.com/legal/commercial-terms) and the
+[Consumer Terms](https://www.anthropic.com/legal/consumer-terms):
 
-### Sign-in
+- **Sign-in goes through Anthropic's own flow.** Developers "may not collect,
+  store, or intermediate Claude.ai credentials or session tokens", nor offer
+  Claude.ai login in their own apps. An end user may sign in to "the
+  unmodified Claude Code binary with their own Claude subscription".
+- **Users' own API keys are fine,** including keys configured "in a
+  development environment, secrets manager, or machine image for use by the
+  customer's own authorized users".
+- **Running Claude Code inside a product:** the binary "must not be
+  modified", must be "installed and run as published", and we may not
+  "remove, disable, or restrict any authentication method". There's no
+  paying for, reselling or intermediating usage. adhocdocs runs locally as
+  open source, so it may not be a "product or service", but we design as if
+  it were.
+- **No automated use on subscriptions** (Consumer Terms §3.7). Claude writing
+  and running scripts in a session is ordinary use. Driving Claude Code from
+  a script (`claude -p` in a loop) needs an API key.
+- **Branding:** we can say adhocdocs "runs Claude Code", but "Claude" and
+  "Anthropic" can't be in its name or logo.
+- **Confidentiality, for users to know:** Free, Pro and Max fall under the
+  Consumer Terms, which allow training unless the user opts out. Team,
+  Enterprise and API fall under the Commercial Terms, with no training on
+  customer content. adhocdocs says this plainly at setup and recommends
+  nothing.
 
-- **Sign-in must go through Anthropic's own flow.** The legal page: "developers
-  may not collect, store, or intermediate Claude.ai credentials or session
-  tokens — sign-in to a Claude account must complete through Anthropic's own
-  flow." And: third-party developers may not "offer Claude.ai login into their
-  own applications, or … route requests through Free, Pro, or Max plan
-  credentials on behalf of their users."
-- **Signing in to the real binary is fine.** The same section says it does not
-  "prevent an end user from signing in to the unmodified Claude Code binary
-  with their own Claude subscription".
-- **Users' own API keys are fine** when the usage is billed to the key's owner
-  and not resold or intermediated. The page explicitly allows "configuring an
-  API key in a development environment, secrets manager, or machine image for
-  use by the customer's own authorized users".
-- **No account sharing.** Consumer Terms §2: "You may not share your Account
-  login information … with anyone else."
+This rules out: copying the host's credentials into the container, passing a
+`setup-token` as `CLAUDE_CODE_OAUTH_TOKEN`, our own login screen or relay
+chat window, a patched or wrapped binary or settings that hide login
+options, publishing an image with Claude Code baked in, and scripted driving
+on a subscription.
 
-### Running Claude Code inside another product
-
-The legal page has conditions for "preinstalling or running Claude Code in
-your products or services (e.g. in hosted sandboxes or other agent
-infrastructure)":
-
-- "The Claude Code binary must not be modified." It must be "installed and
-  run as published by Anthropic", and we "may not remove, disable, or restrict
-  any authentication method built into it".
-- "Customers may not pay for, resell, or intermediate Claude usage on their
-  end users' behalf. Each end user must authenticate with their own …
-  credentials."
-- These conditions come with "agreeing to our Commercial Terms of Service".
-
-adhocdocs is open-source software the user runs on their own machine, not a
-hosted service, so it may fall outside "your products or services". We
-design as if the conditions apply anyway. They cost little, and they keep us
-clear either way.
-
-### Automated use
-
-- Consumer Terms §3.7 forbids accessing the services "through automated or
-  non-human means, whether through a bot, script, or otherwise", except "via
-  an Anthropic API Key or where we otherwise explicitly permit it".
-- The legal page: Pro and Max usage limits "assume ordinary, individual usage
-  of Claude Code and the Agent SDK".
-
-Claude writing and running scripts inside the session (Principle 3) is
-ordinary Claude Code use. What adhocdocs must not do is drive Claude Code
-itself from a script, for example by running `claude -p` in a loop over
-documents on a subscription login. If a tool ever needs that, it requires an
-API key.
-
-### Branding
-
-We can say adhocdocs "runs Claude Code". We can't put "Claude" or
-"Anthropic" in the product's name or logo, or suggest Anthropic endorses it.
-
-### Confidential data
-
-This isn't a rule for us, but users need to know it, and evidentiary
-documents are usually confidential:
-
-- **Free, Pro and Max** are under the Consumer Terms. Conversations may be
-  used for training unless the user opts out, and even after opting out in
-  some cases (Consumer Terms §4).
-- **Team, Enterprise and API** are under the Commercial Terms: no training on
-  customer content, and the content is the customer's confidential
-  information (Commercial Terms B and E.1). Zero Data Retention is available
-  for some organizations.
-
-adhocdocs can't enforce which kind of account is used. *Decided:* it says
-this plainly at setup, and leaves the choice to the user or their firm. It
-doesn't recommend or require any kind of account.
-
-### What this rules out
-
-| Idea | Why not |
-|---|---|
-| Copy the host's `~/.claude/.credentials.json` (or keychain entry) into the container | Collecting and storing credentials. It would also bring the host's other projects into the box. |
-| Generate a token with `claude setup-token` and pass it in as `CLAUDE_CODE_OAUTH_TOKEN` | adhocdocs would be storing and passing a subscription token. It's also meant for scripts, which raises §3.7. |
-| Our own login screen, or a chat window that relays to Claude Code | Offering Claude.ai login in our app, and intermediating. This is the "proxying" worry in [DESIGN.md](DESIGN.md#open-questions). |
-| A patched or wrapped `claude` binary, or a settings file that hides the login options | Modifying the binary, or restricting its auth methods. |
-| A prebuilt image with Claude Code baked in, published by us | Redistributing the binary. It's safer to install it from Anthropic's official installer when the image is built on the user's machine. |
-| Driving Claude Code from a script on a subscription login | §3.7, unless the user supplies an API key. |
-
-## Proposed design
-
-### The shape
+## Design
 
 ```
  user's machine
- ┌────────────────────────────────────────────────────────────────────┐
- │ adhoc (host launcher)        viewer (host)       matter store      │
- │   │ starts, attaches          ▲                    objects/  (ro)  │
- │   ▼                           │ view API           annotations     │
- │ ┌───────────────────────────────────────────┐      workspace/ (rw) │
- │ │ container: one matter, one session        │      claude-home/    │
- │ │   claude (official, unmodified)           │                      │
- │ │   adhocdocs CLIs: view, ann, page, …      │                      │
- │ │   network: Anthropic only                 │                      │
- │ └───────────────────────────────────────────┘                      │
- └────────────────────────────────────────────────────────────────────┘
+ ┌──────────────────────────────────────────────────────────────────┐
+ │ adhoc (launcher)          viewer (host)        <matter>/         │
+ │   │ starts, attaches        ▲ view API           store/   (ro)   │
+ │   ▼                         │                    annotations/(ro)│
+ │ ┌─────────────────────────────────────────┐      workspace/ (rw) │
+ │ │ container: one matter, one session      │      claude-home/    │
+ │ │   claude (official, unmodified)         │                      │
+ │ │   adhocdocs CLIs: search, idx, view, …  │                      │
+ │ │   network: Anthropic only               │                      │
+ │ └─────────────────────────────────────────┘                      │
+ └──────────────────────────────────────────────────────────────────┘
 ```
 
-- **One container per session, one matter per container.** Starting a
-  session for a matter is the connect operation of Principle 2. The user does
-  it on the host with `adhoc`, and Claude can't.
-- **The user's terminal is attached straight to `claude`** in the container,
-  the same as `podman run -it`. adhocdocs doesn't read, rewrite or relay what
-  passes through it. That's what keeps this a terminal and not a proxy.
-- **The image is built on the user's machine.** The Containerfile installs Claude
-  Code with Anthropic's official installer, plus the adhocdocs tools. We
-  publish the Containerfile, not an image containing Claude Code.
-- **Claude Code runs as published**, with its normal auto-update. We don't
-  ship settings that hide login methods.
+- **One container per session, one matter per container.** Starting it is
+  Principle 2's connect operation, done by the user on the host.
+- **The terminal is attached straight to `claude`**, as with `podman run
+  -it`; nothing reads or relays it.
+- **The image is built on the user's machine** from our Containerfile, which
+  installs Claude Code with Anthropic's official installer. Claude Code runs
+  as published, with normal auto-update.
 
-### What the container can reach
+**Mounts:** the store and annotation log read-only (originals can't change,
+and annotation writes go through the API that stamps authorship); the
+workspace read-write; the matter's `claude-home/` as `~/.claude`; and the
+viewer and annotation API sockets. There is nothing else: no host home, no
+other matter, no Podman socket.
 
-| Mount | Access | Why |
-|---|---|---|
-| matter object store | read-only | Originals can't be changed from inside (TOOLS.md, *Read-only originals*) |
-| annotation log | read-only | Writes go through the API, which stamps authorship ([ANNOTATIONS.md](ANNOTATIONS.md)) |
-| matter workspace | read-write | Pages, lists, scripts, derived layers |
-| matter's Claude home (`~/.claude`) | read-write | See [Signing in](#signing-in) |
-| viewer and annotation API sockets | as provided | The only way out to the host |
+**Network:** an `--internal` Podman network with no route out, plus a small
+proxy container on both networks that passes TLS through to allowlisted
+hosts by name, never decrypting. `HTTPS_PROXY` points at it; bypassing it
+fails because there is no route. The allowlist is set by the launcher on
+the host. The exact host list must be checked against Claude Code's network
+docs when building.
 
-There is nothing else: no host home directory, no other matter, and no
-Podman socket (which would let Claude start containers of its own).
+**Sign-in:** inside the container, through Anthropic's flow. Claude Code
+shows a URL, the user signs in on the host and pastes back the code. With
+`claude-home/` per matter, this happens **once per matter**. adhocdocs never
+reads, copies or sends what Claude Code writes there. It only provides the
+directory, as any computer provides a home. That also keeps transcripts
+(which contain document text) with their matter, and `claude --resume` works
+within a matter. This is the one interpretation the design depends on. If
+Anthropic reads "store" to cover it, the fallback is a `claude-home/` that
+lives only as long as the container (sign in every session); nothing else
+changes. One home per machine was rejected: it carries transcripts between
+matters.
 
-**Network:** outbound traffic is allowed only to what Claude Code needs
-(the Anthropic API, and the sign-in and update hosts). Without this, Claude
-could send documents anywhere, which Principle 2 doesn't allow.
+**API keys** work too: set the normal Claude Code way, and passed through by
+the launcher, never saved.
 
-*Decided: an internal Podman network plus a host-filtering proxy.* Podman
-has no setting that allows only certain hosts, so the job is split in two:
+**Multiple sessions:** two containers can run at once, each with its own
+viewer instance. Two on one matter share `claude-home/`, like two `claude`
+processes on one machine.
 
-- **Podman blocks everything.** The session container sits on a Podman
-  network created with `--internal`, which has no route out at all.
-- **A small proxy lets the allowed hosts through.** The launcher starts it,
-  in its own container, attached to both the internal network and the
-  outside. The session container's `HTTPS_PROXY` points at it, which Claude
-  Code supports. For each connection it checks the host name against the
-  allowlist and passes the encrypted traffic through untouched, or refuses.
-  It never decrypts, reads or changes anything.
-- **Claude can't get around it.** If Claude unsets `HTTPS_PROXY` or connects
-  directly, the connection fails, because Podman's network has no way out.
-  The proxy's allowlist is set by the launcher on the host, and Claude has
-  no way to change it.
+**Podman, rootless, everywhere:** no root daemon, so an escape gets only the
+user's rights. It is free where Docker Desktop needs licenses at larger
+firms, and the files and options are the same as Docker's. On macOS and
+Windows it runs in `podman machine`. The viewer stays native and reads the
+matter store on the host directly, not through the VM.
 
-This proxy only filters network traffic by destination. It is not a proxy
-for Claude Code in the sense of the terms: it doesn't see or relay the
-conversation.
-
-The exact host list needs checking against Claude Code's network
-documentation when we build it.
-
-### Signing in
-
-Signing in happens inside the container, by the unmodified `claude`, through
-Anthropic's flow. There's no browser in the container, so Claude Code shows
-a URL. The user opens it on the host, signs in, and pastes back the code.
-adhocdocs is not involved.
-
-How often the user has to do this was the question. *Decided: B, once per
-matter.* The three options considered:
-
-**A. Sign in every session.** *Not chosen; kept as the fallback.* The container's `~/.claude` lives only as long
-as the container. *Clearly allowed*, and nothing about a session outlives it.
-But it costs a browser round-trip every time, which works against
-"invisible", and it loses `claude --resume`.
-
-**B. Sign in once per matter.** *Decided.* Each matter has a
-`claude-home/` directory next to its documents, mounted as the container's
-`~/.claude`. Claude Code writes its own credentials there, as it would on any
-machine, and they last until the user signs out or the matter is closed.
-- adhocdocs never reads, copies or sends that file. It only provides the
-  directory, the same way a home directory is provided on any computer.
-- This is better for isolation too. `~/.claude` also holds transcripts, and
-  transcripts contain document text, so they belong with the matter anyway:
-  kept with it, never visible to another matter, deleted with it.
-  `claude --resume` works within a matter.
-- The risk is that "store" in "collect, store, or intermediate" might be read
-  to cover providing that directory. We think it doesn't: the credentials are
-  written by Claude Code, into the user's own storage, and are never handled
-  by our code. This is the one interpretation the design depends on. The
-  legal page says to "contact sales" with questions about allowed
-  authentication. If Anthropic ever reads it differently, we fall back to A
-  by making `claude-home/` last only as long as the container; nothing else
-  changes.
-
-**C. Sign in once per machine.** One `~/.claude` is shared by every matter.
-*Rejected:* it carries transcripts and memory from one matter into the next.
-Mounting only the credential file avoids that, but means our launcher picking
-out and handling the credential file, which is the thing we must not do.
-
-**API keys** work with any of these. A user (or their firm) who has an API key
-sets it up the normal Claude Code way, for example `ANTHROPIC_API_KEY` in
-their own environment, or an `apiKeyHelper` they configure. The legal page
-explicitly allows this. The launcher passes the variable through and never
-saves it.
-
-### Multiple sessions
-
-Two containers can run at once, for two matters, or for two sessions on one
-matter. Each has its own viewer instance (VIEWER.md: one instance per
-session). With option B, two sessions on one matter share `claude-home/`,
-which is the same as running two `claude` processes on one machine.
-
-### Host platforms
-
-*Decided: Podman, run rootless.* Reasons:
-
-- **Rootless by default.** The container runs as the user, not as root, and
-  there is no root daemon. If Claude ever got out of the container, it would
-  have the user's own rights, not root's. That fits Principle 2.
-- **Free everywhere.** Docker Desktop, which is how most macOS and Windows
-  users get Docker, needs a paid license at larger organizations. Many law
-  firms would be in that group. Podman and Podman Desktop are free.
-- **Nothing is lost.** Podman builds the same files and takes the same
-  `run` options as Docker, so switching later would be cheap.
-
-Per platform:
-
-- **Linux:** Podman, installed from the distribution's packages.
-- **macOS and Windows:** containers need a Linux VM, which `podman machine`
-  (or Podman Desktop) sets up. The viewer still runs natively on the host. File
-  sharing into the VM is slower, which matters for the 100 ms viewer target
-  only if the viewer reads through the VM. It shouldn't: the viewer reads the
-  matter store on the host directly.
-
-### What Claude can see
-
-Per Principle 2, Claude can observe this state but not change it. An
-`adhoc status` command inside the container reports the matter, the mounts,
-whether they're read-only, the network allowlist, and the viewer's status.
-It doesn't report anything about credentials. Claude Code's own `/status`
-already shows which account is in use.
+**Observable, not changeable:** `adhoc status` in the container reports the
+matter, mounts, read-only state, allowlist and viewer status, and nothing
+about credentials.
 
 ## Decided
 
-- **Sign in once per matter (option B).** Each matter has its own
-  `claude-home/`, mounted as the container's `~/.claude`. The unmodified
-  `claude` signs in there through Anthropic's flow, and adhocdocs never reads,
-  copies or sends what it writes. Transcripts stay with the matter too.
-- **Never once per machine (option C).** It carries one matter's transcripts
-  into the next.
-- **Inform users about account types, nothing more.** At setup, adhocdocs
-  explains plainly that Free, Pro and Max fall under the Consumer Terms (which
-  allow training unless the user opts out), and that Team, Enterprise and API
-  accounts fall under the Commercial Terms (no training on customer content).
-  It doesn't recommend or require any kind of account; that choice belongs to
-  the user or their firm.
-- **Podman, run rootless,** on every platform (see
-  [Host platforms](#host-platforms)).
-- **Check with Anthropic later, not now.** If the project goes anywhere, we
-  confirm our reading behind B, and ask whether a locally run open source
-  launcher counts as "your products or services". Until then we build as
-  designed, with A as the fallback.
-
-- **Network: an internal Podman network plus a host-filtering proxy**
-  (see [What the container can reach](#what-the-container-can-reach)). The
-  proxy checks host names only and never decrypts traffic.
-
-## Decisions to make
-
-None open at the moment. Still to check while building: the exact list of
-hosts Claude Code needs.
+- Sign in once per matter, with per-matter `claude-home/`; never once per
+  machine.
+- Inform about account types, recommend nothing.
+- Podman, rootless.
+- Internal network plus a host-name-filtering pass-through proxy.
+- Check our reading with Anthropic if the project goes anywhere; until then
+  build as designed, with sign-in-per-session as the fallback.

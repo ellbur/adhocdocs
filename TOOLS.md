@@ -1,117 +1,64 @@
 # Tools
 
-These are the starting tools: the defaults. They do not limit what Claude can
-use. Claude can write its own tools for specific situations, and per
-[DESIGN.md](DESIGN.md) every default tool is meant to be composed with others
-and called from code.
-
-Items are marked **planned** (decided) or **proposed** (suggested, not yet
-decided).
+The default tools. They don't limit Claude, which can write its own for a
+task, and each is meant to be composed and called from code
+([DESIGN.md](DESIGN.md)). Status: **built**, **designed** (decided, with a
+design doc), or **proposed**.
 
 ## Foundations
 
-### Document IDs and locators — *planned, draft in [LOCATORS.md](LOCATORS.md)*
-A shared, stable way to refer to a document and to a location inside it:
-page, character range, Bates range, deposition page:line. Search snippets,
-tags, notes, selections, literate-page references (Principle 5) and the viewer
-all use it. This is most of the "plain, documented data" that Principle 4
-says tools communicate through, which is why it comes first.
-
-### Ingestion and text extraction — *proposed; layer format drafted in [TEXTLAYERS.md](TEXTLAYERS.md)*
-- Extract text from every supported format, with OCR for scanned documents.
-- Unpack containers (zip, PST/mbox, email attachments) and record
-  parent/child relationships, e.g. an email and its attachments.
-- Derived text is a new artifact linked to the original. The original is never
-  changed.
-
-### Metadata extraction — *proposed*
-Email headers (from, to, cc, date, message-ID), file metadata, custodian,
-source.
+- **Document IDs and locators.** *Built*: [LOCATORS.md](LOCATORS.md). The
+  shared way to name a document or a place in one; most of the "plain data"
+  of Principle 4.
+- **Ingestion and text extraction.** *Built* for PDF (with OCR), images,
+  .eml with attachments, .docx, CSV, HTML and text: `adhoc ingest`,
+  [TEXTLAYERS.md](TEXTLAYERS.md). Originals are never changed; text is a
+  derived layer. *Proposed:* archives (zip, PST/mbox), `.msg`, `.xlsx`.
+- **Metadata extraction.** *Built* for email headers and file properties.
+  *Proposed:* richer fields, cast of characters.
 
 ## Integrity
 
-These probably belong partly under Principle 2: Claude should not be able to
-undermine them.
+These partly belong under Principle 2: Claude must not be able to undermine
+them.
 
-### Read-only originals — *proposed*
-Source documents cannot be changed from inside the container. Redactions,
-conversions and OCR output are new derived documents.
-
-### Hashing and provenance — *proposed*
-Hash each original when it comes in and record where it came from. This also
-gives exact-duplicate detection.
-
-### Audit log — *proposed*
-A record of which documents were read, which searches were run, and what was
-produced. If the log is to be used to defend work product, it should be
-written from outside Claude's reach.
+- **Read-only originals.** *Designed*: the store is mounted read-only
+  ([CONTAINER.md](CONTAINER.md)).
+- **Hashing and provenance.** *Built*: content-addressed store, and every
+  change recorded in the provenance log; exact duplicates share a content
+  hash.
+- **Audit log.** *Proposed.* To defend work product it must be written from
+  outside Claude's reach.
 
 ## Viewing
 
-### Document viewer — *planned, drafted in [VIEWER.md](VIEWER.md)*
-- Formats: PDF, .eml, .docx, and other formats common in legal work.
-  Proposed additions: .msg, .xlsx/.csv, images, HTML, plain text, deposition
-  transcripts with page:line display; audio/video with transcripts later.
-- Can be launched and pointed at a location from code (Principle 3).
-- What the user has open, selected or highlighted can be read by Claude
-  (Principle 1).
-
-### Document list display — *planned, drafted in [LISTS.md](LISTS.md)*
-Shows a list of documents. Has no search, filter or sort controls; the user
-asks Claude for those (Principle 1). Selection can be read by Claude.
-
-### Search results display — *planned, as a preset of the list display in [INDEXING.md](INDEXING.md#search-results-are-lists)*
-Shows results with snippets and highlighting. Clicking a snippet opens the
-document at that location. That is navigation, which Principle 1 allows.
-
-### Timeline / chronology display — *proposed*
-Events tied to source locators.
+- **Document viewer.** *Designed*: [VIEWER.md](VIEWER.md).
+- **List display.** *Designed*: [LISTS.md](LISTS.md). Search results are a
+  preset of it.
+- **Timeline / chronology display.** *Proposed.*
 
 ## Search and indexing
 
-### Indices — *planned, drafted in [INDEXING.md](INDEXING.md)*
-Several kinds, each usable on its own and from code:
-- fields (metadata) index
-- keyword index, with Boolean and proximity search
-- embeddings, computed by a local model
-- `grep` over layer text, which needs no index
-- others as needed, kept up to date through the same change feed
+- **Indexes and search.** *Built*: `idx`, `search`, [INDEXING.md](INDEXING.md).
+  Fields, keyword (Boolean, proximity, exhaustive), semantic (local model),
+  hybrid, and grep.
 
 ## Annotation
 
-### Tags and notes — *planned, drafted in [ANNOTATIONS.md](ANNOTATIONS.md)*
-Attached to documents or to locations within them. Both the user and Claude
-can create them, and each records who made it. The user can edit them
-directly in the viewer.
-
-### Saved sets / collections — *planned, as list files in [LISTS.md](LISTS.md)*
-Named, persistent lists of documents ("hot docs", "responsive to RFP 12").
-The document list display shows these.
+- **Tags and notes.** *Designed*: [ANNOTATIONS.md](ANNOTATIONS.md). Search
+  already reads tags.
+- **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 
 ## Writing
 
-### Pages — *planned, format drafted in [PAGES.md](PAGES.md)*
-Pages that link to documents. Quotations in pages are literate references
-(Principle 5). The renderer shows the text at each referenced range, and
-quoted text can be clicked to open the viewer there.
+- **Literate pages.** *Designed*: [PAGES.md](PAGES.md).
+- **Quote checking.** *Built* as `text --json <locator>`, which resolves a
+  locator and reports exact, re-anchored or broken. Pages will run it on
+  every reference.
 
-### Quote and citation checking — *proposed*
-Given a quote and a locator, confirm the text really appears there. Claude can
-run this on its own output, and pages run it on every reference.
+## Analysis, review and output
 
-## Analysis
-
-All *proposed*:
-- **Email threading.**
-- **Near-duplicate and version detection**, with a side-by-side redline of
-  two versions.
-- **Entities.** A cast-of-characters directory of people and organizations,
-  with name variants and email addresses resolved to the same person.
-
-## Review and output
-
-All *proposed*:
-- **Redaction and privilege log.** Redactions produce derived documents.
-- **Export / production.** Bates stamping, exhibit preparation, production
-  sets. Exporting a page resolves literate references into text and records
-  where each quotation came from.
+All *proposed*: email threading; near-duplicate and version detection with
+a redline; an entity directory; redaction and privilege logs (redactions are
+derived documents); export and production (Bates stamping, exhibits,
+provenance of every quotation).

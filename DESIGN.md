@@ -128,19 +128,9 @@ because Claude never typed it.
 
 ## Open questions
 
-- **Verbatim relative to what?** *Mostly answered.* Layers are literal
-  ([TEXTLAYERS.md](TEXTLAYERS.md)). Pages apply a small, fixed set of display
-  rules, and any other change is a marked alteration
-  ([PAGES.md](PAGES.md)). OCR errors remain; low-confidence quotes are marked
-  and can be compared with the page image.
-- **Unbacked quotes in pages.** *Proposed:* a lint warning
-  ([PAGES.md](PAGES.md#checking)).
-- **Seamless containers.** *Answered* in [CONTAINER.md](CONTAINER.md). The
-  container that enforces isolation (Principle 2) should be close to
-  invisible, while respecting Anthropic's rule against proxying Claude Code.
-  The user's terminal is attached straight to the unmodified `claude` in a
-  rootless Podman container, one matter per container. Sign-in happens inside
-  it through Anthropic's own flow, once per matter, and adhocdocs never
-  handles credentials. The network allows only Claude Code's hosts. The
-  viewer runs on the host, gets its scope from the connect mechanism, and
-  Claude reaches it through a narrow API ([VIEWER.md](VIEWER.md)).
+- **Verbatim relative to what?** *Mostly answered:* layers are literal
+  ([TEXTLAYERS.md](TEXTLAYERS.md)), pages apply a small fixed set of display
+  rules and mark every other change ([PAGES.md](PAGES.md)), and
+  low-confidence OCR is marked so it can be compared with the page image.
+- **Unbacked quotes in pages.** *Proposed:* a lint warning.
+- **Seamless containers.** *Answered* in [CONTAINER.md](CONTAINER.md).
