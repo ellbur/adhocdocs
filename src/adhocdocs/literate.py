@@ -10,12 +10,24 @@ naming entries in a fenced ``refs`` block at the end of the text:
 ``[text](ref:id)``     link that opens the viewer at the reference
 =====================  ==================================================
 
-Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``.
+Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``, and
+``as=`` for how the quotation is shown:
+
+``as=text``   the words (the default for text)
+``as=rich``   the words with their formatting from the original: Word run
+              properties, HTML tags (emails, web pages), or PDF fonts
+              (approximate). The words are checked as for text.
+``as=image``  (block only) a picture of the page: the lines a text quotation
+              is on, or a region reference (the default for regions)
+``as=table``  (block only) spreadsheet cells as a table (the default for a
+              cells reference in a block)
 
 The ``refs`` block holds one JSON object per line: a locator plus an ``id``
 (lowercase letters, digits, hyphens). A quoted reference needs ``layer``
 and ``quote``; an elided one has ``parts`` (each a ``select`` and
-``quote``, same layer, in order, not overlapping). ``alter`` lists
+``quote``, same layer, in order, not overlapping). A cells reference has
+``layer``, ``select`` (``sheet``, ``cells``) and ``quote`` (the cells'
+text); a region reference has ``select`` (``page``, ``xywh``). ``alter`` lists
 alterations, positioned by layer offsets inside the quoted parts:
 
 ``{"replace": [a, b], "with": "T"}``  ``{"insert": p, "text": "…"}``
@@ -122,10 +134,18 @@ class Resolved:
     error: str | None = None
     new: dict | None = None         # the rewritten ref, when re-anchored
     low_confidence: bool = False
+    cells: list | None = None       # a cells reference: rows of cell text
+    select: dict | None = None      # a cells or region reference's selector
+    region: dict | None = None      # a region reference: page and xywh
+    span: list | None = None        # a cells reference: the char range it covers
 
     @property
     def quoted(self) -> bool:
         return bool(self.parts)
+
+    @property
+    def kind(self) -> str:
+        return "text" if self.parts else "cells" if self.cells is not None else "region" if self.region else "document"
 
     def result(self) -> dict:
         r = {"id": self.id, "status": self.status}
@@ -146,8 +166,35 @@ def _parts_of(ref: dict) -> list[dict]:
     return []
 
 
+def _resolve_selection(m, ref: dict) -> Resolved:
+    """A cells or region reference: no parts, its selector names what is quoted."""
+    rid, sel = ref.get("id", "?"), ref["select"]
+    try:
+        r = locators.resolve(m, {k: ref[k] for k in ("doc", "layer", "select", "quote") if k in ref})
+    except (locators.LocatorError, KeyError, ValueError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    if r["status"] == "broken":
+        return Resolved(rid, "broken", error=r.get("error"))
+    doc = r["loc"]["doc"]
+    if "cells" in sel:
+        res = Resolved(rid, r["status"], doc=doc, layer=m.state.layer(r["loc"]["layer"]), select=r["loc"]["select"],
+                       cells=[row.split("\t") for row in r["text"].split("\n")])
+        res.span = r.get("span")
+        if r["status"] == "re-anchored":
+            res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "doc": doc, "layer": r["loc"]["layer"],
+                       "quote": r["loc"]["quote"]}
+        return res
+    res = Resolved(rid, r["status"], doc=doc, select=sel, region={"page": sel["page"], "xywh": sel["xywh"]})
+    if r["status"] == "re-anchored":
+        res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "doc": doc}
+    return res
+
+
 def resolve(m, ref: dict) -> Resolved:
     rid = ref.get("id", "?")
+    sel = ref.get("select") or {}
+    if "parts" not in ref and ("cells" in sel or "xywh" in sel):
+        return _resolve_selection(m, ref)
     try:
         base = locators.resolve(m, {k: ref[k] for k in ("doc", "layer") if k in ref} | (
             {"select": ref["select"]} if "select" in ref and "parts" not in ref and "quote" not in ref else {}))
@@ -259,11 +306,12 @@ def normalize(s: str, layout: str, inline: bool) -> str:
     return s
 
 
-def pieces(r: Resolved, layout="flow", inline=True) -> list[dict]:
-    """The quotation as pieces: ``{"text", "start", "end", "em"}`` for runs
-    of document text (with their layer range), ``{"mark"}`` for what the
-    renderer adds ([T], [sic], …). Reading the text pieces back, with the
-    marks removed and joins undone, gives the source."""
+def pieces(r: Resolved, layout="flow", inline=True, styles=()) -> list[dict]:
+    """The quotation as pieces: ``{"text", "start", "end", "em", "style"}``
+    for runs of document text (with their layer range, and formatting from
+    ``styles`` runs), ``{"mark"}`` for what the renderer adds ([T], [sic],
+    …). Reading the text pieces back, with the marks removed and joins
+    undone, gives the source."""
     out = []
     lead = next((a["lead"] for a in r.alter if "lead" in a), None)
     trail = next((a["trail"] for a in r.alter if "trail" in a), None)
@@ -288,23 +336,26 @@ def pieces(r: Resolved, layout="flow", inline=True) -> list[dict]:
                 events.append((a["join"], j, ""))
         pos = p.start
         for s, e, mark in sorted(events):
-            _runs(out, r.text, pos, s, emph, layout, inline)
+            _runs(out, r.text, pos, s, emph, layout, inline, styles)
             if mark:
                 out.append({"mark": mark})
             pos = max(pos, e)
-        _runs(out, r.text, pos, p.end, emph, layout, inline)
+        _runs(out, r.text, pos, p.end, emph, layout, inline, styles)
     if trail:
         out.append({"mark": " " + trail})
     return out
 
 
-def _runs(out, text, s, e, emph, layout, inline):
-    """Text pieces for [s, e), split where emphasis starts or stops."""
-    cuts = sorted({s, e, *[x for a, b in emph for x in (a, b) if s < x < e]})
+def _runs(out, text, s, e, emph, layout, inline, styles=()):
+    """Text pieces for [s, e), split where emphasis or formatting starts or stops."""
+    near = [st for st in styles if st[0] < e and s < st[1]]
+    cuts = sorted({s, e, *[x for a, b in emph for x in (a, b) if s < x < e],
+                   *[x for a, b, _ in near for x in (a, b) if s < x < e]})
     for a, b in zip(cuts, cuts[1:]):
         if b > a:
             em = any(x <= a and b <= y for x, y in emph)
-            out.append({"text": normalize(text[a:b], layout, inline), "start": a, "end": b, "em": em})
+            style = frozenset().union(*[st for x, y, st in near if x <= a and b <= y])
+            out.append({"text": normalize(text[a:b], layout, inline), "start": a, "end": b, "em": em, "style": style})
 
 
 def plain(ps: list[dict]) -> str:
@@ -316,16 +367,21 @@ def plain(ps: list[dict]) -> str:
 def check(m, text: str) -> list[dict]:
     """One dict per reference (``id``, ``status``) and per lint (``lint``)."""
     prose, refs, out, _ = split(text)
-    used = {d.id: d for d in directives(prose)}
+    uses = {}
+    for d in directives(prose):
+        uses.setdefault(d.id, []).append(d)
+    used = uses
     ids = [r["id"] for r in refs]
     for i in sorted({i for i in ids if ids.count(i) > 1}):
         out.append({"lint": "duplicate-ref", "id": i})
     for ref in refs:
         r = resolve(m, ref)
         res = r.result()
-        d = used.get(ref["id"])
-        if d and d.kind in ("q", "block") and not r.quoted and r.status != "broken":
-            res.update(status="broken", error="quoted, but the reference has no quoted text (layer, select.char, quote)")
+        if r.status != "broken":
+            # every use of the reference must be one it can be shown as
+            err = next((e for d in used.get(ref["id"], []) if d.kind in ("q", "block") for e in [shown_as(m, d, r)[1]] if e), None)
+            if err:
+                res.update(status="broken", error=err)
         out.append(res)
     for i in sorted(set(used) - set(ids)):
         out.append({"lint": "missing-ref", "id": i})
@@ -344,6 +400,31 @@ def check(m, text: str) -> list[dict]:
             if len(q.split()) >= UNBACKED_WORDS:
                 out.append({"lint": "unbacked-quote", "line": n, "text": q[:80]})
     return out
+
+
+def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
+    """How a quotation directive shows its reference (``as=``), or why it can't."""
+    block = d.kind == "block"
+    want = d.opts.get("as") or {"region": "image", "cells": "table" if block else "text"}.get(r.kind, "text")
+    if r.kind == "document":
+        return want, "quoted, but the reference has no quoted text (layer, select.char, quote), cells or region"
+    if want not in ("text", "rich", "image", "table"):
+        return want, f"as={want}: use text, rich, image or table"
+    if want in ("image", "table") and not block:
+        return want, f"as={want} is for block quotations (::q)"
+    if r.kind == "region" and want != "image":
+        return want, "a page region can only be quoted as an image"
+    if want == "table" and r.kind != "cells":
+        return want, "as=table needs a cells reference (sheet=…&cells=…)"
+    if want == "rich" and r.kind != "text":
+        return want, "as=rich needs a text reference"
+    if want == "image" and r.kind == "cells":
+        return want, "spreadsheet cells can't be quoted as an image; use as=table"
+    if want == "image" and r.kind == "text":
+        from .produce import geometry
+        if not geometry(m, r.layer.id):
+            return want, "as=image needs a paginated document (PDF or scan) with word positions; try as=rich"
+    return want, None
 
 
 def problems(results: list[dict]) -> list[dict]:

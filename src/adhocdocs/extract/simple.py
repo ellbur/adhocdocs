@@ -2,8 +2,9 @@
 
 import csv
 import io
+import re
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, CData, NavigableString
 
 from . import Extraction, TextBuilder, text_presentation
 
@@ -23,8 +24,79 @@ def extract_text(data: bytes) -> Extraction:
     return Extraction(kind="text", layers=[b.layer("native", primary=True)])
 
 
+STYLE_TAGS = {"b": "b", "strong": "b", "i": "i", "em": "i", "cite": "i", "u": "u", "ins": "u",
+              "s": "s", "strike": "s", "del": "s", "sup": "sup", "sub": "sub"}
+
+
+def _string_style(node) -> frozenset:
+    out = set()
+    for p in node.parents:
+        if p.name in STYLE_TAGS:
+            out.add(STYLE_TAGS[p.name])
+        css = (p.get("style") or "").replace(" ", "").lower()
+        if "font-weight:bold" in css or re.search(r"font-weight:[6-9]00", css):
+            out.add("b")
+        if "font-style:italic" in css:
+            out.add("i")
+        if "underline" in css:
+            out.add("u")
+        if "line-through" in css:
+            out.add("s")
+    return frozenset(out)
+
+
+def _html_styles(soup, text: str) -> list:
+    """Formatting runs for ``text`` (as html_to_text makes it), by following
+    each character back to the string it came from. Empty if that doesn't
+    reproduce the text exactly."""
+    strings = [x for x in soup.descendants if type(x) in (NavigableString, CData)]
+    chars = []
+    for i, x in enumerate(strings):
+        if i:
+            chars.append(("\n", None))
+        chars += [(c, i) for c in str(x)]
+    lines, line = [], []
+    for c in chars:
+        if c[0] == "\n":
+            lines.append(line)
+            line = []
+        else:
+            line.append(c)
+    lines.append(line)
+    out = []
+    for ln in lines:
+        a, z = 0, len(ln)
+        while a < z and ln[a][0].isspace():
+            a += 1
+        while z > a and ln[z - 1][0].isspace():
+            z -= 1
+        ln = ln[a:z]
+        if ln or (out and out[-1]):
+            out.append(ln)
+    flat = []
+    for i, ln in enumerate(out):
+        if i:
+            flat.append(("\n", None))
+        flat += ln
+    while flat and flat[0][0] == "\n":
+        flat.pop(0)
+    while flat and flat[-1][0] == "\n":
+        flat.pop()
+    if "".join(c for c, _ in flat) != text:
+        return []
+    styles, cache = [], {}
+    for pos, (_, origin) in enumerate(flat):
+        st = frozenset() if origin is None else cache.setdefault(origin, _string_style(strings[origin]))
+        if styles and styles[-1][2] == st and styles[-1][1] == pos:
+            styles[-1][1] = pos + 1
+        else:
+            styles.append([pos, pos + 1, st])
+    return [(a, e, st) for a, e, st in styles if st]
+
+
 def html_to_text(markup: str, b: TextBuilder):
-    """Rendered text of HTML: one line per block element, scripts and styles dropped."""
+    """Rendered text of HTML: one line per block element, scripts and styles
+    dropped. Its formatting (bold, italic, …) goes to ``b.styles``."""
     soup = BeautifulSoup(markup, "lxml")
     for tag in soup(["script", "style", "head", "noscript", "template"]):
         tag.decompose()
@@ -34,7 +106,10 @@ def html_to_text(markup: str, b: TextBuilder):
         if line or (out and out[-1]):
             out.append(line)
     text = "\n".join(out).strip("\n")
-    return b.add(text)
+    start, end = b.add(text)
+    if b.text[start:end] == text:            # add() cleans; offsets only hold if it changed nothing
+        b.styles += [(start + a, start + e, st) for a, e, st in _html_styles(soup, text)]
+    return start, end
 
 
 def extract_html(data: bytes) -> Extraction:

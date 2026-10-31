@@ -50,12 +50,36 @@ class Page:
         self._resolved = {}
         self._cite_as = None
         self._meta = {}
+        self._styles = {}
+        self._shown = {}
+        self.images = {}        # name -> PNG, for pictures of pages in the last render
 
     def resolved(self, rid) -> Resolved:
         if rid not in self._resolved:
             ref = self.refs.get(rid)
             self._resolved[rid] = literate.resolve(self.m, ref) if ref else Resolved(rid, "broken", error="no such reference")
         return self._resolved[rid]
+
+    def styles(self, r: Resolved) -> tuple[list, str | None]:
+        if r.layer.id not in self._styles:
+            from .quoting import styles_for
+            self._styles[r.layer.id] = styles_for(self.m, r.doc, r.layer)
+        return self._styles[r.layer.id]
+
+    def shown(self, d, r: Resolved) -> dict:
+        """How a quotation directive shows its reference: ``as``, an error,
+        and for pictures their crops, for formatted text its runs and source."""
+        key = (d.id, tuple(sorted(d.opts.items())))
+        if key not in self._shown:
+            want, err = literate.shown_as(self.m, d, r)
+            out = {"as": want, "error": err}
+            if not err and want == "image":
+                from .quoting import crops
+                out["crops"] = crops(self.m, r, highlight=d.opts.get("highlight") in ("yes", "true", "1"))
+            if not err and want == "rich":
+                out["styles"], out["source"] = self.styles(r)
+            self._shown[key] = out
+        return self._shown[key]
 
     def check(self) -> list[dict]:
         return literate.check(self.m, self.source[FRONT.match(self.source).end():] if FRONT.match(self.source) else self.source)
@@ -102,6 +126,8 @@ class Page:
                     info["page_labels"] = [labels[p] for p in info["pages"]]
         else:
             sel = (self.refs.get(r.id) or {}).get("select") or {}
+            if "cells" in sel:
+                info["cells"], info["sheet"] = sel["cells"], sel.get("sheet")
             if "page" in sel:
                 info["pages"] = sel["page"] if isinstance(sel["page"], list) else [sel["page"], sel["page"]]
         from .produce import bates_for
@@ -187,6 +213,8 @@ def default_cite(info: dict) -> str:
     elif info.get("pages") and (info.get("kind") in ("pdf", "image") or info.get("page_labels")):
         a, b = info.get("page_labels") or info["pages"]
         s += f" at {a}" if a == b else f" at {a}–{b}"
+    elif info.get("cells"):
+        s += f" ({'sheet ' + info['sheet'] + ', ' if info.get('sheet') else ''}cells {info['cells']})"
     elif info.get("kind") == "email" and _date(info.get("date")):
         s += f" ({_date(info['date'])})"
     if info.get("emphasis_added"):
@@ -206,12 +234,16 @@ def _loc(r: Resolved, s=None, e=None) -> str:
     return locators.format({"doc": r.doc, "layer": r.layer.id, "select": {"char": [s, e]}})
 
 
-def quote_html(page: Page, r: Resolved, block: bool, layout: str) -> str:
+STYLE_TAGS = (("b", "b"), ("i", "i"), ("u", "u"), ("s", "s"), ("sup", "sup"), ("sub", "sub"))
+
+
+def quote_html(page: Page, r: Resolved, block: bool, layout: str, styles=()) -> str:
     """Each run of document text is a ``data-text`` span the viewer fills in
     from the store; the text inside is the renderer's own copy, for display
-    outside the viewer. Marks are the renderer's, styled apart."""
+    outside the viewer. Marks are the renderer's, styled apart. With
+    ``styles`` (as=rich), runs carry their formatting from the original."""
     out = []
-    for p in literate.pieces(r, layout=layout, inline=not block):
+    for p in literate.pieces(r, layout=layout, inline=not block, styles=styles):
         if "mark" in p:
             out.append(f'<span class="adhoc-mark">{html.escape(p["mark"])}</span>')
         else:
@@ -219,13 +251,50 @@ def quote_html(page: Page, r: Resolved, block: bool, layout: str) -> str:
             if layout == "lines":
                 t = t.replace("\n", "<br>\n")
             span = f'<span data-text="{_loc(r, p["start"], p["end"])}" data-normalize="{"lines" if layout == "lines" else ("block" if block else "inline")}">{t}</span>'
+            for key, tag in STYLE_TAGS:
+                if key in p.get("style", ()):
+                    span = f"<{tag}>{span}</{tag}>"
             out.append(f"<em>{span}</em>" if p["em"] else span)
-    classes = "adhoc-quote" + (" adhoc-low-confidence" if r.low_confidence else "") + (" adhoc-reanchored" if r.status == "re-anchored" else "")
+    classes = "adhoc-quote" + (" adhoc-rich" if styles else "") + (" adhoc-low-confidence" if r.low_confidence else "") + (" adhoc-reanchored" if r.status == "re-anchored" else "")
     body = "".join(out)
     href = _loc(r, r.parts[0].start, r.parts[-1].end)
     if block:
         return f'<blockquote class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a></blockquote>'
     return f'<q class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a></q>'
+
+
+def _sel_loc(r: Resolved) -> str:
+    return locators.format({"doc": r.doc, **({"layer": r.layer.id} if r.layer else {}), "select": r.select})
+
+
+def image_html(page: Page, r: Resolved, crops, images: str) -> str:
+    """Pictures of the page; ``images`` is "data" (inline, for a file that
+    stands alone) or "files" (img/<hash>.png, for a bundle)."""
+    import base64
+    from .objects import sha256
+    out = []
+    for c in crops:
+        if images == "data":
+            src = "data:image/png;base64," + base64.b64encode(c.png).decode()
+        else:
+            src = f"img/{sha256(c.png)[7:23]}.png"
+            page.images[src] = c.png
+        href = _loc(r, r.parts[0].start, r.parts[-1].end) if r.quoted else _sel_loc(r)
+        out.append(f'<a href="loc:{href}"><img src="{src}" alt="{html.escape(c.alt)}" title="page {c.page}"></a>')
+    return f'<figure class="adhoc-quote adhoc-image" data-ref="{r.id}">{"".join(out)}</figure>'
+
+
+def table_html(r: Resolved) -> str:
+    width = max(len(row) for row in r.cells)
+    rows = "".join("<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in row + [""] * (width - len(row))) + "</tr>"
+                   for row in r.cells)
+    return (f'<figure class="adhoc-quote adhoc-cells" data-ref="{r.id}"><a href="loc:{_sel_loc(r)}">'
+            f'<table>{rows}</table></a></figure>')
+
+
+def cells_text(r: Resolved) -> str:
+    """Cells shown inline: each row's cells joined by "; ", rows by " / "."""
+    return " / ".join("; ".join(c for c in row if c) for row in r.cells)
 
 
 def broken_html(rid: str, error: str | None) -> str:
@@ -259,12 +328,25 @@ def markdown() -> MarkdownIt:
     return MarkdownIt("commonmark", {"html": False}).use(footnote_plugin).enable("table")
 
 
-def layout_of(d, r) -> str:
-    return d.opts.get("layout") or ("lines" if r.layer.view == "transcript" and d.kind == "block" else "flow")
+def layout_of(d, r, page=None) -> str:
+    """Block quotations keep line breaks for transcripts, and for formatted
+    Word text, where each paragraph is a line."""
+    if d.opts.get("layout"):
+        return d.opts["layout"]
+    if d.kind != "block" or not r.layer:
+        return "flow"
+    if r.layer.view == "transcript":
+        return "lines"
+    if d.opts.get("as") == "rich" and page and page.doc_meta(r.doc).get("kind") == "docx":
+        return "lines"
+    return "flow"
 
 
-def render(page: Page, standalone=True) -> tuple[str, list[dict]]:
-    """Static HTML for a page pane (or a browser), and the check results."""
+def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]:
+    """Static HTML for a page pane (or a browser), and the check results.
+    Pictures of pages are inline (``images="data"``) or, for a bundle the
+    viewer can show, files named in ``page.images`` (``"files"``)."""
+    page.images = {}
     source, fills = prepare(page)
     footnotes = []
     body = markdown().render(source)
@@ -283,11 +365,19 @@ def render(page: Page, standalone=True) -> tuple[str, list[dict]]:
             if d.kind == "cite":
                 frag = f'<cite data-ref="{d.id}">{citation}</cite>'
             else:
-                layout = layout_of(d, r)
-                if not r.quoted:
-                    frag = broken_html(d.id, "not a quoted reference")
+                shown = page.shown(d, r)
+                if shown["error"]:
+                    frag = broken_html(d.id, shown["error"])
+                elif shown["as"] == "image":
+                    frag = image_html(page, r, shown["crops"], images)
+                elif shown["as"] == "table":
+                    frag = table_html(r)
+                elif r.kind == "cells":
+                    frag = f'<q class="adhoc-quote" data-ref="{r.id}"><a href="loc:{_sel_loc(r)}">{html.escape(cells_text(r))}</a></q>'
                 else:
-                    frag = quote_html(page, r, d.kind == "block", layout)
+                    frag = quote_html(page, r, d.kind == "block", layout_of(d, r, page),
+                                      (shown.get("styles") or ()) if shown["as"] == "rich" else ())
+                if not shown["error"]:
                     if cite_mode == "footnote":
                         footnotes.append(citation)
                         n = len(footnotes)
@@ -313,7 +403,7 @@ def render(page: Page, standalone=True) -> tuple[str, list[dict]]:
 
 STANDALONE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>{title}</title>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
 <style>
 body {{ font: 16px/1.5 Georgia, serif; max-width: 42em; margin: 2em auto; padding: 0 1em; color: #222; }}
 .adhoc-quote span[data-text] {{ background: #eef4ff; }}
@@ -324,6 +414,11 @@ blockquote.adhoc-quote {{ margin: 1em 2em; }}
 .adhoc-reanchored {{ outline: 1px dashed #c90; }}
 .adhoc-low-confidence {{ text-decoration: underline wavy #c90; }}
 .adhoc-broken {{ color: #fff; background: #c00; padding: 0 .3em; }}
+figure.adhoc-quote {{ margin: 1em 2em; }}
+figure.adhoc-image img {{ max-width: 100%; border: 1px solid #ccc; display: block; margin-bottom: .3em; }}
+figure.adhoc-cells {{ margin: 1em 0; }}
+figure.adhoc-cells table {{ border-collapse: collapse; width: 100%; font: 11px/1.3 system-ui, sans-serif; }}
+figure.adhoc-cells td {{ border: 1px solid #ccc; padding: 2px 6px; }}
 </style></head><body>
 {body}
 </body></html>
@@ -338,11 +433,23 @@ def provenance(page: Page) -> list[dict]:
         if d.kind not in ("q", "block"):
             continue
         r = page.resolved(d.id)
-        rows.append({"id": d.id, "status": r.status,
-                     "locators": [{"doc": r.doc, "layer": r.layer.id, "select": {"char": [p.start, p.end]},
-                                   "quote": locators.make_quote(r.text, p.start, p.end)} for p in r.parts],
-                     "rendered": literate.plain(literate.pieces(r, inline=d.kind != "block")),
-                     "alterations": r.alter, "citation": re.sub("<[^>]+>", "", page.cite(r, d.opts.get("signal")))})
+        shown = page.shown(d, r)
+        row = {"id": d.id, "status": r.status, "as": shown["as"]}
+        if r.kind == "text":
+            row.update(locators=[{"doc": r.doc, "layer": r.layer.id, "select": {"char": [p.start, p.end]},
+                                  "quote": locators.make_quote(r.text, p.start, p.end)} for p in r.parts],
+                       rendered=literate.plain(literate.pieces(r, inline=d.kind != "block")), alterations=r.alter)
+            if shown["as"] == "rich":
+                row["formatting"] = shown.get("source") or "none found in the original"
+        elif r.kind == "cells":
+            text = "\n".join("\t".join(row_) for row_ in r.cells)
+            row.update(locators=[{"doc": r.doc, "layer": r.layer.id, "select": r.select, "quote": {"exact": text}}], rendered=text)
+        else:
+            row.update(locators=[{"doc": r.doc, "select": r.select}], rendered=" ".join(c.alt for c in shown.get("crops", [])))
+        if shown.get("crops"):
+            row["images"] = [{"page": c.page, "rect": c.rect, "sha256": sha256(c.png), "words": c.alt} for c in shown["crops"]]
+        row["citation"] = re.sub("<[^>]+>", "", page.cite(r, d.opts.get("signal")))
+        rows.append(row)
     return rows
 
 
@@ -364,7 +471,11 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
         out.write_text(html_doc)
     elif fmt == "pdf":
         import pymupdf
-        story = pymupdf.Story(html=html_doc)
+        html_doc, _ = render(page, standalone=True, images="files")
+        archive = pymupdf.Archive()
+        for name, png in page.images.items():
+            archive.add((png, name))
+        story = pymupdf.Story(html=html_doc, archive=archive)
         writer = pymupdf.DocumentWriter(str(out))
         more = True
         while more:
@@ -421,6 +532,10 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
         else:
             ref = {"id": rid, "doc": first["doc"], "layer": first["layer"],
                    "parts": [{"select": {"char": list(sp)}, "quote": locators.make_quote(text, *sp)} for sp in spans]}
+    elif "cells" in sel:
+        if len(parts) > 1:
+            raise PageError("only text ranges can be elided")
+        ref = {"id": rid, "doc": first["doc"], "layer": first["layer"], "select": sel, "quote": first["quote"]}
     else:
         if len(parts) > 1:
             raise PageError("only text ranges can be elided")

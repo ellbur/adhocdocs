@@ -658,7 +658,12 @@ Literate pages: Markdown whose quotations are references to document text.
   page check page.md                       resolve every reference and lint
   page refs update page.md                 rewrite re-anchored references
   page render page.md [-o out.html]        static HTML (the viewer fills in quotations)
+  page view page.md [--pane P]             render it into a viewer pane
   page export page.md --format html|docx|pdf -o out
+
+References can be text ranges (from search hits or `view selection`),
+spreadsheet cells (`sheet=…&cells=B2:D10`, e.g. a grid selection) or page
+regions (`page=3&xywh=…`, e.g. an Alt-drag selection).
 
 Format:
 """ + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
@@ -666,12 +671,13 @@ Format:
 
 @run
 def page(argv=None):
-    from . import pages
-    argv = sys.argv[1:] if argv is None else argv
-    if argv[:2] == ["ref", "add"]:
-        argv = ["ref-add"] + argv[2:]
-    elif argv[:2] == ["refs", "update"]:
-        argv = ["refs-update"] + argv[2:]
+    from . import literate, pages
+    argv = list(sys.argv[1:] if argv is None else argv)
+    i = 2 if argv[:1] == ["--matter"] else 0              # `page --matter M ref add …` too
+    if argv[i:i + 2] == ["ref", "add"]:
+        argv[i:i + 2] = ["ref-add"]
+    elif argv[i:i + 2] == ["refs", "update"]:
+        argv[i:i + 2] = ["refs-update"]
     p = parser("page", PAGE_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("check")
@@ -680,6 +686,10 @@ def page(argv=None):
     s = sub.add_parser("render")
     s.add_argument("file")
     s.add_argument("-o", "--out", help="default: stdout")
+    s = sub.add_parser("view", help="render the page into a viewer pane (pictures of pages included)")
+    s.add_argument("file")
+    s.add_argument("--pane", help="replace this page pane's content")
+    s.add_argument("--window", help="default: the window the user last used")
     s = sub.add_parser("export")
     s.add_argument("file")
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
@@ -709,6 +719,16 @@ def page(argv=None):
                 out({"written": a.out, "problems": len([r for r in results if "lint" in r or r.get("status") != "exact"])})
             else:
                 sys.stdout.write(html_doc)
+        elif a.cmd == "view":
+            import base64
+            page = pages.Page(m, a.file)
+            html_doc, results = pages.render(page, standalone=True, images="files")
+            files = {"index.html": base64.b64encode(html_doc.encode()).decode(),
+                     **{name: base64.b64encode(png).decode() for name, png in page.images.items()}}
+            c = {"cmd": "pane", "kind": "page", "files": files, "title": page.meta.get("title") or Path(a.file).stem,
+                 "update": a.pane, "window": a.window}
+            shown = viewmod.command(m, {k: v for k, v in c.items() if v is not None})
+            out({**shown, "problems": len(literate.problems(results))})
         elif a.cmd == "export":
             out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
         elif a.cmd == "ref-add":

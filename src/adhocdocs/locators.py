@@ -283,6 +283,13 @@ def resolve(matter, loc) -> Resolution:
         sel = loc["select"]
     if "cells" in sel:
         return _resolve_cells(matter, loc, content, notes)
+    if "xywh" in sel:
+        xywh = sel["xywh"]
+        if "page" not in sel or not isinstance(sel["page"], int):
+            return Resolution(status="broken", loc=loc, error="a region (xywh) needs one page")
+        if len(xywh) != 4 or not all(0 <= v <= 1 for v in xywh) or xywh[2] <= 0 or xywh[3] <= 0 \
+                or xywh[0] + xywh[2] > 1.0001 or xywh[1] + xywh[3] > 1.0001:
+            return Resolution(status="broken", loc=loc, error="xywh is x, y, width, height as fractions of the page")
     if "char" not in sel and "page" not in sel:
         return Resolution(status="re-anchored" if notes else "exact", loc=loc, notes=notes)
 
