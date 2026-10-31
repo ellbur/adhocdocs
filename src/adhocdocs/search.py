@@ -322,6 +322,17 @@ class Searcher:
             items = items[:self.opts.limit]
         return header, items
 
+    # -- all ---------------------------------------------------------------------------------
+
+    def all(self):
+        """Every document in scope (--where, --tag, --within), matching no
+        text: a listing, by date (undated last), then name."""
+        items = [self.item(doc, 0.0, []) for doc in self.scope()]
+        items.sort(key=lambda it: (it["doc"].get("date") is None, it["doc"].get("date") or "",
+                                   it["doc"].get("name") or "", it["loc"]))
+        header = self.header("all", None, "all", None, exhaustive=True, coverage=self.coverage(None))
+        return header, items
+
     # -- grep -------------------------------------------------------------------------------
 
     def grep(self, pattern: str):
@@ -491,8 +502,9 @@ def start_background_update(m: Matter, name: str):
 
 def to_list(header: dict, items: list, by: str) -> list[dict]:
     """Search results as a list file (LISTS.md)."""
+    listing = header.get("index") == "all"
     head = {"type": "list", "v": 1, "title": header["query"],
-            "columns": ["name", "date", "kind", "score", "snippet"],
+            "columns": ["name", "date", "kind", "custodian"] if listing else ["name", "date", "kind", "score", "snippet"],
             "made_by": "search", "query": header["query"],
             "search": {k: header[k] for k in ("index", "parsed", "as_of", "layers", "exhaustive", "coverage") if k in header}}
     out = [head]
@@ -502,7 +514,7 @@ def to_list(header: dict, items: list, by: str) -> list[dict]:
                         "fields": {"score": it["score"], "snippet": it["snippet"]["text"]}})
     else:
         for it in items:
-            row = {"loc": it["loc"], "fields": {"score": it["score"]}}
+            row = {"loc": it["loc"], "fields": {} if listing else {"score": it["score"]}}
             if it["hits"]:
                 row["fields"]["snippet"] = it["hits"][0]["snippet"]["text"]
                 row["children"] = [{"loc": h["loc"], "fields": {"snippet": h["snippet"]["text"]}} for h in it["hits"]]

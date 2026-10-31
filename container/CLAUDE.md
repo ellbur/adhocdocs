@@ -19,7 +19,7 @@ has `--help` with the details. Read the help before first using a tool.
 
 | Tool | For |
 |---|---|
-| `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings |
+| `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings, `search all` to list documents (with `--where`, `--tag`) |
 | `text`, `layers` | the text at a locator (checked), a document's text layers |
 | `list` | list files (`*.list.jsonl`): sort, group, filter; key sets (`condense`, `set`, `cover`, `uncover`) |
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |

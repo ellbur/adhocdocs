@@ -350,6 +350,7 @@ SEARCH_HELP = """\
 search "<query>" [--index keyword|semantic|hybrid]   (keyword is the default)
 search grep <regex>                                  regex over layer text, no index
 search similar <locator>                             semantic neighbours
+search all [--where "custodian:smith-j"] [--tag …]   every document (no text matched), by date
 
 Output: a JSON header (query, index, as_of, exhaustive, coverage, matches),
 then one line per document (--by doc) or per hit (--by hit). Each hit has a
@@ -364,10 +365,10 @@ def search(argv=None):
     from .search import Options, Searcher, to_list
     argv = sys.argv[1:] if argv is None else argv
     mode = "query"
-    if argv and argv[0] in ("grep", "similar"):
+    if argv and argv[0] in ("grep", "similar", "all"):
         mode, argv = argv[0], argv[1:]
     p = parser("search", SEARCH_HELP)
-    p.add_argument("q", metavar="query|regex|locator")
+    p.add_argument("q", metavar="query|regex|locator", nargs="?" if mode == "all" else None)
     p.add_argument("--index", choices=["keyword", "semantic", "hybrid"], default="keyword")
     p.add_argument("--within", help="list file, or - for locators on stdin")
     p.add_argument("--where", help="field filters, in query syntax")
@@ -382,6 +383,10 @@ def search(argv=None):
     # "-tag:x" and "-word" are query syntax (and "-name" a tag filter), not options
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x not in ("-", "-i", "-h") else x for x in argv]
     a = p.parse_args(argv)
+    if mode == "all":
+        if a.q:
+            p.error("search all takes no query; filter with --where, --tag or --within")
+        a.q, a.by = "", "doc"
     a.q = a.q.strip()
     a.tag = [t.strip() for t in a.tag]
     m = Matter.find(a.matter)
@@ -405,7 +410,9 @@ def search(argv=None):
         node = Q.parse(a.q)
         out({"parsed": Q.to_text(node), "fts": sorted({l.fts() for l, _ in Q.leaves(node)})})
         return
-    if mode == "grep":
+    if mode == "all":
+        header, items = s.all()
+    elif mode == "grep":
         header, items = s.grep(a.q)
     elif mode == "similar":
         header, items = s.similar(a.q)
