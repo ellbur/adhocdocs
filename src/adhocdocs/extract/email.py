@@ -75,9 +75,11 @@ def extract_email(data: bytes) -> Extraction:
     meta = {"subject": msg.get("Subject"), "message_id": msg.get("Message-ID"),
             "in_reply_to": msg.get("In-Reply-To")}
     for name in ("from", "to", "cc", "bcc"):
-        addrs = _addresses(msg.get_all(name, []))
+        values = [str(v) for v in msg.get_all(name, [])]
+        addrs = _addresses(values)
         if addrs:
             meta[name] = addrs
+            meta[name + "_names"] = [n or a for n, a in getaddresses(values) if a]
     if msg.get("Date"):
         try:
             meta["date"] = parsedate_to_datetime(msg["Date"]).isoformat()

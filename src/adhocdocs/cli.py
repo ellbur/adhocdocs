@@ -8,6 +8,7 @@ import argparse
 import json
 import shutil
 import sys
+from pathlib import Path
 
 from . import annapi, annotations, lists, locators
 from .matter import Matter, MatterNotFound
@@ -507,9 +508,80 @@ def ann(argv=None):
         out(annapi.request(m, req))
 
 
+# -- page ----------------------------------------------------------------------------------
+
+PAGE_HELP = """\
+Literate pages: Markdown whose quotations are references to document text.
+
+  page ref add page.md <id> <locator>...   add a reference (several locators: an elided quotation)
+  page check page.md                       resolve every reference and lint
+  page refs update page.md                 rewrite re-anchored references
+  page render page.md [-o out.html]        static HTML (the viewer fills in quotations)
+  page export page.md --format html|docx|pdf -o out
+
+Format:
+""" + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
+
+
+@run
+def page(argv=None):
+    from . import pages
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:2] == ["ref", "add"]:
+        argv = ["ref-add"] + argv[2:]
+    elif argv[:2] == ["refs", "update"]:
+        argv = ["refs-update"] + argv[2:]
+    p = parser("page", PAGE_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("check")
+    s.add_argument("file")
+    s.add_argument("--all", action="store_true", help="also print references that are fine")
+    s = sub.add_parser("render")
+    s.add_argument("file")
+    s.add_argument("-o", "--out", help="default: stdout")
+    s = sub.add_parser("export")
+    s.add_argument("file")
+    s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
+    s.add_argument("-o", "--out", required=True)
+    s.add_argument("--allow-reanchored", action="store_true")
+    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>...")
+    s.add_argument("file")
+    s.add_argument("id")
+    s.add_argument("locators", nargs="+", help="string or JSON locators (e.g. a search hit's loc)")
+    s.add_argument("--replace", action="store_true")
+    s = sub.add_parser("refs-update", help="page refs update <file>")
+    s.add_argument("file")
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    try:
+        if a.cmd == "check":
+            results = pages.Page(m, a.file).check()
+            for r in results if a.all else [r for r in results if r in __import__("adhocdocs.literate", fromlist=["x"]).problems(results)]:
+                out(r)
+            if any(r.get("status") == "broken" or r.get("lint") in ("missing-ref", "bad-ref", "duplicate-ref") for r in results):
+                sys.exit(1)
+        elif a.cmd == "render":
+            html_doc, results = pages.render(pages.Page(m, a.file))
+            if a.out:
+                Path(a.out).write_text(html_doc)
+                out({"written": a.out, "problems": len([r for r in results if "lint" in r or r.get("status") != "exact"])})
+            else:
+                sys.stdout.write(html_doc)
+        elif a.cmd == "export":
+            out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
+        elif a.cmd == "ref-add":
+            out(pages.add_ref(m, a.file, a.id, a.locators, a.replace))
+        elif a.cmd == "refs-update":
+            for c in pages.update_refs(m, a.file):
+                out(c)
+    except pages.PageError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

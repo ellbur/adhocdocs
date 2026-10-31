@@ -33,7 +33,7 @@ delete tags and notes directly. Everything else stays programmable.
   anchored in documents. **Claude's notes follow Principle 5**: quotations
   are references (`:q{#id}` plus a `refs` block, as in [PAGES.md](PAGES.md)).
   Every note Claude writes is checked by
-  [`literate.py`](src/adhocdocs/literate.py), which pages will reuse. The
+  [`literate.py`](src/adhocdocs/literate.py), the same checker pages use. The
   check reports broken or missing references and quotations typed by hand,
   as warnings.
 - **For filters** (`search tag:hot`, `--tag`, `ann find`), a document has a
