@@ -11,6 +11,12 @@
   is the original's physical page ``page_map[n]``, or null when the pages
   were rendered from text)
 - ``<name>.dat`` and ``<name>.opt``: Concordance and Opticon load files
+- ``privlog.csv`` and ``privlog.jsonl``: withheld and redacted documents
+
+Documents tagged ``privileged`` (by default) are withheld: a slip sheet
+takes their Bates number. Ranges and page regions tagged with a tag starting
+``redact`` (``redact``, ``redact-privilege``…) are redacted: MuPDF removes
+the text beneath on pages, and rendered text has the range replaced.
 
 A production is work product in the workspace. The Bates numbers it assigns
 attach to documents from outside, and ``bates:`` locators resolve through
@@ -62,24 +68,95 @@ def _render_text(text: str) -> pymupdf.Document:
     return out
 
 
-def pages_for(m: Matter, doc: str) -> tuple[pymupdf.Document, list | None]:
+def geometry(m: Matter, layer_id: str) -> list[dict]:
+    """A layer's word boxes; a derived layer's come from its source through
+    the offset map."""
+    try:
+        obj = m.objects.get_object(layer_id)
+    except KeyError:
+        return []
+    if obj.get("geometry"):
+        return m.objects.get_jsonl(obj["geometry"])
+    if not obj.get("derived_from"):
+        return []
+    runs = m.objects.get_jsonl(obj["offset_map"])
+    out = []
+    for g in geometry(m, obj["derived_from"]):
+        for r in runs:
+            if r["source_start"] <= g["start"] and g["end"] <= r["source_start"] + r["end"] - r["start"]:
+                d = r["start"] - r["source_start"]
+                out.append({**g, "start": g["start"] + d, "end": g["end"] + d})
+                break
+    return out
+
+
+def _label(tag: str) -> str:
+    reason = tag.removeprefix("redact").strip("-:_ ")
+    return f"REDACTED – {reason.replace('-', ' ').title()}" if reason else "REDACTED"
+
+
+def pages_for(m: Matter, doc: str, redactions=()) -> tuple[pymupdf.Document, list | None]:
     """(PDF to produce, page map). Originals with pages keep them; anything
-    else is rendered from its primary layer."""
+    else is rendered from its primary layer. ``redactions`` are tag
+    applications on ranges or regions of this document: on pages they are
+    applied with MuPDF's redaction, which removes the text beneath, and in
+    rendered text the range is replaced. A redaction that can't be placed
+    stops the production rather than letting the text through."""
     state = m.state
     content = state.documents[doc]
     meta = m.objects.get_object(state.metadata[doc]) if doc in state.metadata else {}
     data = m.objects.get_bytes(content)
-    if meta.get("kind") == "pdf":
-        d = pymupdf.open("pdf", data)
+    if meta.get("kind") in ("pdf", "image"):
+        if meta["kind"] == "pdf":
+            d = pymupdf.open("pdf", data)
+        else:
+            img = pymupdf.open(stream=data, filetype=(meta.get("name") or "x.png").rsplit(".", 1)[-1])
+            d = pymupdf.open("pdf", img.convert_to_pdf())
+        for app in redactions:
+            sel = app["target"].get("select") or {}
+            rects = []
+            if "xywh" in sel:
+                x, y, w, h = sel["xywh"]
+                page = sel["page"] if isinstance(sel["page"], int) else sel["page"][0]
+                rects.append((page, (x, y, x + w, y + h)))
+            elif "char" in sel:
+                s_, e_ = sel["char"]
+                rects += [(g["page"], g["box"]) for g in geometry(m, app["target"]["layer"])
+                          if g["start"] < e_ and s_ < g["end"]]
+            if not rects:
+                raise ProductionError(f"can't place redaction {app['tag']!r} on {meta.get('name')}'s pages")
+            for page_no, (x0, y0, x1, y1) in rects:
+                page = d[page_no - 1]
+                r = page.rect
+                page.add_redact_annot(pymupdf.Rect(r.x0 + x0 * r.width, r.y0 + y0 * r.height,
+                                                   r.x0 + x1 * r.width, r.y0 + y1 * r.height),
+                                      text=_label(app["tag"]), fill=(0, 0, 0), text_color=(1, 1, 1), fontsize=6)
+        for page in d:
+            page.apply_redactions()
         return d, list(range(1, d.page_count + 1))
-    if meta.get("kind") == "image":
-        img = pymupdf.open(stream=data, filetype=(meta.get("name") or "x.png").rsplit(".", 1)[-1])
-        return pymupdf.open("pdf", img.convert_to_pdf()), [1]
     layer = state.primary_layer(content)
     text = m.objects.get_text(layer.text) if layer else ""
+    cuts = []
+    for app in redactions:
+        t = app["target"]
+        sel = t.get("select") or {}
+        same_text = t.get("layer") and m.objects.get_object(t["layer"])["text"] == (layer.text if layer else None)
+        if "char" not in sel or not same_text:
+            raise ProductionError(f"can't place redaction {app['tag']!r} in {meta.get('name')}'s text")
+        cuts.append((sel["char"][0], sel["char"][1], _label(app["tag"])))
+    for s_, e_, lbl in sorted(cuts, reverse=True):
+        text = text[:s_] + f"[{lbl}]" + text[e_:]
     if not text.strip():
         text = f"[{meta.get('name') or 'document'}: no text; produced natively]"
     return _render_text(text), None
+
+
+def slip_sheet(reason: str) -> pymupdf.Document:
+    d = pymupdf.open()
+    page = d.new_page(width=LETTER.width, height=LETTER.height)
+    page.insert_textbox(pymupdf.Rect(72, 300, LETTER.width - 72, 420), f"Document withheld\n{reason}",
+                        fontsize=18, fontname="helv", align=pymupdf.TEXT_ALIGN_CENTER)
+    return d
 
 
 def stamp(page: pymupdf.Page, number: str, legend: str | None):
@@ -94,9 +171,12 @@ def stamp(page: pymupdf.Page, number: str, legend: str | None):
 
 
 def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, digits: int = 6,
-            legend: str | None = None, families=True) -> dict:
+            legend: str | None = None, families=True, withhold=("privileged",), redact="redact") -> dict:
     """Produce the documents of a list, in its order; with ``families``,
-    each document's attachments follow it, as is usual."""
+    each document's attachments follow it, as is usual. Documents tagged
+    with a ``withhold`` tag become a slip sheet; ranges and regions tagged
+    with a tag starting ``redact`` are redacted. Both go in the privilege
+    log."""
     out = m.workspace / "productions" / name
     if out.exists():
         raise ProductionError(f"production {name} exists; choose another name")
@@ -115,12 +195,26 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
         for d in [doc] + (_descendants(state, doc) if families else []):
             if d not in order and d not in state.withdrawn:
                 order.append(d)
+    from .annotations import Annotations
+    ann = Annotations.load(m)
+    whole = {}                                  # doc -> withhold tag
+    ranged = {}                                 # doc -> redaction applications
+    for app in ann.applications():
+        t = app["target"]
+        if not t.get("select") and app["tag"] in withhold:
+            whole.setdefault(t["doc"], app["tag"])
+        elif t.get("select") and redact and app["tag"].startswith(redact):
+            ranged.setdefault(t["doc"], []).append(app)
     (out / "PDF").mkdir(parents=True)
     fields = _fields(m)
     n = start
     records = []
     for doc in order:
-        pdf, page_map = pages_for(m, doc)
+        if doc in whole:
+            desc = (ann.definitions.get(whole[doc]) or {}).get("description")
+            pdf, page_map = slip_sheet(f"{whole[doc].title()}" + (f": {desc}" if desc else "")), None
+        else:
+            pdf, page_map = pages_for(m, doc, ranged.get(doc, ()))
         begin = bates(prefix, n, digits)
         for page in pdf:
             stamp(page, bates(prefix, n, digits), legend)
@@ -128,9 +222,14 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
         end = bates(prefix, n - 1, digits)
         path = out / "PDF" / f"{begin}.pdf"
         pdf.save(path, garbage=3, deflate=True)
-        records.append({"doc": doc, "begin": begin, "end": end, "pages": pdf.page_count, "file": f"PDF/{begin}.pdf",
-                        "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "page_map": page_map,
-                        "parent": _parent(state, doc)})
+        rec = {"doc": doc, "begin": begin, "end": end, "pages": pdf.page_count, "file": f"PDF/{begin}.pdf",
+               "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "page_map": page_map,
+               "parent": _parent(state, doc)}
+        if doc in whole:
+            rec["withheld"] = whole[doc]
+        if doc in ranged and doc not in whole:
+            rec["redactions"] = sorted({a["tag"] for a in ranged[doc]})
+        records.append(rec)
     for r in records:                       # families: BEGATTACH/ENDATTACH span the top parent's family
         top = r["doc"]
         while _parent(state, top) in {x["doc"] for x in records}:
@@ -143,6 +242,7 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
               "date": date.today().isoformat()}
     (out / "production.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]))
     _load_files(out, name, records, fields)
+    _privilege_log(m, out, records, fields, ann)
     ev = m.logs["workspace"].append(op="export", kind="production", name=name, begin=header["begin"], end=header["end"],
                                     record="sha256:" + hashlib.sha256((out / "production.jsonl").read_bytes()).hexdigest())
     return {**header, "path": str(out), "event": ev["id"]}
@@ -199,6 +299,36 @@ def _load_files(out: Path, name: str, records: list, fields: dict):
             opt.append(f"{bates(prefix, n + i, len(m_.group(2)))},{name},{r['file']},{first},,,{r['pages'] if i == 0 else ''}")
     (out / f"{name}.dat").write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
     (out / f"{name}.opt").write_text("\r\n".join(opt) + "\r\n", encoding="utf-8")
+
+
+PRIVLOG_FIELDS = ("bates", "date", "author", "recipients", "cc", "type", "description", "treatment", "privilege", "basis")
+
+
+def _privilege_log(m, out: Path, records: list, fields: dict, ann):
+    """One row per withheld or redacted document. The basis is the tag's
+    description plus the user's notes on the document; review it before
+    serving."""
+    import csv
+    rows = []
+    for r in records:
+        tags = [r["withheld"]] if r.get("withheld") else r.get("redactions", [])
+        if not tags:
+            continue
+        f = fields.get(r["doc"], {})
+        notes = [n["body"].strip() for n in ann.notes.values()
+                 if n["target"].get("doc") == r["doc"] and n["by"].startswith("user:")]
+        basis = "; ".join(filter(None, [*(ann.definitions.get(t, {}).get("description") for t in tags), *notes]))
+        rows.append({"bates": r["begin"] if r["begin"] == r["end"] else f"{r['begin']}–{r['end']}",
+                     "date": (f.get("date") or "")[:10], "author": "; ".join(f.get("from") or []) or (f.get("author") or ""),
+                     "recipients": "; ".join(f.get("to") or []), "cc": "; ".join(f.get("cc") or []),
+                     "type": f.get("kind") or "", "description": f.get("subject") or f.get("title") or f.get("name") or "",
+                     "treatment": "withheld" if r.get("withheld") else "redacted",
+                     "privilege": ", ".join(t.removeprefix("redact").strip("-:_ ") or t for t in tags), "basis": basis})
+    with open(out / "privlog.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=PRIVLOG_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    (out / "privlog.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
 # -- resolving Bates numbers -----------------------------------------------------------------------

@@ -65,3 +65,57 @@ def test_bates_resolution_and_citation(m, tmp_path):
     page = tmp_path / "p.md"
     page.write_text(":cite{#d}\n\n" + literate.format_refs([{"id": "d", "doc": doc, "select": {"page": [1, 2]}}]))
     assert "HFS000124–25" in pages.render(pages.Page(m, page))[0]
+
+
+def test_withhold_redact_and_privilege_log(m, tmp_path):
+    from adhocdocs.annotations import write
+    user = "user:owen"
+    write(m, user, {"op": "define-tag", "tag": "privileged", "description": "Attorney-client communication"})
+    write(m, user, {"op": "define-tag", "tag": "redact-privilege"})
+    memo = named(m, "memo-collection-bellwether-2026-03-16.pdf")[0]
+    email = named(m, "2026-03-06_INV-2026-0347_reminder.eml")[0]
+    letter = named(m, "demand-letter-2026-03-25.pdf")[0]
+
+    def span(doc, phrase):
+        st = m.state
+        layer = st.primary_layer(st.documents[doc])
+        text = m.objects.get_text(layer.text)
+        s = text.index(phrase)
+        return {"doc": doc, "layer": layer.id, "select": {"char": [s, s + len(phrase)]}}
+
+    write(m, user, {"op": "tag", "tag": "privileged", "target": {"doc": memo}})
+    write(m, user, {"op": "note", "target": {"doc": memo}, "body": "Prepared at counsel's request."})
+    write(m, user, {"op": "tag", "tag": "redact-privilege", "target": span(letter, "TCF-889104")})
+    write(m, user, {"op": "tag", "tag": "redact-privilege", "target": span(email, "friendly reminder")})
+    p = make_list(m, tmp_path, ["memo-collection-bellwether-2026-03-16.pdf", "demand-letter-2026-03-25.pdf",
+                                "2026-03-06_INV-2026-0347_reminder.eml"])
+    r = produce.produce(Matter(m.root), p, "vol001", "HFS")
+    out = Path(r["path"])
+    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text().splitlines()[1:])}
+
+    slip = pymupdf.open(out / recs[memo]["file"])
+    assert slip.page_count == 1 and "withheld" in slip[0].get_text() and "MEMORANDUM" not in slip[0].get_text()
+    letter_text = "".join(pg.get_text() for pg in pymupdf.open(out / recs[letter]["file"]))
+    assert "TCF-889104" not in letter_text and "REDACTED" in letter_text and "Bellwether" in letter_text
+    email_text = "".join(pg.get_text() for pg in pymupdf.open(out / recs[email]["file"]))
+    assert "friendly reminder" not in email_text and "[REDACTED – Privilege]" in email_text
+
+    log = [json.loads(l) for l in (out / "privlog.jsonl").read_text().splitlines()]
+    by = {row["treatment"]: row for row in log}
+    assert len(log) == 3 and by["withheld"]["privilege"] == "privileged"
+    assert "Attorney-client" in by["withheld"]["basis"] and "counsel's request" in by["withheld"]["basis"]
+    assert {row["privilege"] for row in log if row["treatment"] == "redacted"} == {"privilege"}
+    assert (out / "privlog.csv").read_text().startswith("bates,date,author")
+
+
+def test_unplaceable_redaction_stops_production(m, tmp_path):
+    from adhocdocs.annotations import write
+    letter = named(m, "demand-letter-2026-03-25.pdf")[0]
+    write(m, "user:owen", {"op": "define-tag", "tag": "redact"})
+    # a whole page region is fine; a char range in a layer without geometry is not placeable
+    write(m, "user:owen", {"op": "tag", "tag": "redact", "target": {"doc": letter, "select": {"page": 2, "xywh": [0.1, 0.1, 0.5, 0.2]}}})
+    p = make_list(m, tmp_path, ["demand-letter-2026-03-25.pdf"])
+    produce.produce(Matter(m.root), p, "vol001", "HFS")
+    import adhocdocs.produce as P
+    with pytest.raises(P.ProductionError, match="can't place"):
+        P.pages_for(Matter(m.root), letter, [{"tag": "redact", "target": {"doc": letter, "layer": "sha256:" + "0" * 64, "select": {"char": [0, 5]}}}])
