@@ -55,7 +55,8 @@ text is now at the old offsets.
   *Built:* `tr:<doc>#pl=14:3,15:7` (transcript page:line, through `line`
   segments), `#label=iv` (printed page labels), and `bates:ABC000123[-…]`
   (through production records; a range spanning documents resolves to a
-  list).
+  list), and `exh:12`, `exh:DX-12`, `exh:12#page=3` (through exhibit sets;
+  pages are the exhibit's own, mapped back to the original's).
 - `sheet=…&cells=B2:D10` resolves to the rectangle's text (tab-separated,
   one row per line), and its quote is that text; the viewer selects cells
   this way. A quoted page reference can't use cells yet: it needs a char

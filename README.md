@@ -158,6 +158,7 @@ no longer matches its document is flagged.
 **Producing**
 
 - *"Produce everything tagged responsive with Bates prefix SMITH, withhold what's tagged privileged, and give me the privilege log."*
+- *"Make exhibits for the Kettering deposition from the hot documents, oldest first, and give me the exhibit list in Word."*
 
 **With the viewer.** Select text, a region of a page, or cells in a
 spreadsheet, then ask about it:

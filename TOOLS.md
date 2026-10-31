@@ -102,4 +102,11 @@ organizations.
   descriptions and the user's notes.
 - **Exports of pages** with the provenance of every quotation. *Built*:
   [PAGES.md](PAGES.md).
-- *Proposed:* exhibit stamping, and native and TIFF productions.
+- **Exhibits.** *Built* (`produce exhibits`): documents stamped as numbered
+  exhibits, with a sticker (label, witness, date) on the first page and the
+  label on every page. Produced documents are used as produced, so their
+  Bates numbers show. The exhibit list comes as CSV, Word and a list file.
+  Numbers run on across sets and are never reused. `exh:12#page=3`
+  locators resolve to the original's pages, and pages can cite "Ex. 12 at
+  3" (`cite-exhibits`). The viewer's status bar shows a page's exhibit.
+- *Proposed:* native and TIFF productions.

@@ -244,9 +244,10 @@ def text(argv=None):
     p.add_argument("--json", action="store_true", help="print the resolution (status, locator, text) as JSON")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
-    if a.locator.startswith("bates:"):
+    if a.locator.startswith(("bates:", "exh:")):
+        from .exhibits import resolve_exhibit
         from .produce import resolve_bates
-        for hit in resolve_bates(m, a.locator):
+        for hit in (resolve_bates if a.locator.startswith("bates:") else resolve_exhibit)(m, a.locator):
             r = locators.resolve(m, hit["loc"])
             out({**hit, "status": r["status"], **({"text": r["text"]} if a.json and "text" in r else {})})
         return
@@ -976,6 +977,9 @@ def view(argv=None):
         if x.startswith("bates:"):            # the first document the Bates range touches
             from .produce import resolve_bates
             return locators.format(resolve_bates(m, x)[0]["loc"])
+        if x.startswith("exh:"):
+            from .exhibits import resolve_exhibit
+            return locators.format(resolve_exhibit(m, x)[0]["loc"])
         return locators.format(locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects))
 
     if a.cmd == "serve":
@@ -1099,7 +1103,11 @@ def analyze(argv=None):
 @run
 def produce(argv=None):
     from . import produce as prod
-    p = parser("produce", prod.__doc__)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    i = 2 if argv[:1] == ["--matter"] else 0
+    if argv[i:i + 1] == ["exhibits"]:
+        return produce_exhibits(argv[:i] + argv[i + 1:])
+    p = parser("produce", prod.__doc__ + "\n`produce exhibits --help`: documents stamped as numbered exhibits, and an exhibit list.")
     p.add_argument("list_file", help="the documents to produce, in order")
     p.add_argument("--name", required=True, help="e.g. vol001")
     p.add_argument("--prefix", required=True, help="Bates prefix, e.g. HFS")
@@ -1115,6 +1123,26 @@ def produce(argv=None):
         out(prod.produce(m, Path(a.list_file), a.name, a.prefix, a.start, a.digits, a.legend, not a.no_families,
                          tuple(a.withhold or ["privileged"]), a.redact))
     except prod.ProductionError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+
+
+def produce_exhibits(argv):
+    from . import exhibits as ex
+    from .produce import ProductionError
+    p = parser("produce exhibits", ex.__doc__)
+    p.add_argument("list_file", help="the exhibits, in order: one per item")
+    p.add_argument("--name", required=True, help="the set, e.g. kettering-dep")
+    p.add_argument("--prefix", default="Exhibit ", help='label before the number: "Exhibit " (default), "DX-", "PX "')
+    p.add_argument("--start", type=int, help="first number (default: after the last used with this prefix)")
+    p.add_argument("--witness", help="on the sticker, e.g. Kettering")
+    p.add_argument("--date", help="on the sticker, e.g. 2026-04-28")
+    p.add_argument("--originals", action="store_true", help="use originals even for documents that were produced")
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    try:
+        out(ex.exhibits(m, Path(a.list_file), a.name, a.prefix, a.start, a.witness, a.date, a.originals))
+    except ProductionError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 

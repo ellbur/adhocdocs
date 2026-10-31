@@ -76,7 +76,9 @@ through to its source.
   gives "Kettering Dep. 6:12–14", "HFS000124–25" (for a produced document's
   pages), "Warehouse Log at 2" and "Email from … (Mar. 9, 2026)". A page can name a Python file with its own `cite(info)`.
   Inline citations follow the quotation in parentheses; `cite=footnote`
-  and `cite=none` change that.
+  and `cite=none` change that. With `cite-exhibits: true` in the front
+  matter (or the name of an exhibit set), a document that became an
+  exhibit is cited as one: "Ex. 12 at 3", the exhibit's own page.
 - **Checking** (`page check`) resolves every reference and flags Markdown
   blockquotes, quoted prose of five or more words (a possible unbacked
   quotation, a warning only), and missing, unused and duplicate IDs. Claude's

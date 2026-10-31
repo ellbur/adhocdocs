@@ -1,7 +1,7 @@
 """Literate pages: render, check and export (see literate.py for the format).
 
 A page is a Markdown file with optional YAML front matter (``title``,
-``cite-style``), directives for quotations, and a ``refs`` block at the
+``cite-style``, ``cite-exhibits``), directives for quotations, and a ``refs`` block at the
 end. The renderer fills in every quotation from the document; the source
 has no way to supply quotation text.
 
@@ -133,6 +133,10 @@ class Page:
         from .produce import bates_for
         pages = list(range(info["pages"][0], info["pages"][1] + 1)) if info.get("pages") else None
         info["bates"] = bates_for(self.m, r.doc, pages)
+        want = self.meta.get("cite-exhibits")
+        if want:
+            from .exhibits import exhibit_for
+            info["exhibit"] = exhibit_for(self.m, r.doc, pages, None if want is True else str(want))
         return info
 
     def cite(self, r: Resolved, signal=None) -> str:
@@ -199,10 +203,21 @@ def bates_range(a: str, b: str) -> str:
 
 
 def default_cite(info: dict) -> str:
-    """Jones Dep. 14:3–15:7 · HFS000124–25 (a produced document's pages) ·
+    """Jones Dep. 14:3–15:7 · Ex. 12 at 3 (with ``cite-exhibits: true``, or
+    the name of an exhibit set) · HFS000124–25 (a produced document's pages) ·
     Warehouse Log at 2 · Email from Zoë Müller to Dana Okafor (Mar. 9, 2026),
     with "(emphasis added)" when needed."""
     s = default_name(info)
+    ex = info.get("exhibit")
+    if ex and not info.get("lines"):
+        from .exhibits import short
+        s = short(ex["label"])
+        if ex.get("pages"):
+            a, b = ex["pages"]
+            s += f" at {a}" if a == b else f" at {a}–{b}"
+        if info.get("emphasis_added"):
+            s += " (emphasis added)"
+        return f"<i>{html.escape(info['signal'])}</i> " + html.escape(s) if info.get("signal") else html.escape(s)
     if info.get("bates") and not info.get("lines"):
         s = bates_range(*info["bates"])
         if info.get("emphasis_added"):
@@ -511,6 +526,10 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
         raise PageError(f"reference {rid} exists; pass --replace")
     parts = []
     for s in locs:
+        if isinstance(s, str) and s.startswith(("bates:", "exh:")):          # the document (and pages) they name
+            from .exhibits import resolve_exhibit
+            from .produce import resolve_bates
+            s = (resolve_bates if s.startswith("bates:") else resolve_exhibit)(m, s)[0]["loc"]
         r = locators.resolve(m, s if isinstance(s, dict) else (s if s.lstrip().startswith("{") else "doc:" + s.removeprefix("doc:")))
         if r["status"] == "broken":
             raise PageError(f"locator is broken: {r.get('error')}")
