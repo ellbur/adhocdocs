@@ -153,6 +153,12 @@ def text(argv=None):
     p.add_argument("--json", action="store_true", help="print the resolution (status, locator, text) as JSON")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
+    if a.locator.startswith("bates:"):
+        from .produce import resolve_bates
+        for hit in resolve_bates(m, a.locator):
+            r = locators.resolve(m, hit["loc"])
+            out({**hit, "status": r["status"], **({"text": r["text"]} if a.json and "text" in r else {})})
+        return
     r = locators.resolve(m, a.locator)
     if a.json:
         out(dict(r))
@@ -780,9 +786,31 @@ def analyze(argv=None):
             Path(a.html).write_text(analysis.redline_html(m, doc(a.a), doc(a.b)))
 
 
+# -- produce ---------------------------------------------------------------------------------
+
+@run
+def produce(argv=None):
+    from . import produce as prod
+    p = parser("produce", prod.__doc__)
+    p.add_argument("list_file", help="the documents to produce, in order")
+    p.add_argument("--name", required=True, help="e.g. vol001")
+    p.add_argument("--prefix", required=True, help="Bates prefix, e.g. HFS")
+    p.add_argument("--start", type=int, default=1)
+    p.add_argument("--digits", type=int, default=6)
+    p.add_argument("--legend", help='e.g. "CONFIDENTIAL"')
+    p.add_argument("--no-families", action="store_true", help="don't add each document's attachments after it")
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    try:
+        out(prod.produce(m, Path(a.list_file), a.name, a.prefix, a.start, a.digits, a.legend, not a.no_families))
+    except prod.ProductionError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

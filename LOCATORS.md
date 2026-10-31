@@ -51,10 +51,11 @@ text is now at the old offsets.
 
 ## Not built yet
 
-- **Aliases:** `bates:ABC000123[-…]` (a range can span documents, so it
-  resolves to a list) and `ctl:` control numbers wait for production and
-  control-number records. *Built:* `tr:<doc>#pl=14:3,15:7` (transcript
-  page:line, through `line` segments) and `#label=iv` (printed page labels).
+- **Aliases:** `ctl:` control numbers wait for control-number records.
+  *Built:* `tr:<doc>#pl=14:3,15:7` (transcript page:line, through `line`
+  segments), `#label=iv` (printed page labels), and `bates:ABC000123[-…]`
+  (through production records; a range spanning documents resolves to a
+  list).
 - `cells=` and `xywh=` selectors parse, but nothing resolves them yet.
 
 ## Decisions to confirm
