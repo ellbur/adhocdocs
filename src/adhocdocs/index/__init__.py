@@ -1,6 +1,6 @@
 """Indexes live in ``workspace/.adhoc/indexes/<name>/``, each with a
 ``manifest.json`` (kind, settings, cursor, updater). The default indexes
-are ``fields``, ``keyword``, ``semantic``, ``threads``, ``neardup`` and ``names``. Any other directory with a
+are ``fields``, ``keyword``, ``semantic``, ``threads``, ``neardup``, ``names`` and ``entities``. Any other directory with a
 manifest is a custom index, updated by running its ``updater`` command (see
 :class:`ExternalIndex`)."""
 
@@ -13,16 +13,18 @@ from .base import Busy, Index, NeedsRebuild
 from .fields import FieldsIndex
 from .keyword import KeywordIndex
 
-DEFAULTS = ("fields", "keyword", "semantic", "threads", "neardup", "names")
+DEFAULTS = ("fields", "keyword", "semantic", "threads", "neardup", "names", "entities")
 
 
 def _kinds():
+    from .entities import EntitiesIndex
     from .names import NamesIndex
     from .neardup import NearDupIndex
     from .semantic import SemanticIndex
     from .threads import ThreadsIndex
     return {"fields": FieldsIndex, "keyword": KeywordIndex, "semantic": SemanticIndex,
-            "threads": ThreadsIndex, "neardup": NearDupIndex, "names": NamesIndex}
+            "threads": ThreadsIndex, "neardup": NearDupIndex, "names": NamesIndex,
+            "entities": EntitiesIndex}
 
 
 class ExternalIndex(Index):

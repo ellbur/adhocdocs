@@ -1,0 +1,27 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:EBACABC0579FB22ECBB41B3983ABBFBA
+SEQUENCE:0
+DTSTAMP:20251227T130000Z
+DTSTART:20251230T130000Z
+DTEND:20251230T140000Z
+SUMMARY:CLE: ethics hour
+LOCATION:Microsoft Teams Meeting
+ORGANIZER;CN="Gus Whitcomb":mailto:gwhitcomb@bellwethermarine.example
+ATTENDEE;CN="Renata Szabo";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:rszabo@bellwethermarine.example
+ATTENDEE;CN="Fritz Albrecht";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:falbrecht@bellwethermarine.example
+ATTENDEE;CN="Corinne Mbeki";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:cmbeki@bellwethermarine.example
+ATTENDEE;CN="Marcus Delacroix-Hale";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:mdelacroix-hale@bellwethermarine.example
+DESCRIPTION:\n\nJoin: https://meet.bellwethermarine.example/j/4994102687\nPasscode: 299570
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

@@ -13,6 +13,7 @@ import pytest
 from adhocdocs import lists, timeline, view
 from adhocdocs.ingest import ingest_paths
 from adhocdocs.matter import Matter
+from corpus_files import story
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 
@@ -20,7 +21,7 @@ CORPUS = Path(__file__).parent.parent / "corpus"
 @pytest.fixture(scope="module")
 def m(tmp_path_factory):
     m = Matter.create(tmp_path_factory.mktemp("timeline") / "m")
-    ingest_paths(m, sorted((CORPUS / "okafor-d").glob("*.eml")), "okafor-d", "c")
+    ingest_paths(m, story("okafor-d", "*.eml"), "okafor-d", "c")
     return Matter(m.root)
 
 

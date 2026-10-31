@@ -61,7 +61,9 @@ starts. Each `ingest` names the collection the files came from. The
 custodian is optional.
 
 To try it out, make a matter from the sample documents in `corpus/`. It
-holds a fictional supply dispute plus some real public-domain court and
+holds a fictional supply dispute, buried the way real ones are in several
+hundred irrelevant documents (marketing email, calendar invitations, office
+chatter, drafts of unclear origin), plus some real public-domain court and
 government documents:
 
 ```sh
@@ -144,6 +146,8 @@ to try on the sample matter:
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
 - *"Who are the people in this case, and how do they relate to each other?"*
 - *"Who is José Ibáñez? Show me every document that mentions him."*
+- Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
+- *"Add the key people and companies in this dispute to the entities, with a line on each."*
 
 **Writing**
 
@@ -241,6 +245,7 @@ data system-wide, put `eng.traineddata` in
 - [INDEXING.md](INDEXING.md): indexes, search, keeping indexes up to date
 - [LISTS.md](LISTS.md): document lists and the list display
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
+- [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer
 - [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms

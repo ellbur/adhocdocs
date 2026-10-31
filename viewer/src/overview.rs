@@ -1,6 +1,7 @@
 //! What the matter holds, for the landing page: the documents in summary,
-//! the people in their email headers, and the work product in the
-//! workspace (pages, lists, productions, exhibit sets), tags and notes.
+//! the people in their email headers, the entity list and its suggestions,
+//! and the work product in the workspace (pages, lists, productions,
+//! exhibit sets), tags and notes.
 //!
 //! It shows state; it starts nothing. Work begins by asking Claude.
 
@@ -44,6 +45,7 @@ impl Overview {
             "productions": sets(&ws.join("productions"), "production.jsonl"),
             "exhibits": sets(&ws.join("exhibits"), "exhibits.jsonl"),
             "annotations": annotations(&m.root),
+            "entities": entities(&m.root),
         })
     }
 }
@@ -229,6 +231,37 @@ fn annotations(root: &Path) -> Value {
         "by": n["by"], "at": n["at"], "doc": n["target"]["doc"]})).collect();
     recent.retain(|n| !n["doc"].is_null());
     json!({"tags": tags, "notes": notes.len(), "threads": threads, "recent_notes": recent})
+}
+
+/// The entity list (people, organizations, terms the user or Claude added),
+/// and the suggestions the entities index found that aren't on it yet.
+fn entities(root: &Path) -> Value {
+    let a = annotation_state(root);
+    let known = a["entities"].as_array().cloned().unwrap_or_default();
+    let mut aliases = std::collections::HashSet::new();
+    let mut kinds: HashMap<String, usize> = HashMap::new();
+    for e in &known {
+        *kinds.entry(e["kind"].as_str().unwrap_or("other").to_string()).or_insert(0) += 1;
+        for x in e["aliases"].as_array().into_iter().flatten() {
+            if let Some(x) = x.as_str() { aliases.insert(x.to_lowercase()); }
+        }
+    }
+    let mut rows: Vec<Value> = known.iter().rev().take(TOP).map(|e| json!({"entity": e["entity"], "name": e["name"], "kind": e["kind"],
+        "summary": e["summary"], "by": e["by"]})).collect();
+    rows.sort_by(|x, y| x["name"].as_str().unwrap_or("").to_lowercase().cmp(&y["name"].as_str().unwrap_or("").to_lowercase()));
+    let p = root.join("workspace/.adhoc/indexes/entities/candidates.json");
+    let cands: Value = fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let indexed = cands.get("candidates").is_some();
+    let mut sugg: Vec<(String, String, u64)> = cands["candidates"].as_object().into_iter().flatten().filter_map(|(_, c)| {
+        let name = c["name"].as_str()?.to_string();
+        let forms = c["forms"].as_array().cloned().unwrap_or_default();
+        let known = aliases.contains(&name.to_lowercase())
+            || forms.iter().any(|f| f.as_str().map(|f| aliases.contains(&f.to_lowercase())).unwrap_or(false));
+        (!known).then(|| (name, c["kind"].as_str().unwrap_or("").to_string(), c["docs"].as_u64().unwrap_or(0)))
+    }).collect();
+    sugg.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    json!({"total": known.len(), "kinds": counted(kinds), "known": rows, "indexed": indexed, "suggested": sugg.len(),
+           "top_suggested": sugg.into_iter().take(6).map(|(n, k, d)| json!({"name": n, "kind": k, "docs": d})).collect::<Vec<_>>()})
 }
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ pub const CSP: &str = "default-src 'none'; img-src adhoc: http://adhoc.localhost
 const SHELL_HTML: &str = include_str!("../shell/index.html");
 const SHELL_JS: &str = include_str!("../shell/shell.js");
 const SHELL_CSS: &str = include_str!("../shell/shell.css");
+const ENTITIES_JS: &str = include_str!("../shell/entities.js");
 
 pub struct Response {
     pub status: u16,
@@ -110,11 +111,14 @@ impl Handler {
             [""] | ["index.html"] => ok("text/html", SHELL_HTML),
             ["shell.js"] => ok("text/javascript", SHELL_JS),
             ["shell.css"] => ok("text/css", SHELL_CSS),
+            ["entities.js"] => ok("text/javascript", ENTITIES_JS),
             ["api", "doc", doc] => self.doc_info(doc),
+            ["api", "layer", id, "detected"] => self.detected(id),
             ["api", "layer", id, part] => self.layer_part(id, part),
             ["api", "text"] => self.text_at(&query(q)),
             ["api", "docs"] => self.docs(),
             ["api", "annotations"] => self.annotations(),
+            ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
             ["presentation", layer] => self.presentation(layer),
@@ -128,6 +132,28 @@ impl Handler {
         json_resp(annotation_state(&root))
     }
 
+    /// The entities index's detections for a layer's text (the entity layer's
+    /// suggestions), or none if the index hasn't reached it yet.
+    fn detected(&self, id: &str) -> Response {
+        let m = self.matter.lock().unwrap();
+        let Some(layer) = m.layer(id).cloned() else { return not_found("layer not in this matter") };
+        let h = layer.text.strip_prefix("sha256:").unwrap_or(&layer.text).to_string();
+        if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return json_resp(json!([]));
+        }
+        let p = m.root.join("workspace/.adhoc/indexes/entities/texts").join(format!("{}.json", h));
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("detections").cloned().unwrap_or(json!([])))
+    }
+
+    /// Every detected candidate across the matter: how many documents name it.
+    fn entity_candidates(&self) -> Response {
+        let m = self.matter.lock().unwrap();
+        let p = m.root.join("workspace/.adhoc/indexes/entities/candidates.json");
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("candidates").cloned().unwrap_or(json!({})))
+    }
+
     fn overview(&mut self) -> Response {
         let matter = self.matter.clone();
         let mut m = matter.lock().unwrap();
@@ -136,12 +162,13 @@ impl Handler {
     }
 }
 
-/// The annotation log replayed: definitions, and tags and notes by document.
+/// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
 pub fn annotation_state(root: &std::path::Path) -> Value {
     let text = std::fs::read_to_string(root.join("annotations/log.jsonl")).unwrap_or_default();
     let mut defs: Vec<(String, Value)> = vec![];
     let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
     let mut notes: Vec<(String, Value)> = vec![];
+    let mut entities: Vec<(String, Value)> = vec![];
     let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(ev) = serde_json::from_str::<Value>(line) else { continue };
@@ -178,13 +205,46 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                 }
             }
             "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
+            // the entity list (see entities.py and annotations.py, which this follows)
+            "define-entity" => {
+                let mut aliases: Vec<Value> = vec![];
+                for a in std::iter::once(&ev["name"]).chain(ev["aliases"].as_array().into_iter().flatten()) {
+                    let a = a.as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !a.is_empty() && !aliases.iter().any(|x| x == &json!(a)) { aliases.push(json!(a)); }
+                }
+                entities.push((ev["entity"].as_str().unwrap_or("").to_string(), json!({
+                    "entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind").filter(|k| !k.is_null()).cloned().unwrap_or(json!("other")),
+                    "aliases": aliases, "summary": ev["summary"], "recap": ev["recap"],
+                    "recap_at": if ev["recap"].is_string() { ev["at"].clone() } else { Value::Null },
+                    "see": ev.get("see").cloned().unwrap_or(json!([])), "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-entity" => {
+                if let Some((_, e)) = entities.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["entity"].as_str()) {
+                    for k in ["name", "kind", "summary", "recap", "see"] {
+                        if ev.get(k).is_some() { e[k] = ev[k].clone(); }
+                    }
+                    if ev.get("recap").is_some() { e["recap_at"] = ev["at"].clone(); }
+                    let mut aliases: Vec<Value> = e["aliases"].as_array().cloned().unwrap_or_default();
+                    let removed: Vec<&Value> = ev["remove_aliases"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+                    aliases.retain(|a| !removed.contains(&a));
+                    for a in ev.get("name").into_iter().chain(ev["add_aliases"].as_array().into_iter().flatten()) {
+                        let a = a.as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                        if !a.is_empty() && !aliases.iter().any(|x| x == &json!(a)) { aliases.push(json!(a)); }
+                    }
+                    e["aliases"] = json!(aliases);
+                    e["edited_by"] = ev["author"].clone();
+                    e["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-entity" => entities.retain(|(id, _)| Some(id.as_str()) != ev["entity"].as_str()),
             _ => {}
         }
     }
     let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"], "hotkey": d["hotkey"],
         "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
     json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
-           "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>()})
+           "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
+           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>()})
 }
 
 impl Handler {

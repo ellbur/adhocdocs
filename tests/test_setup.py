@@ -17,6 +17,16 @@ def test_corpus_manifest_covers_every_directory():
     assert {c["name"]: c["custodian"] for c in colls}["public"] is None
 
 
+def test_corpus_is_mostly_noise():
+    """build_noise.py's irrelevant documents are all there, and outnumber each
+    custodian's story documents more than ten to one."""
+    from corpus_files import NOISE, story
+    assert all(p.is_file() for p in NOISE)
+    for d in ("delacroix-m", "kettering-t", "muller-z", "okafor-d", "voss-r"):
+        noise = sum(1 for p in NOISE if p.parent.name == d)
+        assert noise > 10 * len(story(d)), d
+
+
 def test_manifest_ingest(tmp_path):
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "one.txt").write_text("one")

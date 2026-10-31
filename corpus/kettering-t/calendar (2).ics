@@ -1,0 +1,27 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:8CD8813024E526465C68A03F675950A6
+SEQUENCE:0
+DTSTAMP:20260623T183000Z
+DTSTART:20260626T183000Z
+DTEND:20260626T190000Z
+SUMMARY:Dentist (personal)
+LOCATION:Phone
+ORGANIZER;CN="Corinne Mbeki":mailto:cmbeki@bellwethermarine.example
+ATTENDEE;CN="Ivy Castellano";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:icastellano@bellwethermarine.example
+ATTENDEE;CN="Fritz Albrecht";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:falbrecht@bellwethermarine.example
+ATTENDEE;CN="Lena Fairbanks";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:lfairbanks@bellwethermarine.example
+ATTENDEE;CN="Thomas Kettering";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:tkettering@bellwethermarine.example
+DESCRIPTION:Lunch will be provided.
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

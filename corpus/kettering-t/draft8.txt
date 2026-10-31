@@ -1,0 +1,17 @@
+SOP — Conference room booking
+
+Rev C! Owner: TBD
+
+1. Open calendar
+
+2. Choose room
+
+3. Add attendees
+
+4. Add catering if needed
+
+[cut?]
+
+1. Cancel if not needed!!
+
+Is this still how we do it?

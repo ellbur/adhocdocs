@@ -17,7 +17,18 @@
   <textarea id="note-text" rows="8"></textarea>
   <div class="row"><span class="hint">Ctrl+Enter saves · Esc cancels</span></div>
 </div>
+<div id="entity-editor" hidden>
+  <div id="ee-title"></div>
+  <div class="row"><input id="ee-name" placeholder="Name" autocomplete="off">
+    <select id="ee-kind"><option value="person">person</option><option value="organization">organization</option>
+      <option value="term">defined term</option><option value="identifier">number</option><option value="contract">contract</option>
+      <option value="event">event</option><option value="place">place</option><option value="thing">thing</option><option value="other">other</option></select></div>
+  <textarea id="ee-summary" rows="3"></textarea>
+  <div class="row"><span class="hint">Enter saves · Ctrl+Enter in the description · Esc cancels</span></div>
+</div>
+<div id="entity-card" hidden></div>
 <div id="toast" hidden></div>
+<script src="/entities.js"></script>
 <script src="/shell.js"></script>
 </body>
 </html>
