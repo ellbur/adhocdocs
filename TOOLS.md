@@ -54,6 +54,13 @@ them.
 - **Tags and notes.** *Built*: `ann` and the annotation API for Claude, and
   hotkeys, a tag palette and notes in the viewer for the user:
   [ANNOTATIONS.md](ANNOTATIONS.md).
+- **Entities.** *Built*: the entity layer, [ENTITIES.md](ENTITIES.md). A
+  list of known people, organizations, defined terms, numbers and the like,
+  with a summary and a recap of what Claude last said about each. The
+  viewer marks their mentions, shows a card on hover, and selects one on a
+  click. It also suggests names found by rules at indexing (`entities`
+  index: people, organizations, defined terms with what they mean, document
+  numbers). `ann entities`, `ann suggestions`, `ann define-entity`.
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under
@@ -90,8 +97,9 @@ details).
   every mention as a locator ([`names.py`](src/adhocdocs/names.py) has the
   rules). Rules, not a model: each mention says why it was taken.
 
-*Proposed:* organizations; first names alone ("José") and initials ("TK")
-joined to the person they stand for.
+Organizations, defined terms and document numbers are detected for the
+entity layer ([ENTITIES.md](ENTITIES.md)). *Proposed:* first names alone
+("José") and initials ("TK") joined to the person they stand for.
 
 ## Review and output
 

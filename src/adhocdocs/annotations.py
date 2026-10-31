@@ -13,7 +13,16 @@ Each line of ``annotations/log.jsonl`` is an event with ``id``, ``at``,
 ``reply``          ``note`` (new ID), ``parent`` (a note ID), ``body``
 ``edit-note``      ``note``, ``body``
 ``delete-note``    ``note``
+``define-entity``  ``entity`` (new ID), ``name``, and optional ``kind``,
+                   ``aliases``, ``summary``, ``recap``, ``see`` (targets)
+``edit-entity``    ``entity`` and the fields that change; ``add_aliases``,
+                   ``remove_aliases``
+``delete-entity``  ``entity``
 =================  =========================================================
+
+Entities are the entity layer's known entities (ENTITIES.md). Each field
+remembers who set it last: Claude can't change a field, remove an alias or
+delete an entity the user set, made or added.
 
 Authorship comes from the write path, never from the request: the viewer
 writes as ``user:<id>``, and the annotation API (:mod:`adhocdocs.annapi`),
@@ -60,6 +69,7 @@ class Annotations:
         self.definitions: dict[str, dict] = {}   # tag -> definition (+ "by")
         self.tags: dict[str, dict] = {}          # target key -> tag -> application
         self.notes: dict[str, dict] = {}         # note ID -> note
+        self.entities: dict[str, dict] = {}      # entity ID -> entity
         self.last_id: str | None = None
 
     @classmethod
@@ -96,6 +106,47 @@ class Annotations:
                 n.update(body=ev["body"], edited_at=ev["at"], edited_by=ev["author"])
         elif op == "delete-note":
             self.notes.pop(ev["note"], None)
+        elif op == "define-entity":
+            e = {"entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind") or "other", "aliases": [],
+                 "alias_by": {}, "summary": None, "recap": None, "see": [], "by": ev["author"], "at": ev["at"],
+                 "set_by": {}, "set_at": {}}
+            self.entities[ev["entity"]] = e
+            for f in ENTITY_FIELDS:
+                if f in ev and f != "name":
+                    e[f] = ev[f]
+            for f in ENTITY_FIELDS:
+                if f in ev:                     # a field nobody set is anyone's to set
+                    e["set_by"][f], e["set_at"][f] = ev["author"], ev["at"]
+            for a in dict.fromkeys([ev["name"], *ev.get("aliases", [])]):
+                if a.strip():
+                    _add_alias(e, a, ev["author"])
+            e["aliases"] = list(e["alias_by"])
+        elif op == "edit-entity":
+            e = self.entities.get(ev["entity"])
+            if e:
+                for f in ENTITY_FIELDS:
+                    if f in ev:
+                        e[f] = ev[f]
+                        e["set_by"][f], e["set_at"][f] = ev["author"], ev["at"]
+                for a in ev.get("remove_aliases", []):
+                    e["alias_by"].pop(a, None)
+                for a in ([ev["name"]] if "name" in ev else []) + ev.get("add_aliases", []):
+                    if a.strip():
+                        _add_alias(e, a, ev["author"])
+                e["aliases"] = list(e["alias_by"])
+                e["edited_at"], e["edited_by"] = ev["at"], ev["author"]
+                if ev.get("requested_by"):
+                    e["requested_by"] = ev["requested_by"]
+        elif op == "delete-entity":
+            self.entities.pop(ev["entity"], None)
+
+    def entity_named(self, name: str, kind: str | None) -> dict | None:
+        from .entities import fold_text
+        f = " ".join(fold_text(name).split())
+        for e in self.entities.values():
+            if " ".join(fold_text(e["name"]).split()) == f and (e["kind"] == (kind or "other")):
+                return e
+        return None
 
     # -- the rules --------------------------------------------------------------------
 
@@ -139,6 +190,33 @@ class Annotations:
                 raise Refused(f"no note {ev['note']}")
             if author == CLAUDE and is_user(n["by"]):
                 raise Refused(f"note {ev['note']} was written by {n['by']}; Claude can't change it")
+        elif op == "define-entity":
+            if not ev["name"].strip():
+                raise Refused("an entity needs a name")
+            same = self.entity_named(ev["name"], ev.get("kind"))
+            if same:
+                raise Refused(f"{ev['name']!r} is already entity {same['entity']} ({same['kind']}); "
+                              "edit it with edit-entity, or give this one a name that tells them apart")
+        elif op in ("edit-entity", "delete-entity"):
+            e = self.entities.get(ev["entity"])
+            if e is None:
+                raise Refused(f"no entity {ev['entity']}")
+            if author == CLAUDE:
+                if op == "delete-entity" and (is_user(e["by"]) or any(is_user(b) for b in e["set_by"].values())
+                                              or any(is_user(b) for b in e["alias_by"].values())):
+                    raise Refused(f"entity {e['entity']} ({e['name']}) has the user's work in it; Claude can't delete it")
+                for f in ENTITY_FIELDS:
+                    if f in ev and is_user(e["set_by"].get(f, "")) and ev[f] != e[f]:
+                        raise Refused(f"the {f} of {e['name']} was set by {e['set_by'][f]}; Claude can't change it"
+                                      + ("; use recap for what you told the user" if f == "summary" else ""))
+                for a in ev.get("remove_aliases", []):
+                    if is_user(e["alias_by"].get(a, "")):
+                        raise Refused(f"alias {a!r} of {e['name']} was added by {e['alias_by'][a]}; Claude can't remove it")
+            for a in ev.get("remove_aliases", []):
+                if a not in e["alias_by"]:
+                    raise Refused(f"{a!r} is not an alias of {e['name']}")
+                if a == ev.get("name", e["name"]):
+                    raise Refused(f"{a!r} is the entity's name; rename it first")
 
     def group_conflicts(self, ev: dict) -> list[dict]:
         """Other tags of the same exclusive group on the target, to remove first."""
@@ -160,6 +238,15 @@ class Annotations:
         for a in self.applications():
             out.setdefault(a["target"]["doc"], set()).add(a["tag"])
         return out
+
+
+ENTITY_FIELDS = ("name", "kind", "summary", "recap", "see")
+
+
+def _add_alias(e: dict, alias: str, author: str):
+    alias = " ".join(alias.split())
+    if alias not in e["alias_by"]:
+        e["alias_by"][alias] = author
 
 
 def current_tags(m: Matter) -> dict[str, set[str]]:
@@ -192,6 +279,9 @@ OPS = {
     "reply": (("parent", "body"), ()),
     "edit-note": (("note", "body"), ()),
     "delete-note": (("note",), ()),
+    "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see")),
+    "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "add_aliases", "remove_aliases")),
+    "delete-entity": (("entity",), ()),
 }
 
 
@@ -219,6 +309,16 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
     ev = {"op": op, **{k: req[k] for k in required + optional if req.get(k) is not None}}
     if "target" in ev:
         ev["target"] = normalize_target(m, ev["target"])
+    for k in ("aliases", "add_aliases", "remove_aliases", "see"):
+        if k in ev and not isinstance(ev[k], list):
+            raise Refused(f"{k} must be a list")
+    for k in ("aliases", "add_aliases", "remove_aliases"):
+        if k in ev:
+            ev[k] = [" ".join(str(a).split()) for a in ev[k] if str(a).strip()]
+    if "see" in ev:
+        ev["see"] = [normalize_target(m, t) for t in ev["see"]]
+    if op == "define-entity":
+        ev["entity"] = "e_" + new_event_id()[3:]
     if op in ("note", "reply"):
         ev["note"] = "n_" + new_event_id()[3:]
     ev["author"] = author
@@ -244,3 +344,13 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
 def note_check(m: Matter, body: str) -> list[dict]:
     """Problems in a note by Claude: quotations must be references (Principle 5)."""
     return literate.problems(literate.check(m, body))
+
+
+def entity_check(m: Matter, req: dict) -> list[dict]:
+    """Problems in an entity's summary or recap by Claude: no typed quotations
+    (point at the words with ``see`` instead)."""
+    out = []
+    for f in ("summary", "recap"):
+        if req.get(f):
+            out += [{**p, "field": f} for p in note_check(m, req[f])]
+    return out

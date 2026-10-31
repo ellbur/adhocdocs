@@ -11,7 +11,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import annapi, annotations, lists, locators, view as viewmod
+from . import annapi, annotations, entities, lists, locators, view as viewmod
 from .matter import Matter, MatterNotFound
 
 
@@ -615,6 +615,32 @@ Call it that, never a privilege log: the lawyer decides.
 
 Tags must be defined (define-tag) before use. A tag in an exclusive --group
 replaces the group's other tag on the same target.
+
+Entities (the entity layer; ENTITIES.md): people, organizations, defined
+terms, contracts, events, numbers... that the user can hover over in the
+viewer to be reminded what they are.
+
+  ann entities [--kind K] [--doc D] [--suggested]   the entity list, or a document's entity layer
+  ann entity <id|name> [--mentions]                 one entity (and where it is mentioned)
+  ann suggestions [--doc D] [--kind K]              detected candidates nobody has defined yet
+  ann define-entity "Raymond Voss" --kind person --alias Voss --alias "R. Voss" \
+      --summary "Harrowgate's controller; signed the supply agreement for Seller." --see <locator>
+  ann edit-entity <id|name> --recap "You asked who chased the invoice: Voss, Mar 9 and Mar 17."
+  ann delete-entity <id|name>
+
+The viewer underlines known entities and dots suggestions (found by rules
+when documents were indexed); the user hovers one to see what it is and
+clicks it to select it, so `view selection` has its "entity". When you have
+told the user who or what something is, record it: define-entity if it isn't
+known (with the aliases the documents use, so every mention is marked),
+else edit-entity --recap. The summary says what it is in a line or two; the
+recap what you just told them, so the next hover reminds them. Both are
+paraphrase: point at the words with --see, don't type quotations. Say in a
+line that you did it. After an analysis that names the key players (a cast,
+a chronology), add the ten or so that matter, not every suggestion.
+
+Claude can't change a field, remove an alias or delete an entity the user
+set, made or added; it can fill in what the user left blank.
 """
 
 
@@ -690,6 +716,35 @@ def ann(argv=None):
     s = sub.add_parser("delete-note")
     s.add_argument("note")
     s.add_argument("--requested-by")
+    s = sub.add_parser("entities", help="the entity list, or with --doc a document's entity layer")
+    s.add_argument("--kind")
+    s.add_argument("--doc", help="a document: the known entities' mentions in it (and --suggested ones)")
+    s.add_argument("--suggested", action="store_true", help="with --doc: also detected candidates")
+    s = sub.add_parser("entity", help="one entity by ID, name or alias")
+    s.add_argument("ref")
+    s.add_argument("--mentions", action="store_true", help="every mention, as locators")
+    s = sub.add_parser("suggestions", help="detected entity candidates not in the entity list, most documents first")
+    s.add_argument("--doc")
+    s.add_argument("--kind")
+    s.add_argument("--min-docs", type=int, default=1)
+    s.add_argument("--limit", type=int, default=50)
+    for name in ("define-entity", "edit-entity"):
+        s = sub.add_parser(name)
+        s.add_argument("name" if name == "define-entity" else "ref")
+        if name == "edit-entity":
+            s.add_argument("--name")
+        s.add_argument("--kind", help="person, organization, term, identifier, contract, event, place, thing, other")
+        s.add_argument("--summary", help="what it is, in a line or two: shown when the user hovers over it")
+        s.add_argument("--recap", help="what you last told the user about it, shown under the summary")
+        s.add_argument("--see", action="append", help="a locator to the words that define or show it (repeatable)")
+        s.add_argument("--alias", dest="aliases", action="append", help="another way it is written (repeatable)")
+        if name == "edit-entity":
+            s.add_argument("--remove-alias", action="append")
+            s.add_argument("--clear-see", action="store_true", help="remove every --see")
+        s.add_argument("--requested-by")
+    s = sub.add_parser("delete-entity")
+    s.add_argument("ref")
+    s.add_argument("--requested-by")
     for name in ("define-tag", "edit-tag"):
         s = sub.add_parser(name)
         s.add_argument("tag")
@@ -762,6 +817,23 @@ def ann(argv=None):
         from . import literate
         for r in literate.check(m, body):
             out(r)
+    elif a.cmd in ("entities", "entity", "suggestions"):
+        _entity_reads(m, a)
+    elif a.cmd in ("define-entity", "edit-entity", "delete-entity"):
+        req = {"op": a.cmd, "requested_by": a.requested_by}
+        if a.cmd != "define-entity":
+            req["entity"] = entities.resolve(m, a.ref)["entity"]
+        if a.cmd == "define-entity":
+            req.update(name=a.name, aliases=a.aliases)
+        elif a.cmd == "edit-entity":
+            req.update(name=a.name, add_aliases=a.aliases, remove_aliases=a.remove_alias)
+            if a.clear_see:
+                req["see"] = []
+        if a.cmd != "delete-entity":
+            req.update(kind=a.kind, summary=a.summary, recap=a.recap)
+            if a.see:
+                req["see"] = _targets(m, a.see)
+        out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
     elif a.cmd == "flag-privilege":
         req = {"requested_by": a.requested_by}
         events = []
@@ -794,6 +866,60 @@ def ann(argv=None):
         elif a.cmd in ("define-tag", "edit-tag"):
             req.update(tag=a.tag, color=a.color, hotkey=a.hotkey, group=a.group, description=a.description)
         out(annapi.request(m, req))
+
+
+def _entity_row(e: dict) -> dict:
+    row = {k: e[k] for k in ("entity", "name", "kind", "aliases", "summary", "recap", "see", "by", "at") if e.get(k) not in (None, [])}
+    users = sorted({b for b in [*e["set_by"].values(), *e["alias_by"].values()] if annotations.is_user(b)})
+    if users:
+        row["user_set"] = sorted(f for f, b in e["set_by"].items() if annotations.is_user(b))
+    if e.get("edited_at"):
+        row["edited_at"] = e["edited_at"]
+    if e.get("set_at", {}).get("recap") and e.get("recap"):
+        row["recap_at"] = e["set_at"]["recap"]
+    return row
+
+
+def _entity_reads(m, a):
+    ents = entities.known(m)
+    if a.cmd == "entity":
+        e = entities.resolve(m, a.ref, ents)
+        row = _entity_row(e)
+        ms = entities.mentions(m, [e])
+        row["mentioned_in"] = len({x["loc"]["doc"] for x in ms})
+        row["mentions"] = len(ms)
+        out(row)
+        if a.mentions:
+            for x in ms:
+                out({"loc": x["loc"]})
+    elif a.cmd == "entities" and not a.doc:
+        for e in ents:
+            if not a.kind or e["kind"] == a.kind:
+                out(_entity_row(e))
+    elif a.cmd == "entities":
+        lay = entities.layer(m, _targets(m, [a.doc])[0]["doc"], suggestions=a.suggested)
+        by_id = {e["entity"]: e for e in ents}
+        for x in lay["known"]:
+            if not a.kind or any(by_id[i]["kind"] == a.kind for i in x["entities"]):
+                out({"loc": x["loc"], "entities": [{"entity": i, "name": by_id[i]["name"]} for i in x["entities"]]})
+        for x in lay.get("suggested", []):
+            if not a.kind or x["kind"] == a.kind:
+                out({"loc": x.pop("loc"), "suggested": {k: v for k, v in x.items() if k not in ("start", "end")}})
+    else:
+        have = entities.known_keys(ents)
+        cands = entities.candidates(m)
+        if not cands:
+            raise ValueError("the entities index has no candidates yet; idx status entities")
+        keys = list(cands)
+        if a.doc:
+            doc = _targets(m, [a.doc])[0]["doc"]
+            lay = m.state.primary_layer(m.state.documents[m.state.follow(doc)])
+            keys = list(dict.fromkeys(d["key"] for d in entities.detected(m, lay.text))) if lay else []
+        rows = [{"key": k, **cands[k]} for k in keys if k in cands and k not in have
+                and (not a.kind or cands[k]["kind"] == a.kind) and cands[k]["docs"] >= a.min_docs]
+        rows.sort(key=lambda r: (-r["docs"], -r["mentions"]))
+        for r in rows[:a.limit]:
+            out(r)
 
 
 # -- page ----------------------------------------------------------------------------------
@@ -926,10 +1052,16 @@ this only talks to it. Locators are string or JSON; hash prefixes work.
 
 Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
 Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
-the duplicates), N note, tag hotkeys, v layer, f mode, Tab pane, Alt-drag
+the duplicates), N note, e entity (add the selection, or edit the entity it
+is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane, Alt-drag
 a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
+
+Entities: the viewer underlines known entities and dots suggested ones;
+the user hovers to see what they are and clicks to select one. `view
+selection` then has "entity": {"known": [...]} or {"suggested": {...}}.
+See `ann --help` for the entity list.
 
 Timelines: `view timeline FILE` shows a list file's items by date, in
 lanes (--lanes group, custodian, from, kind). For a chronology, give items

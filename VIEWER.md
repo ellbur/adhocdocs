@@ -131,12 +131,23 @@ text, so tags, notes and marks work on it as on any range. Search hits
 a sheet are drawn, unless a locator points further down; text mode and
 search reach the rest.
 
+## The entity layer
+
+Known entities' mentions are underlined and suggestions dotted, in page,
+flow and text modes. Hovering one shows a card (summary, recap, links,
+evidence), and clicking one selects it. `e` adds the selection to the
+entity list or edits the entity, and `E` (or the header counter) shows all,
+known only, or none. The viewer matches aliases itself
+([`entities.js`](viewer/shell/entities.js)) so the list's changes show at
+once, and reads suggestions from the `entities` index's files. See
+[ENTITIES.md](ENTITIES.md).
+
 ## State
 
 `view state` reports the layout, panes, and per pane: the document, layer
 and view, mode, what's visible (pages or a char range), the sequence
 position, the **selection as a JSON locator with its quote fingerprint**
-(ready for a `refs` block, tag or note), marks, highlights, form values, and
+(ready for a `refs` block, tag or note) and the `entity` it is, if any, marks, highlights, form values, and
 a list pane's selected rows. `view history` lists where the user went and
 whether the user, Claude or a pane went there.
 

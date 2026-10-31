@@ -30,7 +30,7 @@ function parseCells(spec) {
   const [a, b = a] = ends.map((m) => [Number(m[2]) - 1, colIndex(m[1])]);
   return { r0: Math.min(a[0], b[0]), r1: Math.max(a[0], b[0]), c0: Math.min(a[1], b[1]), c1: Math.max(a[1], b[1]) };
 }
-const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "?"]);
+const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "e", "E", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "?"]);
 
 // -- locators -------------------------------------------------------------------------
 
@@ -71,7 +71,7 @@ const short = (h) => (h || "").replace("sha256:", "").slice(0, 10);
 
 // -- data from the viewer -------------------------------------------------------------
 
-const cache = { docs: {}, text: {}, geometry: {}, segments: {} };
+const cache = { docs: {}, text: {}, geometry: {}, segments: {}, detected: {}, folded: {} };
 async function getJSON(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
@@ -83,13 +83,22 @@ async function layerText(id) {
 }
 async function geometry(id) { return cache.geometry[id] ??= getJSON(`/api/layer/${id}/geometry`); }
 async function segments(id) { return cache.segments[id] ??= getJSON(`/api/layer/${id}/segments`); }
+// the entities index's detections for a layer (they appear once the index reaches it, so an empty answer isn't kept)
+async function detected(id) {
+  const d = await (cache.detected[id] ??= getJSON(`/api/layer/${id}/detected`).catch(() => []));
+  if (!d.length) delete cache.detected[id];
+  return d;
+}
 
 // -- state -------------------------------------------------------------------------------
 
 const adhoc = {
   panes: [], focused: null, layout: "single", user: "user", history: [], nextId: 1, window: "w1",
   elsewhereMap: {},       // pane ID -> {window, kind}, for every window's panes
-  annotations: { definitions: [], tags: [], notes: [] }, annLogSize: -1,
+  annotations: { definitions: [], tags: [], notes: [], entities: [] }, annLogSize: -1,
+  // the entity layer: "all" (known and suggested), "known", or "off"; candidates: detected key -> {docs, …}
+  entityMode: (() => { try { return localStorage.getItem("adhoc.entityMode") || "all"; } catch { return "all"; } })(),
+  candidates: {}, candidatesAt: 0,
 };
 window.adhoc = adhoc;
 
@@ -188,13 +197,23 @@ function selectionRange(doc) {
   }
   return s < e ? [s, e] : null;
 }
+// The marked elements of a DOM, by offset, for pointAt to search.
+function markedIndex(root) {
+  const marked = [...root.querySelectorAll("[data-s],[data-o]")].map((m) => [Number(m.dataset.s ?? m.dataset.o), m]);
+  marked.sort((a, b) => a[0] - b[0]);
+  return marked;
+}
 // The DOM point for a layer offset.
-function pointAt(root, off) {
-  const marked = [...root.querySelectorAll("[data-s],[data-o]")];
+function pointAt(root, off, index = null) {
   let best = null;
-  for (const m of marked) {
-    const b = Number(m.dataset.s ?? m.dataset.o);
-    if (b <= off && (!best || b >= Number(best.dataset.s ?? best.dataset.o))) best = m;
+  if (index) {
+    let lo = 0, hi = index.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (index[mid][0] <= off) { best = index[mid][1]; lo = mid + 1; } else hi = mid - 1; }
+  } else {
+    for (const m of root.querySelectorAll("[data-s],[data-o]")) {
+      const b = Number(m.dataset.s ?? m.dataset.o);
+      if (b <= off && (!best || b >= Number(best.dataset.s ?? best.dataset.o))) best = m;
+    }
   }
   if (!best) return null;
   let left = off - Number(best.dataset.s ?? best.dataset.o);
@@ -207,18 +226,20 @@ function pointAt(root, off) {
   }
   return [best, best.childNodes.length];
 }
-function rangeRects(root, s, e) {
-  const a = pointAt(root, s), b = pointAt(root, e);
+function rangeRects(root, s, e, index = null) {
+  const a = pointAt(root, s, index), b = pointAt(root, e, index);
   if (!a || !b) return [];
   const r = root.ownerDocument.createRange();
   r.setStart(...a); r.setEnd(...b);
   return [...r.getClientRects()];
 }
-function drawRangeBoxes(container, scroller, root, s, e, cls) {
+function drawRangeBoxes(container, scroller, root, s, e, cls, index = null) {
   const origin = container.getBoundingClientRect();
-  for (const rc of rangeRects(root, s, e)) {
+  // a scrolled body's own box moves with it; a scrolled pane's doesn't
+  const [dx, dy] = container.tagName === "BODY" ? [0, 0] : [container.scrollLeft, container.scrollTop];
+  for (const rc of rangeRects(root, s, e, index)) {
     container.append(el("div", { class: "hlbox " + cls, style:
-      `left:${rc.left - origin.left}px;top:${rc.top - origin.top}px;width:${rc.width}px;height:${rc.height}px` }));
+      `left:${rc.left - origin.left + dx}px;top:${rc.top - origin.top + dy}px;width:${rc.width}px;height:${rc.height}px` }));
   }
 }
 
@@ -235,6 +256,7 @@ class DocumentPane {
     this.side = el("div", { class: "pane-side" });
     this.root.append(this.head, this.links, el("div", { class: "pane-split" }, this.body, this.side));
     this.body.addEventListener("scroll", () => this.onScroll());
+    this.watchHover(document, this.body);
     // pages are laid out to the pane's width: lay them out again when it changes
     let lastWidth = 0;
     new ResizeObserver(() => {
@@ -264,6 +286,8 @@ class DocumentPane {
       id: this.id, kind: "document", mode: this.mode, doc: this.info?.doc, layer: this.layer, view: this.currentLayer()?.view,
       visible: this.visible, sequence: this.sequence && { position: this.sequence.position + 1, length: this.sequence.items.length, from: this.sequence.from },
       selection: this.selection, marks: this.marks, highlights: this.highlights.map((h) => ({ loc: h.loc, label: h.label })),
+      ...(this.selectionEntity() ? { entity: this.selectionEntity() } : {}),
+      entities: this.ents ? { known: this.ents.known.length, suggested: this.ents.suggested.length, display: adhoc.entityMode } : null,
       open_ms: this.timings || [],
     };
   }
@@ -301,7 +325,9 @@ class DocumentPane {
         onclick: () => this.open({ doc: info.doc, layer: l.id }, { quiet: true }) }, l.view + (l.primary ? "*" : "")))),
       el("span", { class: "seg" }, ...this.modes()
         .map((m) => el("button", { class: m === this.mode ? "on" : "", onclick: () => this.setMode(m) }, m))),
-      el("span", { class: "chips" }), el("span", { class: "status" }));
+      el("span", { class: "chips" }),
+      el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, click to select it and ask Claude. E shows all, known only, or none.",
+        onclick: () => cycleEntityMode() }), el("span", { class: "status" }));
     const links = [];
     if (info.parent) links.push(["parent: " + (info.parent.name || short(info.parent.doc)), info.parent.doc]);
     for (const c of info.children) links.push(["attachment: " + (c.name || short(c.doc)), c.doc]);
@@ -318,6 +344,7 @@ class DocumentPane {
     this.renderAnnotations();
     this.updateStatus();
     if (this.mode !== "page") this.shown();
+    this.loadEntities();
   }
   async setMode(m) { this.mode = m; await this.render(); }
 
@@ -416,6 +443,7 @@ class DocumentPane {
       for (const h of this.highlights) if (h.range) draw(...h.range, "hl");
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) draw(...mk.select.char, "mark");
       for (const h of this.highlights) if (h.region) this.drawRegion(h.region, "hl");
+      for (const x of this.shownEntities()) draw(x.start, x.end, x.known ? "ent" : "ent sug");
     } else {
       const root = this.textRoot();
       if (!root) return;
@@ -424,6 +452,8 @@ class DocumentPane {
       if (getComputedStyle(container).position === "static") container.style.position = "relative";
       for (const h of this.highlights) if (h.range) drawRangeBoxes(container, null, root, ...h.range, "hl");
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) drawRangeBoxes(container, null, root, ...mk.select.char, "mark");
+      const index = markedIndex(root);
+      for (const x of this.shownEntities()) drawRangeBoxes(container, null, root, x.start, x.end, x.known ? "ent" : "ent sug", index);
     }
   }
   drawRegion(r, cls) {
@@ -476,6 +506,7 @@ class DocumentPane {
     d.addEventListener("mouseup", (ev) => this.onMouseUp(ev, d));
     d.addEventListener("keydown", onKey);
     d.addEventListener("scroll", () => this.onScroll());
+    this.watchHover(d, d.body, frame);
     this.drawBoxes();
   }
 
@@ -715,12 +746,14 @@ class DocumentPane {
 
   onMouseUp(ev, doc) {
     if (ev.altKey) return;
+    const click = this.downAt && Math.hypot(ev.clientX - this.downAt[0], ev.clientY - this.downAt[1]) < 4;
+    const hit = click && this.mentionAtPoint(ev, doc);
     setTimeout(() => {
       const r = selectionRange(doc);
       if (r) {
         this.selection = { doc: this.info.doc, layer: this.layer, select: { char: r } };
         changed();
-      }
+      } else if (hit) this.selectMention(hit, doc);
     }, 0);
   }
   clearSelection() {
@@ -775,6 +808,7 @@ class DocumentPane {
   }
 
   onScroll() {
+    if (entityCard.pane === this) entityCard.hide();
     clearTimeout(this.scrollTimer);
     this.scrollTimer = setTimeout(() => { this.updateStatus(); changed(); }, 150);
   }
@@ -874,6 +908,103 @@ class DocumentPane {
     };
     top.forEach((n) => thread(n, 0));
     this.side.replaceChildren(...kids);
+  }
+
+  // -- the entity layer: known entities' mentions, and suggestions from the entities index --
+
+  async loadEntities() {
+    const layer = this.currentLayer();
+    if (!layer || this.mode === "grid") { this.ents = null; this.updateEntityStat(); return; }
+    const id = layer.id;
+    const [t, det] = await Promise.all([layerText(id), detected(id)]);
+    if (this.layer !== id) return;
+    refreshCandidates();
+    const folded = cache.folded[id] ??= entityFoldText(t.cps);
+    const ents = adhoc.annotations.entities || [];
+    const known = findEntityMentions(t.cps, ents, folded).map((x) => ({ ...x, known: true }));
+    const suggested = det.filter((d) => !known.some((k) => d.start < k.end && k.start < d.end));
+    this.ents = { layer: id, cps: t.cps, known, suggested };
+    this.updateEntityStat();
+    this.drawBoxes();
+    changed();
+  }
+  shownEntities() {
+    if (!this.ents || this.ents.layer !== this.layer || adhoc.entityMode === "off") return [];
+    return adhoc.entityMode === "all" ? [...this.ents.known, ...this.ents.suggested] : this.ents.known;
+  }
+  updateEntityStat() {
+    const b = $(".entstat", this.head);
+    if (!b) return;
+    b.hidden = !this.ents || (!this.ents.known.length && !this.ents.suggested.length);
+    if (!this.ents) return;
+    const k = new Set(this.ents.known.flatMap((x) => x.entities)).size, s = new Set(this.ents.suggested.map((x) => x.key)).size;
+    b.textContent = adhoc.entityMode === "off" ? "entities hidden" : `${k} known` + (s ? ` · ${s} suggested` + (adhoc.entityMode === "known" ? " (hidden)" : "") : "");
+    b.className = "entstat " + adhoc.entityMode;
+  }
+  // the mention under a mouse event, if the pointer is on its words
+  mentionAtPoint(ev, doc) {
+    const shown = this.shownEntities();
+    if (!shown.length) return null;
+    let s = null;
+    const w = ev.target?.closest?.(".w");
+    if (w) s = Number(w.dataset.s);
+    else {
+      const r = doc.caretRangeFromPoint?.(ev.clientX, ev.clientY);
+      if (r) s = offsetOf(r.startContainer, r.startOffset);
+    }
+    if (s === null || Number.isNaN(s)) return null;
+    const cands = shown.filter((x) => x.start <= s + (w ? cpLen(w.textContent) - 1 : 0) && s <= x.end);
+    for (const x of cands) {
+      if (w) { if (x.start < s + cpLen(w.textContent) && s < x.end) return x; continue; }
+      const root = this.textRoot();
+      if (root && rangeRects(root, x.start, x.end).some((rc) => ev.clientX >= rc.left - 1 && ev.clientX <= rc.right + 1 && ev.clientY >= rc.top - 1 && ev.clientY <= rc.bottom + 1)) return x;
+    }
+    return null;
+  }
+  watchHover(doc, target, frame = null) {
+    target.addEventListener("mousedown", (ev) => { this.downAt = [ev.clientX, ev.clientY]; });
+    let pending = false;
+    target.addEventListener("mousemove", (ev) => {
+      if (pending || ev.buttons) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        const x = this.mentionAtPoint(ev, doc);
+        if (x) entityCard.hoverOn(this, x, ev, frame);
+        else entityCard.hoverOff();
+      });
+    });
+    target.addEventListener("mouseleave", () => entityCard.hoverOff());
+  }
+  selectMention(x, doc) {
+    const root = this.mode === "page" ? this.body : this.textRoot();
+    const a = root && pointAt(root, x.start), b = root && pointAt(root, x.end);
+    if (a && b) {
+      const r = (root.ownerDocument || doc).createRange();
+      r.setStart(...a); r.setEnd(...b);
+      const sel = (root.ownerDocument || doc).getSelection();
+      sel.removeAllRanges(); sel.addRange(r);
+    }
+    this.selection = { doc: this.info.doc, layer: this.layer, select: { char: [x.start, x.end] } };
+    entityCard.hide();
+    const name = x.known ? entityById(x.entities[0])?.name : x.form;
+    toast(`Selected ${name}: ask Claude about it` + (x.known ? "" : ", or press e to add it to the entities"));
+    changed();
+  }
+  // the entity the selection is (or is inside of): what Claude sees as "this"
+  selectionMention() {
+    const c = this.selection?.select?.char;
+    if (!c || !this.ents || this.selection.layer !== this.ents.layer) return null;
+    const all = [...this.ents.known, ...this.ents.suggested];
+    return all.find((x) => x.start === c[0] && x.end === c[1]) || all.find((x) => x.start <= c[0] && c[1] <= x.end) || null;
+  }
+  selectionEntity() {
+    const x = this.selectionMention();
+    if (!x) return null;
+    if (x.known) return { known: x.entities.map((id) => { const e = entityById(id); return e && { entity: id, name: e.name, kind: e.kind, summary: e.summary }; }).filter(Boolean) };
+    const { start, end, ...d } = x;
+    const c = adhoc.candidates[d.key];
+    return { suggested: { ...d, ...(c && d.kind !== "term" ? { docs: c.docs } : {}) } };
   }
 
   // everything needed to show this pane again in another window
@@ -1095,8 +1226,15 @@ adhoc.served = (id, result) => {
 
 async function refreshAnnotations() {
   try {
+    const before = JSON.stringify(adhoc.annotations.entities || []);
     adhoc.annotations = await getJSON("/api/annotations");
-    for (const p of adhoc.panes) p.renderAnnotations?.();
+    adhoc.annotations.entities ||= [];
+    const entitiesChanged = JSON.stringify(adhoc.annotations.entities) !== before;
+    for (const p of adhoc.panes) {
+      p.renderAnnotations?.();
+      if (entitiesChanged) p.loadEntities?.();
+    }
+    if (entitiesChanged) entityCard.refresh();
   } catch {}
 }
 const annotateWaiting = new Map();
@@ -1196,11 +1334,151 @@ function newNote() {
   noteEditor({ op: "note", target: t }, t.select ? "Note on the selection" : "Note on the document");
 }
 
+// -- the entity layer ---------------------------------------------------------------------------
+// Known entities come from the annotation log; suggestions from the entities
+// index (detected when documents are indexed, so nothing waits on them).
+// Hovering a mention shows a card; clicking selects it, so "who's this?"
+// reaches Claude through `view selection`.
+
+const ENTITY_KIND = { person: "person", organization: "organization", term: "defined term", identifier: "number",
+                      contract: "contract", event: "event", place: "place", thing: "thing", other: "entity" };
+function entityById(id) { return (adhoc.annotations.entities || []).find((e) => e.entity === id); }
+async function refreshCandidates(force = false) {
+  if (!force && Date.now() - adhoc.candidatesAt < 60000) return;
+  adhoc.candidatesAt = Date.now();
+  try { adhoc.candidates = await getJSON("/api/entity-candidates"); } catch {}
+}
+function cycleEntityMode() {
+  const order = ["all", "known", "off"];
+  adhoc.entityMode = order[(order.indexOf(adhoc.entityMode) + 1) % order.length];
+  try { localStorage.setItem("adhoc.entityMode", adhoc.entityMode); } catch {}
+  for (const p of adhoc.panes) if (p.kind === "document") { p.updateEntityStat(); p.drawBoxes(); }
+  entityCard.hide();
+  toast({ all: "Entities: known and suggested", known: "Entities: known only", off: "Entities hidden" }[adhoc.entityMode] + " (E)");
+  changed();
+}
+const shortDate = (at) => { try { return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; } };
+const who = (by) => by === "claude" ? "Claude" : by === adhoc.user ? "you" : (by || "").replace("user:", "");
+
+const entityCard = {
+  el: null, pane: null, mention: null, showTimer: null, hideTimer: null,
+  init() {
+    this.el = $("#entity-card");
+    this.el.addEventListener("mouseenter", () => clearTimeout(this.hideTimer));
+    this.el.addEventListener("mouseleave", () => this.hoverOff());
+  },
+  hoverOn(pane, x, ev, frame) {
+    clearTimeout(this.hideTimer);
+    if (this.mention === x && !this.el.hidden) return;
+    clearTimeout(this.showTimer);
+    const off = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+    const at = [ev.clientX + off.left, ev.clientY + off.top];
+    this.showTimer = setTimeout(() => this.show(pane, x, at), this.el.hidden ? 280 : 60);
+  },
+  hoverOff() {
+    clearTimeout(this.showTimer);
+    clearTimeout(this.hideTimer);
+    this.hideTimer = setTimeout(() => this.hide(), 250);
+  },
+  hide() { clearTimeout(this.showTimer); this.el.hidden = true; this.mention = null; },
+  refresh() { if (!this.el.hidden && this.pane && this.mention) this.show(this.pane, this.mention, this.at); },
+  show(pane, x, at) {
+    this.pane = pane; this.mention = x; this.at = at;
+    const body = x.known ? x.entities.map((id) => this.knownBlock(pane, entityById(id))).filter(Boolean) : [this.suggestedBlock(pane, x)];
+    this.el.replaceChildren(...body, el("div", { class: "ec-foot" }, x.known
+      ? "Click to select, then ask Claude · e edits"
+      : "Not in the entity list · click to select and ask Claude · e adds it"));
+    this.el.hidden = false;
+    const w = this.el.offsetWidth, h = this.el.offsetHeight;
+    let left = Math.min(at[0] + 12, innerWidth - w - 8), top = at[1] + 18;
+    if (top + h > innerHeight - 8) top = Math.max(8, at[1] - h - 12);
+    Object.assign(this.el.style, { left: Math.max(8, left) + "px", top: top + "px" });
+  },
+  knownBlock(pane, e) {
+    if (!e) return null;
+    const see = (e.see || []).slice(0, 3).map((t) => el("a", { class: "ec-see", title: "open",
+      onclick: () => { this.hide(); pane.highlight(t, "entity"); } }, "“" + ((t.quote?.exact || "the document").replace(/\s+/g, " ").slice(0, 60)) + "”"));
+    return el("div", { class: "ec-entity" },
+      el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, e.name), el("span", { class: "ec-kind" }, ENTITY_KIND[e.kind] || e.kind)),
+      e.summary ? el("div", { class: "ec-summary" }, e.summary) : el("div", { class: "ec-summary ec-empty" }, "Not described yet: select it and ask Claude."),
+      ...(e.recap ? [el("div", { class: "ec-recap" }, el("span", { class: "ec-label" }, "Last time" + (e.recap_at ? ` (${shortDate(e.recap_at)})` : "") + ": "), e.recap)] : []),
+      ...(see.length ? [el("div", { class: "ec-sees" }, "See ", ...see.flatMap((a, i) => i ? [" · ", a] : [a]))] : []),
+      el("div", { class: "ec-by" }, `added by ${who(e.by)}` + (e.edited_by && e.edited_by !== e.by ? `, edited by ${who(e.edited_by)}` : "")));
+  },
+  suggestedBlock(pane, x) {
+    const c = adhoc.candidates[x.key] || {};
+    const kind = { person: "possible person", organization: "organization", term: "defined term", identifier: "number" }[x.kind] || x.kind;
+    const lines = [];
+    if (x.kind === "term") {
+      if (x.means) lines.push(el("div", { class: "ec-summary" }, el("span", { class: "ec-label" }, "Means: "), el("span", { class: "ec-literal" }, x.means)));
+      else if (x.defined) {
+        const t = pane.ents?.cps.slice(...x.defined).join("").replace(/\s+/g, " ") || "";
+        lines.push(el("div", { class: "ec-summary" }, el("span", { class: "ec-label" }, "Defined: "), el("span", { class: "ec-literal" }, t.slice(0, 220))));
+      }
+      if (x.defined && !(x.basis || []).includes("definition"))
+        lines.push(el("div", { class: "ec-sees" }, el("a", { onclick: () => { this.hide(); pane.highlight({ doc: pane.info.doc, layer: pane.layer, select: { char: x.defined } }, "definition"); } }, "Go to the definition")));
+    }
+    if (x.kind === "person") {
+      const roles = c.roles || (x.role ? [x.role] : []);
+      if (roles.length) lines.push(el("div", { class: "ec-summary" }, roles.join(", ")));
+      const why = { title: "a title", initial: "an initial", address: "an email address", by: "a signature line", self: "\"I, …\"",
+                    signature: "a sign-off", role: "a role beside it", esq: "Esq." };
+      lines.push(el("div", { class: "ec-why" }, "Taken as a person for " + (x.basis || []).map((b) => why[b] || b).join(", ")));
+    }
+    if (x.kind === "identifier" && (c.labels || x.label)) lines.push(el("div", { class: "ec-summary" }, "Called " + (c.labels || [x.label]).join(", ")));
+    if (x.kind !== "term" && c.docs) lines.push(el("div", { class: "ec-why" }, c.docs === 1 ? "Only in this document" : `In ${c.docs} documents`));
+    return el("div", { class: "ec-entity suggested" },
+      el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, x.form), el("span", { class: "ec-kind" }, kind)), ...lines);
+  },
+};
+
+// e: add the selection (or the selected suggestion) to the entity list, or edit the entity it is
+function entityEditor() {
+  const p = focusedPane();
+  if (!p || p.kind !== "document" || !p.info) return toast("Select a name in a document first");
+  const x = p.selectionMention();
+  const c = p.selection?.select?.char;
+  const selected = c && p.ents && p.selection.layer === p.ents.layer ? p.ents.cps.slice(...c).join("").replace(/\s+/g, " ").trim() : "";
+  const known = x?.known ? entityById(x.entities[0]) : null;
+  if (!known && !selected) return toast("Select a name, or click one, then press e");
+  const box = $("#entity-editor"), name = $("#ee-name"), kind = $("#ee-kind"), summary = $("#ee-summary");
+  $("#ee-title").textContent = known ? `Edit ${known.name}` : "Add to the entities";
+  name.value = known ? known.name : (x?.kind === "person" ? x.form.replace(/^(?:Mr|Mrs|Ms|Dr|Judge|Justice)\.?\s+/, "") : x?.form || selected);
+  kind.value = known ? (ENTITY_KIND[known.kind] ? known.kind : "other") : (x?.kind || "other");
+  summary.value = known ? known.summary || "" : (x?.kind === "term" && x.means ? x.means : "");
+  summary.placeholder = known ? "What it is (shown when you hover over it)" : "What it is (optional: leave it for Claude)";
+  box.hidden = false; name.focus(); name.select();
+  const close = () => { box.hidden = true; p.body.focus(); };
+  box.onkeydown = async (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Escape") return close();
+    if (ev.key !== "Enter" || (ev.target === summary && !(ev.ctrlKey || ev.metaKey))) return;
+    ev.preventDefault();
+    const n = name.value.trim();
+    if (!n) return;
+    close();
+    const alias = selected && selected !== n ? [selected] : [];
+    let r;
+    if (known) {
+      const req = { op: "edit-entity", entity: known.entity };
+      if (n !== known.name) req.name = n;
+      if (kind.value !== known.kind) req.kind = kind.value;
+      if (summary.value.trim() !== (known.summary || "")) req.summary = summary.value.trim();
+      if (alias.length && !known.aliases.includes(alias[0])) req.add_aliases = alias;
+      if (Object.keys(req).length === 2) return;
+      r = await annotate(req);
+    } else {
+      r = await annotate({ op: "define-entity", name: n, kind: kind.value, aliases: alias, ...(summary.value.trim() ? { summary: summary.value.trim() } : {}) });
+    }
+    if (!r.error && !r.refused) toast(known ? `Updated ${n}` : `Added ${n}` + (summary.value.trim() ? "" : ": ask Claude to describe it"));
+  };
+}
+
 // -- keyboard ---------------------------------------------------------------------------------
 
 function onKey(ev) {
   if (ev.target.closest?.("input,textarea,select") && ev.key !== "Escape") return;
-  if (!$("#palette").hidden || !$("#note-editor").hidden) return;
+  if (!$("#palette").hidden || !$("#note-editor").hidden || !$("#entity-editor").hidden) return;
   const p = focusedPane();
   const k = ev.key;
   const doc = p?.kind === "document" ? p : null, web = p && p.kind !== "document" ? p : null;
@@ -1219,11 +1497,13 @@ function onKey(ev) {
   else if (k === "m") mark();
   else if (k === "t") openPalette();
   else if (k === "N") newNote();
+  else if (k === "e") entityEditor();
+  else if (k === "E") cycleEntityMode();
   else if (k === "v" && doc?.info?.layers.length > 1) { const ls = doc.info.layers; const i = ls.findIndex((l) => l.id === doc.layer); doc.open({ doc: doc.info.doc, layer: ls[(i + 1) % ls.length].id }, { quiet: true }); }
   else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
-  else if (k === "Escape" && doc) doc.clearSelection();
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · v layer · f mode · Tab pane · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
+  else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -1360,7 +1640,9 @@ const commands = {
   async state() { return snapshot(); },
   async selection() {
     const p = focusedPane();
-    return { pane: p?.id ?? null, selection: p ? (p.kind === "document" ? p.selection : p.state().selection) : null, marks: p?.marks || adhoc.listMarks || [] };
+    const entity = p?.kind === "document" ? p.selectionEntity() : null;
+    return { pane: p?.id ?? null, selection: p ? (p.kind === "document" ? p.selection : p.state().selection) : null,
+             ...(entity ? { entity } : {}), marks: p?.marks || adhoc.listMarks || [] };
   },
   async "clear-marks"(c) {
     for (const p of adhoc.panes) if (!c.pane || p.id === c.pane) { if (p.marks) { p.marks = []; p.drawBoxes(); } }
@@ -1394,6 +1676,8 @@ adhoc.relayed = (id, method, args) => { if (RELAYABLE.has(method)) Promise.resol
 
 // The annotation log changes from outside (Claude, through its API), so look again now and then.
 setInterval(refreshAnnotations, 2000);
+entityCard.init();
 refreshAnnotations();
+refreshCandidates(true);
 renderTabs();
 post({ type: "ready" });
