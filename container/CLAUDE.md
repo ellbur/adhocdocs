@@ -47,7 +47,9 @@ has `--help` with the details. Read the help before first using a tool.
    selection`) and tags all use them. Pass them along whole, and don't
    edit offsets or quotes by hand.
 4. **Point the user at things.** When you find something, `view open` or
-   `view highlight` it, and `view list` a set. When the user says "this"
+   `view highlight` it, and `view list` a set. The viewer opens on an
+   overview of the matter (`view home`), whose suggestions the user may
+   paste to you as requests. When the user says "this"
    or "what I selected", read `view selection` or `view state`.
 5. **The user's tags and notes are theirs.** You can't change them; ask.
    Pass `--requested-by user` when the user asked you to tag.

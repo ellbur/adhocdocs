@@ -71,6 +71,32 @@ open source.
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
 | `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
+| `home` | the overview: what the matter holds and what state it's in (below) |
+
+**The overview** is the landing page: the first window opens on it, the
+⌂ Overview tab or `H` brings it back, and Claude shows it with `view home`.
+It isn't where work starts (that is Claude's prompt); it shows what this is,
+what can be done with it, and how far along it is:
+
+- **Documents** in summary, since there may be thousands: counts by kind
+  and custodian, the date range, attachments, documents with no text yet
+  (which searches can't reach), and the latest additions, which open on a
+  click.
+- **Email correspondents**, from the From, To and Cc lines.
+- **Work product** in the workspace: pages (`*.md`, with their quotation
+  counts), lists and key sets (`*.list.jsonl`), productions and exhibit
+  sets.
+- **Tags** with how often each is used and by whom, and the latest notes.
+
+Each section that is empty says what it would hold and offers a request
+to make of Claude ("Write a chronology of the key events, quoting the
+documents"); filled sections offer follow-ups, and the top invites
+questions about the documents in general. Clicking a suggestion copies it
+for pasting into Claude's prompt: the viewer still starts nothing.
+Documents can't be added by Claude, so an empty matter points to `adhoc
+ingest` instead. The data comes from `/api/overview` (built in
+[`overview.rs`](viewer/src/overview.rs)) and is read again every few
+seconds while the overview is showing.
 
 Panes are shown as tabs, one at a time or tiled (`split-v`, `split-h`,
 `grid`).

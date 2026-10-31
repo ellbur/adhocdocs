@@ -76,6 +76,11 @@ impl Matter {
         self.log_sizes = sizes;
     }
 
+    /// Changes whenever either log does.
+    pub fn generation(&self) -> Vec<u64> {
+        self.log_sizes.clone()
+    }
+
     fn path(&self, h: &str) -> Option<PathBuf> {
         let h = hex(h);
         if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {

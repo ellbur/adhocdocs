@@ -7,6 +7,7 @@
 //!   /api/doc/<doc>             a document's metadata, layers, pages, family
 //!   /api/layer/<id>/text       layer text (also /segments, /geometry)
 //!   /api/text?loc=…            text at a locator, checked
+//!   /api/overview              what the matter holds, for the landing page
 //!   /page/<doc>/<n>?w=…        a page image, rendered by MuPDF
 //!   /presentation/<layer>      a layer's presentation, sanitized
 //!   /pane/<content>/<path>     web pane content, sanitized when it arrived
@@ -52,6 +53,7 @@ pub struct Handler {
     pub matter: Arc<Mutex<Matter>>,
     pub panes: Panes,
     renderer: Renderer,
+    overview: crate::overview::Overview,
 }
 
 pub fn query(q: &str) -> HashMap<String, String> {
@@ -97,7 +99,7 @@ pub fn char_slice(text: &str, s: usize, e: usize) -> String {
 
 impl Handler {
     pub fn new(matter: Arc<Mutex<Matter>>, panes: Panes) -> Self {
-        Handler { matter, panes, renderer: Renderer::new() }
+        Handler { matter, panes, renderer: Renderer::new(), overview: Default::default() }
     }
 
     pub fn handle(&mut self, path: &str, q: &str) -> Response {
@@ -113,6 +115,7 @@ impl Handler {
             ["api", "text"] => self.text_at(&query(q)),
             ["api", "docs"] => self.docs(),
             ["api", "annotations"] => self.annotations(),
+            ["api", "overview"] => self.overview(),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
             ["presentation", layer] => self.presentation(layer),
             ["pane", content, rest @ ..] => self.pane(content, &rest.join("/")),
@@ -120,58 +123,71 @@ impl Handler {
         }
     }
 
-    /// The annotation log replayed: definitions, and tags and notes by document.
     fn annotations(&self) -> Response {
-        let m = self.matter.lock().unwrap();
-        let text = std::fs::read_to_string(m.root.join("annotations/log.jsonl")).unwrap_or_default();
-        let mut defs: Vec<(String, Value)> = vec![];
-        let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
-        let mut notes: Vec<(String, Value)> = vec![];
-        let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
-        for line in text.lines().filter(|l| !l.trim().is_empty()) {
-            let Ok(ev) = serde_json::from_str::<Value>(line) else { continue };
-            let tag = ev["tag"].as_str().unwrap_or("").to_string();
-            match ev["op"].as_str().unwrap_or("") {
-                "define-tag" => defs.push((tag, ev.clone())),
-                "edit-tag" => {
-                    if let Some((_, d)) = defs.iter_mut().find(|(t, _)| *t == tag) {
-                        for k in ["color", "hotkey", "group", "description"] {
-                            if ev.get(k).is_some() { d[k] = ev[k].clone(); }
-                        }
-                    }
-                }
-                "tag" => {
-                    let k = key(&ev["target"]) + &tag;
-                    tags.retain(|(x, _)| *x != k);
-                    tags.push((k, json!({"tag": tag, "target": ev["target"], "by": ev["author"], "at": ev["at"]})));
-                }
-                "untag" => {
-                    let k = key(&ev["target"]) + &tag;
-                    tags.retain(|(x, _)| *x != k);
-                }
-                "note" | "reply" => {
-                    let target = if ev["op"] == "reply" {
-                        notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone()).unwrap_or(Value::Null)
-                    } else { ev["target"].clone() };
-                    notes.push((ev["note"].as_str().unwrap_or("").to_string(), json!({"note": ev["note"], "parent": ev["parent"],
-                        "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]})));
-                }
-                "edit-note" => {
-                    if let Some((_, n)) = notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()) {
-                        n["body"] = ev["body"].clone();
-                        n["edited_at"] = ev["at"].clone();
-                    }
-                }
-                "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
-                _ => {}
-            }
-        }
-        let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"], "hotkey": d["hotkey"],
-            "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
-        json_resp(json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
-                         "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>()}))
+        let root = self.matter.lock().unwrap().root.clone();
+        json_resp(annotation_state(&root))
     }
 
+    fn overview(&mut self) -> Response {
+        let matter = self.matter.clone();
+        let mut m = matter.lock().unwrap();
+        m.refresh();
+        json_resp(self.overview.get(&m))
+    }
+}
+
+/// The annotation log replayed: definitions, and tags and notes by document.
+pub fn annotation_state(root: &std::path::Path) -> Value {
+    let text = std::fs::read_to_string(root.join("annotations/log.jsonl")).unwrap_or_default();
+    let mut defs: Vec<(String, Value)> = vec![];
+    let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
+    let mut notes: Vec<(String, Value)> = vec![];
+    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(ev) = serde_json::from_str::<Value>(line) else { continue };
+        let tag = ev["tag"].as_str().unwrap_or("").to_string();
+        match ev["op"].as_str().unwrap_or("") {
+            "define-tag" => defs.push((tag, ev.clone())),
+            "edit-tag" => {
+                if let Some((_, d)) = defs.iter_mut().find(|(t, _)| *t == tag) {
+                    for k in ["color", "hotkey", "group", "description"] {
+                        if ev.get(k).is_some() { d[k] = ev[k].clone(); }
+                    }
+                }
+            }
+            "tag" => {
+                let k = key(&ev["target"]) + &tag;
+                tags.retain(|(x, _)| *x != k);
+                tags.push((k, json!({"tag": tag, "target": ev["target"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "untag" => {
+                let k = key(&ev["target"]) + &tag;
+                tags.retain(|(x, _)| *x != k);
+            }
+            "note" | "reply" => {
+                let target = if ev["op"] == "reply" {
+                    notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone()).unwrap_or(Value::Null)
+                } else { ev["target"].clone() };
+                notes.push((ev["note"].as_str().unwrap_or("").to_string(), json!({"note": ev["note"], "parent": ev["parent"],
+                    "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-note" => {
+                if let Some((_, n)) = notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()) {
+                    n["body"] = ev["body"].clone();
+                    n["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
+            _ => {}
+        }
+    }
+    let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"], "hotkey": d["hotkey"],
+        "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
+    json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
+           "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>()})
+}
+
+impl Handler {
     fn docs(&self) -> Response {
         let mut m = self.matter.lock().unwrap();
         m.refresh();
