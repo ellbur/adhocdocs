@@ -6,6 +6,7 @@ Layout::
       store/objects/          originals, document/layer/metadata objects, part files
       store/log.jsonl         provenance log: the "store" change feed
       annotations/log.jsonl   tags and notes
+      audit/                  what each session did (host only; see adhocdocs.audit)
       workspace/              work product (read-write in the container)
         .adhoc/objects/       derived layers made in the workspace
         .adhoc/log.jsonl      the "workspace" change feed

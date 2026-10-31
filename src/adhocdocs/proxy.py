@@ -7,9 +7,10 @@ for Claude Code's ``HTTPS_PROXY``. Clients ask for ``CONNECT host:443``; if
 the host is on the allowlist, the proxy opens the connection and passes the
 encrypted bytes through untouched, never decrypting or reading them.
 Everything else is refused, and every decision is logged as a line of JSON
-on stderr. Killing the relay only cuts the session off.
+on stderr and, with ``--audit``, in the matter's audit log. Killing the
+relay only cuts the session off.
 
-    python -m adhocdocs.proxy --unix /run/…/proxy.sock [--allow host …]     (host side)
+    python -m adhocdocs.proxy --unix /run/…/proxy.sock [--allow host …] [--audit DIR --session ID]   (host side)
     python -m adhocdocs.proxy relay 127.0.0.1:3128 /run/adhoc/proxy.sock     (in the session)
 """
 
@@ -46,15 +47,24 @@ def allowed(host: str, allow) -> bool:
     return False
 
 
+AUDIT = None       # (AuditLog, session) when decisions also go to the audit log
+
+
 def log(**kw):
     print(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), **kw}), file=sys.stderr, flush=True)
+    if AUDIT and "decision" in kw:
+        kw.pop("peer", None)
+        AUDIT[0].append(session=AUDIT[1], source="proxy", kind="connection", **kw)
 
 
-async def pipe(reader, writer):
+async def pipe(reader, writer) -> int:
+    """Copy until either side closes; returns the bytes copied."""
+    n = 0
     try:
         while data := await reader.read(65536):
             writer.write(data)
             await writer.drain()
+            n += len(data)
     except (ConnectionError, asyncio.CancelledError):
         pass
     finally:
@@ -62,6 +72,7 @@ async def pipe(reader, writer):
             writer.close()
         except Exception:
             pass
+    return n
 
 
 async def handle(reader, writer, allow):
@@ -98,7 +109,10 @@ async def handle(reader, writer, allow):
     log(decision="allowed", host=host, peer=str(peer))
     writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
     await writer.drain()
-    await asyncio.gather(pipe(reader, up_writer), pipe(up_reader, writer))
+    start = time.monotonic()
+    sent, received = await asyncio.gather(pipe(reader, up_writer), pipe(up_reader, writer))
+    log(decision="closed", host=host, bytes_sent=sent, bytes_received=received,
+        seconds=round(time.monotonic() - start, 1))
 
 
 async def serve(listen: str | None, unix: str | None, allow):
@@ -144,7 +158,13 @@ def main(argv=None):
     g.add_argument("--unix", help="listen on this Unix socket")
     g.add_argument("--listen", help="listen on host:port")
     p.add_argument("--allow", action="append", help="a host name, or *.domain; default: Claude Code's hosts")
+    p.add_argument("--audit", help="also record decisions in this audit directory (<matter>/audit)")
+    p.add_argument("--session", help="the session ID to record them under")
     a = p.parse_args(argv)
+    if a.audit:
+        from .audit import AuditLog
+        global AUDIT
+        AUDIT = (AuditLog(a.audit), a.session)
     try:
         asyncio.run(serve(a.listen, a.unix, tuple(a.allow or CLAUDE_CODE_HOSTS)))
     except KeyboardInterrupt:

@@ -51,3 +51,6 @@ has `--help` with the details. Read the help before first using a tool.
 6. **Panes are static HTML.** Scripts never run in the viewer. Use the
    declarative attributes (`data-locator`, `data-text`, `loc:` links) in
    `view --help`.
+7. **Everything here is recorded** in an audit log on the host. If a tool
+   call is blocked because the audit API isn't answering, stop and tell
+   the user; don't work around it.

@@ -79,6 +79,15 @@ def adhoc(argv=None):
     s.add_argument("--user", required=True)
     s = sub.add_parser("ann-api", help="serve the annotation API (writes stamped `claude`) on a Unix socket")
     s.add_argument("--socket", help="default: $ADHOC_ANN_SOCKET or <matter>/run/annotations.sock")
+    s = sub.add_parser("audit", help="the audit log: sessions, events, or a check that it is intact")
+    s.add_argument("action", choices=["sessions", "show", "verify"])
+    s.add_argument("--session", help="show: only this session")
+    s.add_argument("--kind", action="append", help="show: only these kinds (session-start, session-end, prompt, "
+                                                   "tool, connection, claude); repeatable")
+    s.add_argument("--full", action="store_true", help="show: whole tool results instead of previews")
+    s = sub.add_parser("audit-api", help=argparse.SUPPRESS)
+    s.add_argument("--socket", required=True)
+    s.add_argument("--session", required=True)
     matter_everywhere(sub)
     a = p.parse_args(argv)
 
@@ -116,6 +125,29 @@ def adhoc(argv=None):
     elif a.cmd == "annotate-as-user":
         # The viewer's write path for the user's own tags and notes (host only).
         out({"events": annotations.write(m, f"user:{a.user}", json.loads(sys.stdin.read()))})
+    elif a.cmd == "audit":
+        from . import audit
+        if not audit.audit_dir(m).exists():
+            raise ValueError("no audit log here: it is kept on the host, outside the session, and starts with "
+                             "the first `adhoc open`")
+        if a.action == "sessions":
+            for row in audit.sessions(m):
+                out(row)
+        elif a.action == "show":
+            for ev in audit.show(m, a.session, a.kind, a.full):
+                out(ev)
+        else:
+            report = audit.AuditLog(audit.audit_dir(m)).verify()
+            out(report)
+            if not report["ok"]:
+                sys.exit(1)
+    elif a.cmd == "audit-api":
+        from . import audit
+        print(json.dumps({"serving": a.socket, "session": a.session}), file=sys.stderr, flush=True)
+        try:
+            audit.serve(m, a.socket, a.session)
+        except KeyboardInterrupt:
+            pass
     elif a.cmd == "ann-api":
         path = a.socket or annapi.socket_path(m)
         print(json.dumps({"serving": str(path)}), file=sys.stderr, flush=True)

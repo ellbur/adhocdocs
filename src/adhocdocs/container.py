@@ -15,8 +15,14 @@ Inside the session:
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
                                           sign-in (``<matter>/claude-home``)
-/run/adhoc            sockets             the proxy, viewer and annotation APIs
+/run/adhoc            sockets             the proxy, viewer and annotation APIs, and
+                                          the sockets of services Claude runs
+/run/adhoc-audit      read-only           the audit API's socket, alone: connecting
+                                          works, replacing it doesn't
 ====================  ==================  ====================================
+
+``<matter>/audit`` is not mounted: the host writes the session's audit log
+there (:mod:`adhocdocs.audit`).
 
 adhocdocs never reads, copies or sends what Claude Code writes in
 ``claude-home``; it only provides the directory.
@@ -35,7 +41,8 @@ import time
 from pathlib import Path
 
 from . import proxy
-from .matter import Matter
+from .audit import AuditLog, audit_dir
+from .matter import Matter, new_event_id
 
 IMAGE = "localhost/adhocdocs:latest"
 REPO = Path(__file__).resolve().parents[2]
@@ -46,6 +53,7 @@ SESSION_ENV = {
     "ADHOC_MATTER": "/matter",
     "ADHOC_VIEW_SOCKET": "/run/adhoc/viewer.sock",
     "ADHOC_ANN_SOCKET": "/run/adhoc/annotations.sock",
+    "ADHOC_AUDIT_SOCKET": "/run/adhoc-audit/audit.sock",
     "CLAUDE_CONFIG_DIR": "/home/adhoc/.claude",
 }
 # Passed through by name, never stored: a user's own API key, set the normal way.
@@ -90,6 +98,11 @@ def run_dir(m: Matter) -> Path:
 
 # -- the image -----------------------------------------------------------------------------
 
+def image_id() -> str | None:
+    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
 def image_exists() -> bool:
     return subprocess.run(["podman", "image", "exists", IMAGE]).returncode == 0
 
@@ -119,7 +132,9 @@ def session_args(m: Matter, name: str, sockets: Path, command=()) -> list[str]:
             "-v", f"{root / 'annotations'}:/matter/annotations:ro",
             "-v", f"{root / 'workspace'}:/matter/workspace",
             "-v", f"{root / 'claude-home'}:/home/adhoc/.claude",
-            "-v", f"{sockets}:/run/adhoc"]
+            "-v", f"{sockets}:/run/adhoc",
+            # Read-only, so nothing in the session can put its own listener in the audit API's place.
+            "-v", f"{sockets / 'audit'}:/run/adhoc-audit:ro"]
     for k, v in env.items():
         args += ["-e", f"{k}={v}"]
     for k in PASS_THROUGH:
@@ -156,27 +171,41 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     name = f"{base}-{n}"
     sockets = run_dir(m) / str(n)
     sockets.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (sockets / "audit").mkdir(exist_ok=True, mode=0o700)
     py = [sys.executable, "-m"]
+    session = "ses_" + new_event_id().removeprefix("ev_")
+    audit = AuditLog(audit_dir(m))
 
     started = []
+    code = None
     try:
         # Everything the session can reach, on sockets in one directory.
-        started.append(_service(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock")], m.root / "run" / "proxy.log"))
+        started.append(_service(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
+                                      "--audit", str(audit.root), "--session", session], m.root / "run" / "proxy.log"))
         started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
                                       "--socket", str(sockets / "annotations.sock")], m.root / "run" / "ann-api.log"))
+        started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
+                                      "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
+                                m.root / "run" / "audit-api.log"))
         if viewer:
             from .view import viewer_binary
             started.append(_service([viewer_binary(), "--matter", str(m.root), "--user", user,
                                      "--socket", str(sockets / "viewer.sock"),
                                      "--annotate", f"{sys.executable} -m adhocdocs.cli adhoc"], m.root / "run" / "viewer.log"))
-        for sock in ("proxy.sock", "annotations.sock"):
+        for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
             if not wait_for(sockets / sock):
                 raise ContainerError(f"{sock} did not start; see {m.root / 'run'}")
         if first:
             print(ACCOUNT_NOTICE, file=sys.stderr)
+        args = session_args(m, name, sockets, command)
+        audit.append(session=session, source="launcher", kind="session-start", user=user, container=name,
+                     image=IMAGE, image_id=image_id(), command=list(command) or None, viewer=viewer,
+                     allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args)
         # The terminal goes straight to the container: no relay in between.
-        return subprocess.call(["podman", *session_args(m, name, sockets, command)])
+        code = subprocess.call(["podman", *args])
+        return code
     finally:
+        audit.append(session=session, source="launcher", kind="session-end", exit=code)
         for p in started:
             try:
                 os.killpg(p.pid, signal.SIGTERM)
@@ -193,7 +222,7 @@ def _mounts() -> dict:
         for line in Path("/proc/self/mountinfo").read_text().splitlines():
             f = line.split()
             point, opts = f[4], f[5]
-            if point.startswith("/matter") or point in ("/home/adhoc/.claude", "/run/adhoc"):
+            if point.startswith("/matter") or point in ("/home/adhoc/.claude", "/run/adhoc", "/run/adhoc-audit"):
                 out[point] = "read-only" if "ro" in opts.split(",") else "read-write"
     except OSError:
         pass
@@ -236,4 +265,5 @@ def status() -> dict:
                     "direct_internet": _direct_internet()},
         "viewer": "running" if _socket_ok(os.environ.get("ADHOC_VIEW_SOCKET", "")) else "not running",
         "annotation_api": "running" if _socket_ok(os.environ.get("ADHOC_ANN_SOCKET", "")) else "not running",
+        "audit_api": "running" if _socket_ok(os.environ.get("ADHOC_AUDIT_SOCKET", "")) else "not running",
     }

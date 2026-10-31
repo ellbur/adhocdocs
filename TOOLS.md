@@ -30,8 +30,9 @@ them.
 - **Hashing and provenance.** *Built*: content-addressed store, and every
   change recorded in the provenance log; exact duplicates share a content
   hash.
-- **Audit log.** *Proposed.* To defend work product it must be written from
-  outside Claude's reach.
+- **Audit log.** *Built*: every session's prompts, tool calls, connections,
+  start and end, written on the host outside Claude's reach (`adhoc audit`,
+  [CONTAINER.md](CONTAINER.md#design)).
 
 ## Viewing
 

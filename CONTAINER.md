@@ -59,7 +59,8 @@ on a subscription.
 ```
  user's machine
  ┌──────────────────────────────────────────────────────────────────┐
- │ adhoc (launcher)    proxy, viewer, ann API    <matter>/          │
+ │ adhoc (launcher)    proxy, viewer, ann API,   <matter>/          │
+ │                     audit API                 audit/   (host)  │
  │   │ starts, attaches        ▲ Unix sockets       store/   (ro)   │
  │   ▼                         │                    annotations/(ro)│
  │ ┌─────────────────────────────────────────┐      workspace/ (rw) │
@@ -86,7 +87,8 @@ on a subscription.
 and annotation writes go through the API that stamps authorship); the
 workspace read-write; the matter's `claude-home/` as `~/.claude`; and the
 viewer and annotation API sockets (the launcher runs `adhoc view` and
-`adhoc ann-api`, and sets `ADHOC_VIEW_SOCKET` and `ADHOC_ANN_SOCKET`). There is nothing else: no host home, no other
+`adhoc ann-api`, and sets `ADHOC_VIEW_SOCKET` and `ADHOC_ANN_SOCKET`); and
+the audit API's socket, read-only, alone in its own directory. There is nothing else: no host home, no other
 matter, no Podman socket.
 
 **Network: none, plus a proxy on the host.** The session runs with
@@ -154,6 +156,31 @@ Signing in has to be done by a person, so it hasn't been tested yet.
 - macOS and Windows: Unix sockets don't cross `podman machine`'s file sharing, so there the proxy, viewer and annotation API would need another way into the VM.
 - Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc image build --no-cache` gets the latest.
 
+**Audit log:** the host records each session in `<matter>/audit/`, which is
+never mounted ([`audit.py`](src/adhocdocs/audit.py); `adhoc audit sessions |
+show | verify`). Three host processes write it:
+- The launcher records the session's start (who opened it, image ID, `podman run` arguments) and its end (exit status).
+- The proxy records each connection, allowed or refused, with the bytes each way.
+- The audit API records what Claude Code's hooks send it: every prompt, and every tool call before it runs and after.
+
+The hooks are in the image's managed settings, with `allowManagedHooksOnly`,
+so Claude can't remove them. Before a prompt or tool call they fail closed:
+if the record isn't written, the call doesn't run. Lines are hash-chained, so
+`verify` finds a line changed or removed afterwards. Whole tool results are
+kept beside the log, by hash.
+
+Two limits of the record:
+- Anything in the session can post to the audit socket, so a hook record shows something was reported, not that it happened. What the log shows is that nothing Claude Code ran is missing from it.
+- The audit socket is alone in a read-only mount, so nothing in the session can put its own listener in its place.
+
+Tested with Claude Code 2.1.316: the managed hooks fire for session start,
+prompts and session end. Tool calls need a signed-in session, which hasn't
+been tested yet.
+
+*Why hooks rather than reading the terminal:* the terminal goes straight to
+`claude`, and reading it would put adhocdocs between the user and Claude
+Code. Hooks are Claude Code's own published mechanism for this.
+
 **Observable, not changeable:** `adhoc status` in the container reports the
 matter, mounts, read-only state, allowlist and viewer status, and nothing
 about credentials.
@@ -168,5 +195,6 @@ about credentials.
   host, reached over a socket.
 - Telemetry, connectors, artifacts, web search and fetch turned off by the
   image's managed settings.
+- An audit log on the host, fed by managed hooks that fail closed.
 - Check our reading with Anthropic if the project goes anywhere; until then
   build as designed, with sign-in-per-session as the fallback.
