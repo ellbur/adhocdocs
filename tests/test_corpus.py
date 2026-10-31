@@ -1,5 +1,5 @@
 """End to end over corpus/: ingest, index, search, checked against the
-known facts in corpus/SOURCES.md. Semantic search runs only with
+known facts in tools/corpus/SOURCES.md. Semantic search runs only with
 ADHOC_TEST_SEMANTIC=1, since embedding the corpus takes minutes on a CPU."""
 
 import os
@@ -33,7 +33,7 @@ needs_ocr = pytest.mark.skipif(not have_ocr(), reason="tesseract with English da
 def matter(tmp_path_factory):
     m = Matter.create(tmp_path_factory.mktemp("corpus") / "matter")
     for d in sorted(CORPUS.iterdir()):
-        if d.is_dir() and d.name != "tools":
+        if d.is_dir():
             ingest_paths(m, [d], d.name, f"{d.name}-2026")
     return Matter(m.root)
 
