@@ -9,7 +9,7 @@ import json
 import shutil
 import sys
 
-from . import lists, locators
+from . import annapi, annotations, lists, locators
 from .matter import Matter, MatterNotFound
 
 
@@ -28,7 +28,10 @@ def run(fn):
     def wrapper(argv=None):
         try:
             return fn(argv)
-        except (MatterNotFound, locators.LocatorError, ValueError, KeyError) as e:
+        except annotations.Refused as e:
+            print(json.dumps({"refused": str(e)}), file=sys.stderr)
+            sys.exit(1)
+        except (MatterNotFound, locators.LocatorError, annapi.Unavailable, ValueError, KeyError) as e:
             print(json.dumps({"error": str(e).strip("'\"")}), file=sys.stderr)
             sys.exit(1)
         except BrokenPipeError:
@@ -51,6 +54,8 @@ def adhoc(argv=None):
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
+    s = sub.add_parser("ann-api", help="serve the annotation API (writes stamped `claude`) on a Unix socket")
+    s.add_argument("--socket", help="default: $ADHOC_ANN_SOCKET or <matter>/run/annotations.sock")
     a = p.parse_args(argv)
 
     if a.cmd == "init":
@@ -69,6 +74,13 @@ def adhoc(argv=None):
     elif a.cmd == "withdraw":
         doc = locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"]
         out(m.logs["store"].append(op="withdraw", doc=doc, reason=a.reason))
+    elif a.cmd == "ann-api":
+        path = a.socket or annapi.socket_path(m)
+        print(json.dumps({"serving": str(path)}), file=sys.stderr, flush=True)
+        try:
+            annapi.serve(m, path)
+        except KeyboardInterrupt:
+            pass
 
 
 # -- layers and text ---------------------------------------------------------------------
@@ -321,9 +333,183 @@ def list_(argv=None):
     out({"written": a.out, "items": len(items)})
 
 
+# -- ann ------------------------------------------------------------------------------------
+
+ANN_HELP = """\
+Tags and notes. Reads go straight to the annotation log; writes go through
+the annotation API, which records them as Claude's. Claude can't edit or
+remove the user's tags, notes or tag definitions.
+
+Pass --requested-by user when the user asked for the change.
+Tags must be defined (define-tag) before use. A tag in an exclusive --group
+replaces the group's other tag on the same target.
+"""
+
+
+def _family(state, doc):
+    top = doc
+    parents = {c: p for p, cs in state.children.items() for c in cs}
+    while top in parents:
+        top = parents[top]
+    out, todo = [], [top]
+    while todo:
+        d = todo.pop(0)
+        out.append(d)
+        todo += state.children.get(d, [])
+    return [d for d in out if d not in state.withdrawn]
+
+
+def _targets(m, locs, family=False, dupes=False):
+    state = m.state
+    out = []
+    for s in locs:
+        loc = locators.parse(s if s.lstrip().startswith("{") else "doc:" + s.removeprefix("doc:"), m.objects)
+        extra = []
+        if family:
+            extra += _family(state, loc["doc"])
+        if dupes:
+            content = state.documents.get(loc["doc"])
+            extra += [d for d in state.live_documents() if state.documents[d] == content]
+        if extra and loc.get("select"):
+            raise ValueError("--family and --dupes apply to whole documents")
+        out += [{"doc": d} for d in dict.fromkeys(extra)] if extra else [loc]
+    return out
+
+
+@run
+def ann(argv=None):
+    p = parser("ann", ANN_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("tags", help="the tag vocabulary with counts, or the tags on --target")
+    s.add_argument("--target", help="a locator; a whole document includes tags on ranges in it")
+    s = sub.add_parser("notes", help="notes, with replies after their parent")
+    s.add_argument("--target")
+    s.add_argument("--by", help="user, claude, or user:<id>")
+    s = sub.add_parser("find", help="documents by tags: --tag hot --tag -privileged")
+    s.add_argument("--tag", action="append", required=True)
+    s.add_argument("--list", dest="list_file", help="also write a list file")
+    s = sub.add_parser("log", help="the event log")
+    s.add_argument("--since", help="event ID")
+    s.add_argument("--author", help="user, claude, or user:<id>")
+    s = sub.add_parser("check", help="check a note's references and quotations (note ID, or - for a body on stdin)")
+    s.add_argument("note")
+    for name in ("tag", "untag"):
+        s = sub.add_parser(name)
+        s.add_argument("tag")
+        s.add_argument("locators", nargs="+")
+        s.add_argument("--family", action="store_true", help="every document in each one's family")
+        s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
+        s.add_argument("--requested-by")
+    s = sub.add_parser("note", help="add a note (body on stdin, or --body)")
+    s.add_argument("target", nargs="?")
+    s.add_argument("--reply-to")
+    s.add_argument("--body")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("edit-note", help="replace a note's body (stdin, or --body)")
+    s.add_argument("note")
+    s.add_argument("--body")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("delete-note")
+    s.add_argument("note")
+    s.add_argument("--requested-by")
+    for name in ("define-tag", "edit-tag"):
+        s = sub.add_parser(name)
+        s.add_argument("tag")
+        s.add_argument("--color")
+        s.add_argument("--hotkey")
+        s.add_argument("--group", help="exclusive group, e.g. responsiveness")
+        s.add_argument("--description", help="the review criterion")
+        s.add_argument("--requested-by")
+    argv = sys.argv[1:] if argv is None else argv
+    argv = [" " + x if x.startswith("-") and not x.startswith("--") and x not in ("-", "-h") else x for x in argv]
+    a = p.parse_args(argv)
+    if getattr(a, "tag", None) and isinstance(a.tag, list):
+        a.tag = [t.strip() for t in a.tag]
+    m = Matter.find(a.matter)
+
+    def who(spec, author):
+        return spec is None or author == spec or (spec == "user" and annotations.is_user(author))
+
+    if a.cmd == "tags":
+        an = annotations.Annotations.load(m)
+        if a.target:
+            t = _targets(m, [a.target])[0]
+            for app in an.applications():
+                if (annotations.target_key(app["target"]) == annotations.target_key(t)
+                        or (set(t) == {"doc"} and app["target"]["doc"] == t["doc"])):
+                    out(app)
+            return
+        counts = {}
+        for app in an.applications():
+            counts[app["tag"]] = counts.get(app["tag"], 0) + 1
+        for name in sorted(set(an.definitions) | set(counts)):
+            out({**an.definitions.get(name, {"tag": name, "undefined": True}), "count": counts.get(name, 0)})
+    elif a.cmd == "notes":
+        an = annotations.Annotations.load(m)
+        t = _targets(m, [a.target])[0] if a.target else None
+        notes = [n for n in an.notes.values() if who(a.by, n["by"])
+                 and (t is None or annotations.target_key(n["target"]) == annotations.target_key(t)
+                      or (set(t) == {"doc"} and n["target"]["doc"] == t["doc"]))]
+        ids = {n["note"] for n in notes}
+        def thread(n, depth):
+            out({**n, "depth": depth})
+            for r in notes:
+                if r["parent"] == n["note"]:
+                    thread(r, depth + 1)
+        for n in notes:
+            if n["parent"] not in ids:
+                thread(n, 0)
+    elif a.cmd == "find":
+        tags = annotations.current_tags(m)
+        docs = [d for d in m.state.live_documents()
+                if all((t.lstrip("-") in tags.get(d, ())) != t.startswith("-") for t in a.tag)]
+        for d in docs:
+            out({"loc": "doc:" + d, "tags": sorted(tags.get(d, ()))})
+        if a.list_file:
+            lists.write(a.list_file, *lists.new(" ".join(a.tag), ["doc:" + d for d in docs],
+                                                query=" ".join(f"tag:{t}" for t in a.tag)))
+    elif a.cmd == "log":
+        for ev in m.annotation_log.read(a.since):
+            if who(a.author, ev["author"]):
+                out(ev)
+    elif a.cmd == "check":
+        if a.note == "-":
+            body = sys.stdin.read()
+        else:
+            n = annotations.Annotations.load(m).notes.get(a.note)
+            if n is None:
+                raise KeyError(f"no note {a.note}")
+            body = n["body"]
+        from . import literate
+        for r in literate.check(m, body):
+            out(r)
+    else:
+        req = {"op": a.cmd, "requested_by": getattr(a, "requested_by", None)}
+        if a.cmd in ("tag", "untag"):
+            results = []
+            for t in _targets(m, a.locators, a.family, a.dupes):
+                results.append(annapi.request(m, {**req, "tag": a.tag, "target": t}))
+            out({"events": [e for r in results for e in r["events"]]})
+            return
+        if a.cmd in ("note", "edit-note"):
+            req["body"] = a.body if a.body is not None else sys.stdin.read()
+        if a.cmd == "note":
+            if a.reply_to:
+                req.update(op="reply", parent=a.reply_to)
+            elif a.target:
+                req["target"] = _targets(m, [a.target])[0]
+            else:
+                raise ValueError("note needs a target locator or --reply-to")
+        elif a.cmd in ("edit-note", "delete-note"):
+            req["note"] = a.note
+        elif a.cmd in ("define-tag", "edit-tag"):
+            req.update(tag=a.tag, color=a.color, hotkey=a.hotkey, group=a.group, description=a.description)
+        out(annapi.request(m, req))
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

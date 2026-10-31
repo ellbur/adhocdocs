@@ -80,8 +80,9 @@ on a subscription.
 **Mounts:** the store and annotation log read-only (originals can't change,
 and annotation writes go through the API that stamps authorship); the
 workspace read-write; the matter's `claude-home/` as `~/.claude`; and the
-viewer and annotation API sockets. There is nothing else: no host home, no
-other matter, no Podman socket.
+viewer and annotation API sockets (the launcher runs `adhoc ann-api` and
+sets `ADHOC_ANN_SOCKET`). There is nothing else: no host home, no other
+matter, no Podman socket.
 
 **Network:** an `--internal` Podman network with no route out, plus a small
 proxy container on both networks that passes TLS through to allowlisted

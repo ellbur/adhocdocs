@@ -45,16 +45,16 @@ them.
 
 ## Annotation
 
-- **Tags and notes.** *Designed*: [ANNOTATIONS.md](ANNOTATIONS.md). Search
-  already reads tags.
+- **Tags and notes.** *Built* (`ann`, plus the host-side annotation API),
+  except editing in the viewer: [ANNOTATIONS.md](ANNOTATIONS.md).
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 
 ## Writing
 
 - **Literate pages.** *Designed*: [PAGES.md](PAGES.md).
-- **Quote checking.** *Built* as `text --json <locator>`, which resolves a
-  locator and reports exact, re-anchored or broken. Pages will run it on
-  every reference.
+- **Quote checking.** *Built*: `text --json <locator>` resolves a locator
+  and reports exact, re-anchored or broken, and `ann check` checks the
+  references and quotations in a note. Pages will reuse the same checker.
 
 ## Analysis, review and output
 
