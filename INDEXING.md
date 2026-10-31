@@ -47,6 +47,8 @@ docstrings.*
   normalized subject. Threads are assembled from it at query time.
 - **`neardup`**: a MinHash signature of each text's word 5-shingles, for
   near-duplicate and version detection.
+- **`names`**: the person-name mentions in each text, with their evidence
+  and any role beside them, for the cast of characters (`analyze people`).
 - **`grep`** needs no index: a regex over the layer files, for strings an
   index tokenizes badly (account numbers, `PN 44-B/7`).
 
