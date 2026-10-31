@@ -1,8 +1,9 @@
 # Tags and Notes
 
-*Status: designed. Only reading tags is built
-([`annotations.py`](src/adhocdocs/annotations.py)), for `search --tag` and
-`tag:`.*
+*Status: the log, its rules, the annotation API and the `ann` CLI are built
+([`annotations.py`](src/adhocdocs/annotations.py) has the event format,
+[`annapi.py`](src/adhocdocs/annapi.py) the API, `ann --help` the usage).
+Editing in the viewer is designed, not built.*
 
 **Tags** and **notes** record judgments about documents ("hot",
 "privileged", "contradicts Jones's testimony"). Both the user and Claude
@@ -17,48 +18,62 @@ delete tags and notes directly. Everything else stays programmable.
 
 ## What an annotation is
 
-- **Target:** a document ID or a locator. Tags are **per copy**: tagging one
-  custodian's copy doesn't tag the duplicates. Propagating to duplicates or
-  a family is an explicit operation.
-- **Tag definitions** form the matter's vocabulary: name, optional
-  description (the review criterion), color, optional hotkey, optional group
-  for mutually exclusive choices (responsive / not responsive).
-- **Notes** are Markdown and can reply to other notes, which makes threads
+- **Target:** a document or a locator. Targets are checked when written
+  (a broken locator is refused), and text ranges get their quote
+  fingerprint from the store.
+- **Tags are per copy.** Tagging one custodian's copy doesn't tag the
+  duplicates. `ann tag --dupes` and `--family` apply a tag to them
+  explicitly.
+- **Tag definitions** form the matter's vocabulary: name, description (the
+  review criterion), color, hotkey, and optional exclusive group. A tag must
+  be defined before use, so a typo can't start a new tag, and hotkeys are
+  unique. Applying a tag in a group replaces the group's other tag on that
+  target, as recorded untag events.
+- **Notes** are Markdown and can reply to other notes, making threads
   anchored in documents. **Claude's notes follow Principle 5**: quotations
-  are literate references, checked like pages.
+  are references (`:q{#id}` plus a `refs` block, as in [PAGES.md](PAGES.md)).
+  Every note Claude writes is checked by
+  [`literate.py`](src/adhocdocs/literate.py), which pages will reuse. The
+  check reports broken or missing references and quotations typed by hand,
+  as warnings.
+- **For filters** (`search tag:hot`, `--tag`, `ann find`), a document has a
+  tag if it, or any range in it, does.
 
-## Storage: an append-only log
+## Storage
 
-`annotations/log.jsonl`, one JSON event per line, with `id`, `at`, `author`
-and `op`: `tag`, `untag`, `note`, `edit-note`, `delete-note`, `reply`,
-`define-tag` or `edit-tag`. The current state is a replay. That gives no
-write conflicts between the viewer and Claude, full history, a change feed
-("what did the user tag since I last looked?"), and plain data.
+`annotations/log.jsonl` is an append-only event log, and the current state
+is a replay. That gives no write conflicts between the viewer and Claude,
+full history ("who tagged this privileged, and when?"), a change feed (`ann
+log --since <id> --author user`: "what did the user tag since I last
+looked?"), and plain data. Writers hold `annotations/.lock` while they
+validate and append, so the viewer must too.
 
 ## Authorship doesn't depend on Claude
 
-- Writes from the viewer are stamped `user:<id>` by the viewer.
-- Writes from the container go through an API that stamps them `claude`.
-  The container mounts the log **read-only**, so Claude can't write an
-  event claiming to be the user's.
-- When the user asks Claude to tag, the event is still `claude`'s, with
-  `requested_by`.
-- The API refuses Claude edits or deletions of the user's annotations; the
-  user can change anything.
+- The viewer writes as `user:<id>`, in its own process on the host.
+- The container writes only through the **annotation API**: a server the
+  launcher runs on the host (`adhoc ann-api`), on a Unix socket mounted into
+  the container. It stamps every write `claude`, whatever the request says.
+  The log is mounted read-only, so this is the only path.
+- When the user asked for a change, Claude passes `--requested-by user`. The
+  event is still Claude's; `requested_by` is context, not authority.
+- **Claude can't change the user's work:** it can't untag the user's tags
+  (including by a group replacement), edit or delete the user's notes, or
+  edit the user's tag definitions. The user can change anything. These
+  rules are enforced in the write path, not by the CLI.
 
-## In the viewer
+Until the container exists, Claude runs on the host and could append to the
+log directly. The guarantee only holds once the log is mounted read-only.
+
+## In the viewer (not built)
 
 Keyboard first: tag hotkeys (on the document, or on the selection); a
 one-key type-ahead tag palette that can also define tags; a note key that
 opens a plain text box on the selection or document; margin markers by tag
 color, distinguishing the user's from Claude's; a palette command to apply a
-tag to family or duplicates. These are native UI, not web content.
-
-## CLI (to build)
-
-`ann tags|notes|find|log` read the log directly (`find --tag hot --tag
--privileged`, `log --since … --author user`). `ann tag|untag|note|define-tag`
-write through the API. All output JSON.
+tag to family or duplicates. These are native UI, not web content. Until the
+viewer exists, the user has no direct way to tag; they ask Claude, which
+tags as itself.
 
 ## Decided
 
@@ -66,4 +81,5 @@ write through the API. All output JSON.
 - Authorship stamped by the write path; the container is read-only.
 - Claude can't edit or delete the user's annotations.
 - Tags per copy, with explicit propagation.
-- Claude's notes follow Principle 5.
+- Claude's notes follow Principle 5, checked and warned, not refused.
+- Tags must be defined before use.

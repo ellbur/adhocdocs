@@ -15,6 +15,7 @@ uv run search '"never received" w/10 pallet'
 uv run search 'who signed for the delivery' --index hybrid
 uv run search grep 'PN 44-B/7'
 uv run idx status
+uv run adhoc ann-api &   # the annotation API; then e.g. ann define-tag hot, ann tag hot <doc>
 uv run pytest            # ADHOC_TEST_SEMANTIC=1 to include semantic search
 ```
 
