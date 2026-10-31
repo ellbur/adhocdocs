@@ -203,9 +203,23 @@ impl Handler {
             let obj = m.object(&doc).unwrap_or(Value::Null);
             let kind = meta["kind"].as_str().unwrap_or("").to_string();
             let name = meta["name"].as_str().unwrap_or("").to_string();
+            // printed page labels, from any layer that has them
+            let mut labels = serde_json::Map::new();
+            for l in m.state.layers.get(&content).into_iter().flatten() {
+                let segs: Vec<Value> = m.segments(&l.id).into_iter().filter(|s| s["kind"] == "page-label").collect();
+                if segs.is_empty() { continue; }
+                let text = m.text(&l.text).unwrap_or_default();
+                let chars: Vec<char> = text.chars().collect();
+                for s in segs {
+                    let at = s["start"].as_u64().unwrap_or(0) as usize;
+                    let page = chars[..at.min(chars.len())].iter().filter(|c| **c == '\u{c}').count() + 1;
+                    labels.entry(page.to_string()).or_insert(s["label"].clone());
+                }
+                break;
+            }
             let info = json!({"doc": doc, "content": content, "meta": meta, "custodian": obj.get("custodian"),
                               "layers": layers, "children": children, "parent": parent,
-                              "duplicates": m.duplicates(&doc)});
+                              "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc)});
             (doc, content, info, kind, name)
         };
         let mut info = info;
@@ -324,9 +338,29 @@ impl Handler {
     }
 }
 
+/// Where a document was produced: its records from every production in the
+/// workspace (Bates range and the map from Bates pages to physical pages).
+fn bates_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
+    let mut out = vec![];
+    let Ok(dirs) = std::fs::read_dir(root.join("workspace/productions")) else { return out };
+    let mut dirs: Vec<_> = dirs.flatten().map(|d| d.path()).collect();
+    dirs.sort();
+    for d in dirs {
+        let Ok(text) = std::fs::read_to_string(d.join("production.jsonl")) else { continue };
+        let mut lines = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok());
+        let Some(head) = lines.next() else { continue };
+        for r in lines.filter(|r| r["doc"] == doc) {
+            out.push(json!({"production": head["name"], "prefix": head["prefix"], "digits": head["digits"],
+                            "begin": r["begin"], "end": r["end"], "page_map": r["page_map"]}));
+        }
+    }
+    out
+}
+
 /// Remove scripts, event handlers, frames, objects and remote resources.
 /// Panes keep forms, data-* attributes and loc:/svc: links.
 pub fn sanitize(html: &str) -> String {
+    let html = remote_images(html);
     let mut b = ammonia::Builder::default();
     b.add_tags(&["form", "input", "select", "option", "textarea", "button", "label", "fieldset", "legend",
                  "article", "section", "header", "footer", "nav", "main", "figure", "figcaption", "mark", "cite", "q", "style", "link", "meta", "title", "head", "body", "html"])
@@ -346,7 +380,40 @@ pub fn sanitize(html: &str) -> String {
         .url_relative(ammonia::UrlRelative::PassThrough)
         .link_rel(None)
         .strip_comments(true);
-    b.clean(html).to_string()
+    b.clean(&html).to_string()
+}
+
+/// Remote images are never fetched, but their presence may be evidence: each
+/// becomes a visible placeholder naming its URL.
+fn remote_images(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut pos = 0;
+    while let Some(i) = lower[pos..].find("<img").map(|i| i + pos) {
+        let Some(end) = lower[i..].find('>').map(|e| e + i + 1) else { break };
+        let tag = &html[i..end];
+        let tag_lower = &lower[i..end];
+        let src = tag_lower.find("src=").and_then(|k| {
+            let rest = &tag[k + 4..];
+            let q = rest.chars().next()?;
+            if q == '"' || q == '\'' {
+                rest[1..].find(q).map(|e| rest[1..1 + e].to_string())
+            } else {
+                Some(rest.split(|c: char| c.is_whitespace() || c == '>').next()?.to_string())
+            }
+        });
+        out.push_str(&html[pos..i]);
+        match src {
+            Some(u) if u.to_ascii_lowercase().starts_with("http") => {
+                let esc = u.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;");
+                out.push_str(&format!("<span class=\"adhoc-remote\">[remote image, not loaded: {}]</span>", esc));
+            }
+            _ => out.push_str(tag),
+        }
+        pos = end;
+    }
+    out.push_str(&html[pos..]);
+    out
 }
 
 #[cfg(test)]
@@ -359,7 +426,8 @@ mod tests {
             <a href="loc:doc:sha256:ab@sha256:cd#char=1,2">q</a><img src="https://e.com/x.png"><iframe src="https://e.com"></iframe>
             <span data-text="doc:sha256:ab">t</span><form action="svc:triage"><input type="checkbox" name="p" value="a"></form>"#);
         assert!(!out.contains("script") && !out.contains("onclick") && !out.contains("javascript") && !out.contains("iframe"));
-        assert!(!out.contains("https://e.com"));
+        assert!(!out.contains("src=\"https://e.com"));
+        assert!(out.contains("remote image, not loaded: https://e.com/x.png"));
         assert!(out.contains(r#"href="loc:doc:sha256:ab@sha256:cd#char=1,2""#), "{}", out);
         assert!(out.contains(r#"data-text="doc:sha256:ab""#) && out.contains(r#"action="svc:triage""#) && out.contains("checkbox"));
     }

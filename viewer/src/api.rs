@@ -36,7 +36,7 @@ pub fn default_socket(root: &Path) -> PathBuf {
     let run = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/adhocdocs-{}", unsafe { libc::getuid() }));
     // the same short hash the Python side computes
     let h = sha256_hex(root.to_string_lossy().as_bytes());
-    PathBuf::from(run).join("adhocdocs").join(format!("{}.view.sock", &h[..16]))
+    PathBuf::from(run).join("adhocdocs").join(&h[..16]).join("viewer.sock")
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -44,7 +44,7 @@ fn sha256_hex(data: &[u8]) -> String {
     sha2::Sha256::digest(data).iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-fn store_files(panes: &Panes, files: &Value) -> Result<String, String> {
+pub fn store_files(panes: &Panes, files: &Value) -> Result<String, String> {
     let mut out = HashMap::new();
     for (path, b64) in files.as_object().ok_or("files must be an object")? {
         if path.contains("..") || path.starts_with('/') {
@@ -167,5 +167,42 @@ mod tests {
     fn socket_hash_matches_python() {
         // hashlib.sha256(b"/srv/matters/smith-v-jones").hexdigest()[:16], as the view CLI computes it
         assert_eq!(&super::sha256_hex(b"/srv/matters/smith-v-jones")[..16], "5013a75b82377f5a");
+    }
+}
+
+/// Send a pane's form values to the service `name`, which listens on
+/// `svc-<name>.sock` in the viewer's socket directory (shared with the
+/// session). Its reply is HTML for the pane, sanitized and stored like any
+/// other pane content. Returns `{"content": id}` or `{"error": …}`.
+pub fn call_service(dir: &Path, name: &str, values: &Value, panes: &Panes) -> Value {
+    use std::os::unix::net::UnixStream;
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        return json!({"error": format!("bad service name {:?}", name)});
+    }
+    let path = dir.join(format!("svc-{}.sock", name));
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(s) => s,
+        Err(_) => return json!({"error": format!("no service {} is running (view serve {} -- …)", name, name)}),
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+    let body = values.to_string();
+    let req = format!("POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", body.len(), body);
+    if stream.write_all(req.as_bytes()).is_err() {
+        return json!({"error": "could not send to the service"});
+    }
+    let mut resp = Vec::new();
+    use std::io::Read;
+    if stream.read_to_end(&mut resp).is_err() {
+        return json!({"error": "the service did not answer"});
+    }
+    let text = String::from_utf8_lossy(&resp);
+    let Some((head, html)) = text.split_once("\r\n\r\n") else { return json!({"error": "bad reply from the service"}) };
+    if !head.starts_with("HTTP/1.0 200") && !head.starts_with("HTTP/1.1 200") {
+        return json!({"error": format!("the service failed: {}", html.trim().chars().take(300).collect::<String>())});
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(html.as_bytes());
+    match store_files(panes, &json!({"index.html": b64})) {
+        Ok(id) => json!({"content": id}),
+        Err(e) => json!({"error": e}),
     }
 }

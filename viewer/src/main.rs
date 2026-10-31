@@ -29,6 +29,8 @@ pub enum UserEvent {
     /// A command from the API, with where to send the result.
     Command(Value, mpsc::Sender<Value>),
     Ipc(String),
+    /// A service's answer for a pane: the request ID and the result.
+    Service(Value, Value),
 }
 
 struct Args {
@@ -165,6 +167,9 @@ fn main() {
                 waiting.insert(seq, reply);
                 let _ = webview.evaluate_script(&format!("adhoc.command({}, {})", seq, cmd));
             }
+            Event::UserEvent(UserEvent::Service(id, result)) => {
+                let _ = webview.evaluate_script(&format!("adhoc.served({}, {})", id, result));
+            }
             Event::UserEvent(UserEvent::Ipc(msg)) => {
                 let Ok(v) = serde_json::from_str::<Value>(&msg) else { return };
                 match v["type"].as_str().unwrap_or("") {
@@ -183,6 +188,18 @@ fn main() {
                             api::add_quotes(&matter.lock().unwrap(), &mut result);
                             let _ = tx.send(result);
                         }
+                    }
+                    "svc" => {
+                        // A pane's form, submitted to a service Claude runs in the container.
+                        let (dir, panes, proxy) = (socket.parent().map(|p| p.to_path_buf()), panes.clone(), proxy.clone());
+                        let (id, name, values) = (v["id"].clone(), v["name"].as_str().unwrap_or("").to_string(), v["values"].clone());
+                        std::thread::spawn(move || {
+                            let result = match dir {
+                                Some(d) => api::call_service(&d, &name, &values, &panes),
+                                None => json!({"error": "no socket directory"}),
+                            };
+                            let _ = proxy.send_event(UserEvent::Service(id, result));
+                        });
                     }
                     "annotate" => {
                         // The user's own tags and notes, written as the user by the host tool.

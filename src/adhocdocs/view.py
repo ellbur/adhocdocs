@@ -36,7 +36,7 @@ def socket_path(m: Matter) -> Path:
     if len(str(p)) <= MAX_SOCKET_PATH:
         return p
     run = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return run / "adhocdocs" / (hashlib.sha256(str(m.root).encode()).hexdigest()[:16] + ".view.sock")
+    return run / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16] / "viewer.sock"
 
 
 class NotRunning(Exception):
@@ -182,3 +182,57 @@ def launch(m: Matter, user: str, wait=False):
     log = open(m.root / "run" / "viewer.log", "a")
     proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
     return proc.pid
+
+
+# -- services ------------------------------------------------------------------------------------
+
+def service_socket(m: Matter, name: str) -> Path:
+    """Services listen next to the viewer's socket: the directory the
+    session shares with the host."""
+    return socket_path(m).parent / f"svc-{name}.sock"
+
+
+def serve(m: Matter, name: str, command: list[str]):
+    """Answer a pane's ``<form action="svc:NAME">``: for each submission, run
+    ``command`` with ``{"form", "selection", "pane"}`` as JSON on stdin; its
+    stdout is the pane's new HTML. Runs until interrupted."""
+    import re
+    import socketserver
+    from http.server import BaseHTTPRequestHandler
+    if not re.fullmatch(r"[a-z0-9-]+", name):
+        raise ViewerError("service names are lowercase letters, digits and hyphens")
+    path = service_socket(m, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            r = subprocess.run(command, input=body, capture_output=True, timeout=55)
+            ok = r.returncode == 0
+            data = r.stdout if ok else (r.stderr or b"failed")
+            self.send_response(200 if ok else 500)
+            self.send_header("Content-Type", "text/html; charset=utf-8" if ok else "text/plain")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+        def get_request(self):
+            sock, _ = super().get_request()
+            return sock, ("service", 0)
+
+    with Server(str(path), Handler) as srv:
+        print(json.dumps({"serving": name, "socket": str(path)}), file=sys.stderr, flush=True)
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            path.unlink(missing_ok=True)

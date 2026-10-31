@@ -92,6 +92,7 @@ body.adhoc-presentation, body.adhoc-pane { font: 14px/1.5 system-ui, sans-serif;
 [data-locator].adhoc-selected { background: rgba(45, 95, 211, .18); outline: 1px solid rgba(45, 95, 211, .5); }
 [data-locator].adhoc-visited { color: #777; }
 [data-locator].adhoc-current { box-shadow: inset 3px 0 0 #2d5fd3; }
+.adhoc-remote { font-size: 12px; color: #8a5a00; background: #fff4d6; border: 1px dashed #c90; padding: 0 4px; }
 .adhoc-snippet mark { background: rgba(255, 204, 0, .5); }
 .adhoc-status-broken { background: #c00; color: #fff; padding: 0 .3em; }
 .adhoc-status-reanchored { outline: 1px dashed #c90; }
