@@ -138,6 +138,7 @@ to try on the sample matter:
 
 - *"Make tags hot, privileged and responsive, with hotkeys h, p and r."*
 - *"Find the few documents that establish the proof of delivery and save them as a set. Say what each one adds, and show me which others just repeat them."*
+- *"What does the set need to show: shipped, delivered, signed for, disputed? Is any of those without a document?"*
 - Later: *"Show me the proof-of-delivery set again,"* or *"Tag its key documents as hot."*
 - *"Reconstruct the email threads about the past-due invoice. Are any messages missing?"*
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
@@ -200,12 +201,15 @@ uv run search '"never received"' --list nr.list.jsonl
 uv run list cat nr.list.jsonl
 uv run search '"proof of delivery" OR POD' --list pod.list.jsonl
 uv run list condense nr.list.jsonl pod.list.jsonl --out pod.set.list.jsonl   # a key set: repeats folded away
+uv run list point pod.set.list.jsonl delivered "The pallet reached Dock 4" && uv run list points pod.set.list.jsonl
+uv run list ls                          # the workspace's lists and sets
 uv run text "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run analyze threads
 uv run analyze groups                   # near-duplicates and versions
 uv run analyze people
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
+uv run page docs memo.md --list memo.list.jsonl            # the documents memo.md cites
 uv run adhoc view && uv run view list nr.list.jsonl        # the viewer, outside a session
 uv run adhoc ann-api &                                     # the annotation API, then:
 uv run ann define-tag hot && uv run ann tag hot <doc>

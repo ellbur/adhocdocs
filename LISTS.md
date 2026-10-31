@@ -53,6 +53,20 @@ and condensing again with new candidates keeps them.
   usually the evidence, and the email the wrapper; they are separate
   documents, and family is already a column (`family`).
 
+**Points** make "enough" checkable. The header lists what the set must
+establish (`list point pod.list.jsonl delivered "The pallet reached Dock
+4"`), each representative names the points it supports (`list set …
+points=delivered,signed`), and `list points` reports each point's
+documents, the points none support, and the representatives that support
+none. A covered document's points count for its representative, so
+folding a document never leaves a point unsupported.
+
+**Finding sets later.** `list ls` lists the workspace's list files, newest
+first, with their titles, questions, sizes, how much each covers and which
+points are unsupported. `page docs memo.md --list memo.list.jsonl` makes a
+list of the documents a page cites, in the order it cites them, for when
+the explanation came first.
+
 ## Columns
 
 A column is either a list field (from the item's `fields`, e.g. `score`,
@@ -94,6 +108,8 @@ new list of the ones I've selected, sorted by recipient").
   row.
 - Key sets as a convention on list files, not a new format, so the list
   display, filtering and tagging work on them unchanged.
+- Points are checked only for support, not for whether the support is
+  good: that is the reader's judgment, made easy by each document's `why`.
 
 ## The timeline display
 

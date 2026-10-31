@@ -62,6 +62,9 @@ Asked for the documents about something, the user rarely wants all of
 them: most repeat the others. Unless they ask for everything, make a key
 set (`list --help`): search broadly with `--list`, `list condense` the
 results, then `list cover` what only restates another, `list set` a `why`
-on each document left, and `view list` it. Tell the user how many
-candidates it accounts for. Nothing is dropped, and condensing again with
-new searches keeps your judgments. Don't tag the set unless asked.
+on each document left, and `view list` it. When the question has parts,
+name them first (`list point`), mark what each document supports, and
+check `list points` for gaps before saying the set is complete. Tell the
+user how many candidates it accounts for. Nothing is dropped, and
+condensing again with new searches keeps your judgments. Don't tag the
+set unless asked. `list ls` finds earlier sets.

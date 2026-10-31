@@ -434,6 +434,15 @@ near-duplicates under a representative. Then record your judgment:
   list set pod.set.list.jsonl <doc> why="the signed proof of delivery"
   list cover pod.set.list.jsonl <doc>... --by <doc> --note "same facts as the carrier's notice"
   list uncover pod.set.list.jsonl <doc>      (a covered document that matters on its own)
+
+Points say what the set must establish; then find the gaps:
+
+  list point pod.set.list.jsonl delivered "The pallet reached Dock 4 on Feb. 24"
+  list set pod.set.list.jsonl <doc> points=delivered,signed
+  list points pod.set.list.jsonl    (each point's documents, and the points with none)
+
+`list ls` finds the lists in the workspace, newest first, with their
+questions, sizes and unsupported points.
 """
 
 
@@ -481,6 +490,15 @@ def list_(argv=None):
     s = sub.add_parser("uncover", help="make covered documents representatives again")
     s.add_argument("file")
     s.add_argument("docs", nargs="+")
+    s = sub.add_parser("point", help="add a point a key set must establish, or change its text")
+    s.add_argument("file")
+    s.add_argument("id", help="lowercase letters, digits and hyphens")
+    s.add_argument("text", nargs="?")
+    s.add_argument("--remove", action="store_true", help="remove the point, and its ID from every item")
+    s = sub.add_parser("points", help="each point's supporting documents, and the points nothing supports")
+    s.add_argument("file")
+    s = sub.add_parser("ls", help="the list files in the workspace, newest first")
+    s.add_argument("dir", nargs="?", help="default: the matter's workspace")
     argv = sys.argv[1:] if argv is None else argv
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x != "-h" else x for x in argv]
     matter_everywhere(sub)
@@ -499,7 +517,26 @@ def list_(argv=None):
             for it in lists.read(f)[1]:
                 out(it)
         return
+    if a.cmd in ("point", "points"):
+        from . import sets
+        header, items = lists.read(a.file)
+        if a.cmd == "points":
+            out(sets.points_report(header, items))
+            return
+        if a.remove:
+            sets.remove_point(header, items, a.id)
+        elif not a.text:
+            raise ValueError("give the point's text, or --remove")
+        else:
+            sets.set_point(header, a.id, a.text)
+        lists.write(a.file, header, items)
+        out({"written": a.file, "points": [p["id"] for p in header.get("points", [])]})
+        return
     m = Matter.find(a.matter)
+    if a.cmd == "ls":
+        for row in lists.catalog(a.dir or m.workspace):
+            out(row)
+        return
     if a.cmd in ("condense", "set", "cover", "uncover"):
         from . import sets
 
@@ -519,7 +556,7 @@ def list_(argv=None):
                 if not eq or not k:
                     raise ValueError(f"expected key=value, got {kv!r}")
                 values[k] = v or None
-            sets.set_fields(items, doc(a.doc), values)
+            sets.set_fields(items, doc(a.doc), values, header)
         elif a.cmd == "cover":
             sets.cover(items, [doc(d) for d in a.docs], doc(a.by), a.reason, a.note)
         else:
@@ -772,6 +809,9 @@ def page(argv=None):
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
+    s = sub.add_parser("docs", help="the documents a page cites, in order (--list to write them as a list file)")
+    s.add_argument("file")
+    s.add_argument("--list", dest="list_file")
     matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
@@ -806,6 +846,19 @@ def page(argv=None):
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)
+        elif a.cmd == "docs":
+            page = pages.Page(m, a.file)
+            cited = pages.cited_docs(page)
+            items = [{"loc": "doc:" + d, "fields": {"refs": ", ".join(ids)}} for d, ids in cited]
+            if a.list_file:
+                header = {"type": "list", "v": 1, "title": page.meta.get("title") or Path(a.file).stem,
+                          "columns": ["name", "date", "custodian", "refs", "tags"], "made_by": "page",
+                          "page": os.path.relpath(a.file, Path(a.list_file).resolve().parent)}
+                lists.write(a.list_file, header, items)
+                out({"written": a.list_file, "items": len(items)})
+            else:
+                for it in items:
+                    out(it)
     except pages.PageError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

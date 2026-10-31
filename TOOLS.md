@@ -57,7 +57,9 @@ them.
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under
-  them (`list condense`, `cover`, `set`, `uncover`):
+  them (`list condense`, `cover`, `set`, `uncover`), and points that report
+  what nothing supports yet (`list point`, `list points`). `list ls` finds
+  them again; `page docs` makes one from a page's citations:
   [LISTS.md](LISTS.md#key-sets).
 
 ## Writing
