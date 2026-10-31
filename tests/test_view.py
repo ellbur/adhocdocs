@@ -71,3 +71,29 @@ def test_view_not_running(m, monkeypatch, tmp_path):
     monkeypatch.setenv("ADHOC_VIEW_SOCKET", str(tmp_path / "none.sock"))
     with pytest.raises(view.NotRunning):
         view.command(m, {"cmd": "state"})
+
+
+def test_window_commands(m, monkeypatch, capsys):
+    """What the view CLI sends for windows (the viewer itself is tested by hand: VIEWER.md)."""
+    from adhocdocs import cli
+    sent = []
+    monkeypatch.setattr(view, "command", lambda _m, c: sent.append(c) or {})
+    doc = next(iter(m.state.documents))
+    run = lambda *args: cli.view(["--matter", str(m.root), *args])
+    run("window", "new", "--pane", "p2", "--layout", "split-v")
+    run("window", "move", "--pane", "p2", "--window", "w1")
+    run("window", "close", "--window", "w2")
+    run("open", doc, "--new-window")
+    run("open", doc, "--window", "w2", "--mode", "text")
+    run("layout", "grid", "--window", "w2")
+    assert sent[:3] == [{"cmd": "window-new", "pane": "p2", "layout": "split-v"},
+                        {"cmd": "window-move", "pane": "p2", "window": "w1"},
+                        {"cmd": "window-close", "window": "w2"}]
+    assert sent[3]["new_window"] is True and "window" not in sent[3]
+    assert sent[4]["window"] == "w2" and sent[4]["mode"] == "text" and "new_window" not in sent[4]
+    assert sent[5] == {"cmd": "layout", "layout": "grid", "window": "w2"}
+    with pytest.raises(SystemExit):
+        run("window", "close")                       # which window?
+    with pytest.raises(SystemExit):
+        run("open", doc, "--window", "w2", "--new-window")
+    assert len(sent) == 6
