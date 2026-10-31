@@ -1,5 +1,5 @@
 """End to end over corpus/: ingest, index, search, checked against the
-known facts in corpus/SOURCES.md. Semantic search runs only with
+known facts in tools/corpus/SOURCES.md. Semantic search runs only with
 ADHOC_TEST_SEMANTIC=1, since embedding the corpus takes minutes on a CPU."""
 
 import os

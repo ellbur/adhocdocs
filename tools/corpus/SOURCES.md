@@ -1,9 +1,10 @@
 # Test corpus sources
 
-51 documents, one directory per custodian, about 5.4 MB in total. `public/` holds
-real US federal government documents, kept byte-for-byte as downloaded on
-2026-10-30. The other five directories are a synthetic, fictional commercial
-dispute.
+The test corpus in `corpus/`: 51 documents, one directory per custodian, about
+5.4 MB in total. `public/` holds real US federal government documents, kept
+byte-for-byte as downloaded on 2026-10-30. The other five directories are a
+synthetic, fictional commercial dispute. Paths below are relative to `corpus/`,
+except the commands, which run from the top of the repository.
 
 ## The synthetic story
 
@@ -37,7 +38,7 @@ uv run --project /home/owen/adhocdocs python tools/corpus/build_synthetic.py   #
 tools/corpus/fetch_public.sh                                                   # re-download public/ (sources may change)
 ```
 
-The generators are in `tools/corpus/` at the top of the repository: `build_synthetic.py` (story, most formats),
+The generators sit beside this file: `build_synthetic.py` (story, most formats),
 `deposition.py` (transcript), and `common.py` (PDF, scan, docx and eml helpers).
 They need the Liberation fonts from `/usr/share/fonts/liberation`, or set
 `ADHOC_FONT_DIR`. Scans are rendered with PyMuPDF, given seeded numpy noise,

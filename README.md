@@ -24,7 +24,7 @@ uv run pytest            # ADHOC_TEST_SEMANTIC=1 to include semantic search
 ```
 
 `corpus/` is a 51-file test matter: a fictional supply dispute plus real
-public-domain federal documents. [corpus/SOURCES.md](corpus/SOURCES.md) lists
+public-domain federal documents. [tools/corpus/SOURCES.md](tools/corpus/SOURCES.md) lists
 every file's source and the facts the tests check. OCR needs `tesseract`
 with English data, either system-wide or in
 `~/.cache/adhocdocs/models/tessdata/`. Every command has `--help` and prints
