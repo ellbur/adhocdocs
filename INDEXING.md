@@ -43,6 +43,10 @@ docstrings.*
   allows only Claude Code's hosts, and sending text to an embedding service
   would breach Principle 2. Using one anyway would be a change to the
   allowlist, made by the user on the host.
+- **`threads`**: each email's Message-ID, In-Reply-To, References and
+  normalized subject. Threads are assembled from it at query time.
+- **`neardup`**: a MinHash signature of each text's word 5-shingles, for
+  near-duplicate and version detection.
 - **`grep`** needs no index: a regex over the layer files, for strings an
   index tokenizes badly (account numbers, `PN 44-B/7`).
 
@@ -113,8 +117,6 @@ at this size but will want a cache for large matters.
 - An audit record of searches written from outside Claude's reach. Until
   then, a search saved with `--list` keeps its query, index settings and
   `as_of`, which is enough to rerun it.
-- Near-duplicate (MinHash) and email-threading indexes, which belong with
-  the analysis tools.
 
 ## Decided
 

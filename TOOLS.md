@@ -63,9 +63,22 @@ them.
   references and quotations in a note, with the same checker `page check`
   uses.
 
-## Analysis, review and output
+## Analysis
 
-All *proposed*: email threading; near-duplicate and version detection with
-a redline; an entity directory; redaction and privilege logs (redactions are
-derived documents); export and production (Bates stamping, exhibits,
-provenance of every quotation).
+*Built:* `analyze` ([`analysis.py`](src/adhocdocs/analysis.py) has the
+details).
+- **Email threading** from Message-ID, In-Reply-To and References. Copies
+  from different custodians are one message, and missing parents are
+  reported.
+- **Near-duplicate and version detection** (MinHash, with similarity and
+  containment).
+- **A redline** of two documents as locators, or as HTML for a viewer pane.
+
+*Proposed:* an entity directory (a cast of characters, with name variants
+and addresses resolved to one person).
+
+## Review and output
+
+All *proposed*: redaction and privilege logs (redactions are derived
+documents); export and production (Bates stamping, exhibits, provenance of
+every quotation).
