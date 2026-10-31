@@ -23,8 +23,8 @@ the user points at can be read by Claude, which can drive it from code
 
 ## How it is built
 
-A native Rust program on the host, outside the container. Its window is one
-`wry` web view running the viewer's own code ([`shell/`](viewer/shell),
+A native Rust program on the host, outside the container. Each of its
+windows is one `wry` web view running the viewer's own code ([`shell/`](viewer/shell),
 compiled into the binary). Everything it loads comes from an `adhoc:`
 protocol served by the program itself, never from the network.
 
@@ -73,6 +73,24 @@ open source.
 
 Panes are shown as tabs, one at a time or tiled (`split-v`, `split-h`,
 `grid`).
+
+**Windows:** there can be several, each with its own panes and layout, for
+example a list on one screen and documents on another. The user moves the
+focused pane to a new window with `W`. Claude can open a pane in a new
+window (`--new-window`) or a given one (`--window`), and move or close
+windows (`view window`).
+- **Routing:** pane IDs are unique across windows (`p1` in the first,
+  `w2-p1` in the second). A command naming a pane goes to its window, and
+  other commands go to the window the user last used.
+- **Links across windows:** a list can be linked to a document pane in
+  another window. The host relays opening, stepping and following between
+  them, and items opened in one window show as visited in the others.
+- **One process:** each window runs its own copy of the shell, but all of
+  them share the page renderer and its cache. `view state` merges every
+  window. `view history` is kept by the host, so it survives a window
+  closing.
+- **Closing:** a window takes its panes with it, and closing the last
+  window ends the viewer.
 
 ## Thin panes
 
@@ -123,7 +141,6 @@ whether the user, Claude or a pane went there.
 
 ## Not built yet
 
-- Multiple top-level windows (panes tile in one window).
 - `cid:` inline images in email. Remote images are not loaded; each shows a
   placeholder with its URL, since its presence may be evidence.
 - A marker on literate-page quotes that opens the page image (shading

@@ -163,7 +163,9 @@ spreadsheet, then ask about it:
 - *"Make me a review form for these documents with a responsive/not responsive choice."* Then tick your answers in the viewer and ask Claude to record them.
 
 In the viewer, press `?` for its keys. `t` opens the tag palette, tag
-hotkeys tag the current selection or document, and `N` adds a note. Your
+hotkeys tag the current selection or document, and `N` adds a note. `W`
+moves the focused pane into a window of its own, for example to keep a list
+on one screen and its documents on another. Your
 tags and notes are recorded as yours, and Claude's as Claude's. Claude
 can't change yours.
 
