@@ -52,9 +52,9 @@ text is now at the old offsets.
 ## Not built yet
 
 - **Aliases:** `bates:ABC000123[-…]` (a range can span documents, so it
-  resolves to a list), `tr:<doc>#pl=14:3,15:7` (through `line` segments;
-  search hits already report `pl`), `ctl:` control numbers, `label=iv`
-  printed pages.
+  resolves to a list) and `ctl:` control numbers wait for production and
+  control-number records. *Built:* `tr:<doc>#pl=14:3,15:7` (transcript
+  page:line, through `line` segments) and `#label=iv` (printed page labels).
 - `cells=` and `xywh=` selectors parse, but nothing resolves them yet.
 
 ## Decisions to confirm
