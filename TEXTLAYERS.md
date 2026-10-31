@@ -1,7 +1,7 @@
 # Text Layers
 
-*Status: implemented for PDF (native and OCR), images, email, .docx, CSV,
-HTML and plain text, in [`extract/`](src/adhocdocs/extract) and
+*Status: implemented for PDF (native and OCR), images, email, .docx, .xlsx,
+CSV, HTML and plain text, and for zip and mbox containers, in [`extract/`](src/adhocdocs/extract) and
 [`ingest.py`](src/adhocdocs/ingest.py). Formats and per-format conventions
 are in those docstrings.*
 
@@ -50,6 +50,11 @@ passes, a .docx with tracked changes accepted and with them shown.
 - A PDF page with almost no text and an image on it is OCRed; the document
   then gets an `ocr` layer as primary, alongside the (near-empty) `native`
   one.
+- Zip members and mbox messages are child documents (`part` is the member
+  path or message number), so families, custodians and duplicates work as
+  for attachments. The container's own layer is empty: extracted, no text.
+- Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet;
+  cells hold the values Excel last calculated, not formulas.
 - A PDF whose pages are mostly lines numbered 1–25 is a transcript. Its
   layer gets `line` segments, and ingestion adds a derived `transcript` view
   without line numbers and page labels, made primary, so phrases read
@@ -57,7 +62,7 @@ passes, a .docx with tracked changes accepted and with them shown.
 
 ## Not built yet
 
-`.msg`, `.xlsx`, .docx footnotes/comments/headers/footers, sanitized
+`.msg` and PST (their Python readers are GPL; to decide), .docx footnotes/comments/headers/footers, sanitized
 presentations of the original HTML (presentations are currently generated
 from the layer text), and a `layers` tool for making derived layers in the
 workspace (the workspace feed is ready for them).

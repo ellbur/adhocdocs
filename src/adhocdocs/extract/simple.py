@@ -76,3 +76,35 @@ def extract_csv(name: str | None, data: bytes) -> Extraction:
         b.segment(rs, b.length, "row")
     b.segment(start, b.length, "sheet", name=sheet)
     return Extraction(kind="spreadsheet", layers=[b.layer("native", primary=True)])
+
+
+def extract_xlsx(data: bytes) -> Extraction:
+    """Each sheet a ``sheet`` segment; rows are lines and cells are separated
+    by tabs, each cell with a ``cell`` segment and its A1 ``ref``. The text
+    holds the values Excel last calculated, not formulas."""
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    b = TextBuilder()
+    for n, ws in enumerate(wb.worksheets):
+        if n:
+            b.raw("\f")          # one sheet per page, so page= selects a sheet
+        start = b.length
+        for r, row in enumerate(ws.iter_rows(values_only=True)):
+            if r:
+                b.add("\n")
+            rs = b.length
+            for c, value in enumerate(row):
+                if c:
+                    b.add("\t")
+                text = "" if value is None else str(value)
+                cs, ce = b.add(text.replace("\t", " ").replace("\n", " "))
+                if ce > cs:
+                    b.segment(cs, ce, "cell", ref=f"{col_name(c)}{r + 1}")
+            b.segment(rs, b.length, "row")
+        b.segment(start, b.length, "sheet", name=ws.title)
+    props = wb.properties
+    meta = {k: v for k, v in {"title": props.title, "author": props.creator,
+                              "date": props.created.isoformat() if props.created else None,
+                              "sheets": len(wb.worksheets)}.items() if v}
+    wb.close()
+    return Extraction(kind="spreadsheet", layers=[b.layer("native", primary=True)], metadata=meta)

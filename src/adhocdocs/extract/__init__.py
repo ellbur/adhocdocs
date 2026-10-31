@@ -100,14 +100,35 @@ def text_presentation(text: str, segments: list) -> str:
     return "\n".join(out)
 
 
+def _zip_kind(data: bytes) -> str:
+    """Office files are zips: tell them apart by what's inside."""
+    import io
+    import zipfile
+    try:
+        names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
+    except zipfile.BadZipFile:
+        return "other"
+    if "word/document.xml" in names:
+        return "docx"
+    if "xl/workbook.xml" in names:
+        return "xlsx"
+    return "zip"
+
+
 def kind_for(name: str | None, data: bytes) -> str:
     n = (name or "").lower()
     if data.startswith(b"%PDF") or n.endswith(".pdf"):
         return "pdf"
     if n.endswith(".eml"):
         return "email"
-    if n.endswith(".docx") or (data.startswith(b"PK") and b"word/" in data[:2000]):
+    if n.endswith(".docx"):
         return "docx"
+    if n.endswith((".xlsx", ".xlsm")):
+        return "xlsx"
+    if data.startswith(b"PK\x03\x04"):
+        return _zip_kind(data)
+    if n.endswith((".mbox", ".mbx")) or (data.startswith(b"From ") and b"\nFrom: " in data[:4000]):
+        return "mbox"
     if n.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".bmp")):
         return "image"
     if n.endswith(".csv"):
@@ -142,6 +163,15 @@ def extract(name: str | None, data: bytes) -> Extraction:
     if kind == "docx":
         from .docx import extract_docx
         return extract_docx(data)
+    if kind == "xlsx":
+        from .simple import extract_xlsx
+        return extract_xlsx(data)
+    if kind == "zip":
+        from .archive import extract_zip
+        return extract_zip(data)
+    if kind == "mbox":
+        from .archive import extract_mbox
+        return extract_mbox(data)
     if kind == "csv":
         from .simple import extract_csv
         return extract_csv(name, data)
