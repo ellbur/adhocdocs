@@ -1,4 +1,5 @@
-"""Analysis over the matter: email threads, near-duplicates, and redlines.
+"""Analysis over the matter: email threads, near-duplicates, redlines, and
+a cast of characters.
 
 Threads come from Message-ID, In-Reply-To and References (copies of one
 message from several custodians are one node; a missing parent still links
@@ -271,3 +272,84 @@ def redline_html(m: Matter, a: str, b: str) -> str:
              " del{background:#fdd;color:#900}</style>")
     return f'{style}<h2>Redline</h2><p><a href="loc:doc:{a}">A</a> → <a href="loc:doc:{b}">B</a> · ' \
            f'{len([o for o in sm.get_opcodes() if o[0] != "equal"])} changes</p><div class="redline">{"".join(out)}</div>'
+
+
+# -- people ---------------------------------------------------------------------------------------
+
+def _name_key(name: str) -> str | None:
+    """Folded "first last" for a display name, or None if it isn't a usable
+    personal name (one word, or an address)."""
+    if not name or "@" in name:
+        return None
+    if "," in name:                                    # "Müller, Zoë" -> "Zoë Müller"
+        last, _, first = name.partition(",")
+        name = f"{first} {last}"
+    words = [w for w in textnorm.words(name)]
+    return " ".join(words) if len(words) >= 2 else None
+
+
+def people(m: Matter, mentions=False) -> list[dict]:
+    """A cast of characters from email headers. Each address is a person;
+    addresses whose display names fold to the same first and last name are
+    merged. With ``mentions``, also the number of documents whose text names
+    the person (by their most common display name)."""
+    rows = _ready(m, "fields").rows()
+    meta = {}
+    for d in m.state.live_documents():
+        r = rows.get(d)
+        if r and r.get("kind") == "email":
+            meta[d] = m.objects.get_object(m.state.metadata[d])
+    u = _Union()
+    names = defaultdict(lambda: defaultdict(int))     # address -> display name -> count
+    stats = defaultdict(lambda: {"sent": 0, "received": 0, "dates": []})
+    for d, md in meta.items():
+        for field in ("from", "to", "cc", "bcc"):
+            addrs = md.get(field, [])
+            shown = md.get(f"{field}_names", addrs)
+            for addr, name in zip(addrs, shown):
+                u.find(addr)
+                if name and name != addr:
+                    names[addr][name] += 1
+                st = stats[addr]
+                st["sent" if field == "from" else "received"] += 1
+                if md.get("date"):
+                    st["dates"].append(md["date"])
+    by_name = {}
+    for addr, ns in names.items():
+        for n in ns:
+            key = _name_key(n)
+            if key:
+                if key in by_name:
+                    u.union(addr, by_name[key])
+                else:
+                    by_name[key] = addr
+    groups = defaultdict(list)
+    for addr in stats:
+        groups[u.find(addr)].append(addr)
+    out = []
+    for addrs in groups.values():
+        variants = defaultdict(int)
+        for a in addrs:
+            for n, c in names[a].items():
+                variants[n] += c
+        dates = sorted(x for a in addrs for x in stats[a]["dates"])
+        person = {
+            "name": max(variants, key=variants.get) if variants else addrs[0],
+            "names": sorted(variants, key=lambda n: -variants[n]),
+            "addresses": sorted(addrs),
+            "domains": sorted({a.rsplit("@", 1)[-1] for a in addrs}),
+            "sent": sum(stats[a]["sent"] for a in addrs),
+            "received": sum(stats[a]["received"] for a in addrs),
+            "first": dates[0] if dates else None, "last": dates[-1] if dates else None,
+        }
+        out.append(person)
+    if mentions:
+        from .search import Options, Searcher
+        s = Searcher(m, Options())
+        for p in out:
+            if variants := [n for n in p["names"] if _name_key(n)]:
+                q = " OR ".join(f'"{n}"' for n in variants)
+                _, items = s.keyword(q)
+                p["mentioned_in"] = len(items)
+    out.sort(key=lambda p: -(p["sent"] + p["received"]))
+    return out
