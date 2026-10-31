@@ -7,7 +7,7 @@ was never received. An unlabeled pallet sat in Bellwether's quarantine bay Q-3
 and was handed back to the carrier on 2026-03-04. All people, companies,
 addresses and domains (.example) are fictional.
 
-Run:  uv run --project /home/owen/adhocdocs python corpus/tools/build_synthetic.py
+Run:  uv run --project /home/owen/adhocdocs python tools/corpus/build_synthetic.py
 """
 
 from __future__ import annotations

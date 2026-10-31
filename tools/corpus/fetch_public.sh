@@ -3,7 +3,7 @@
 # Files are kept byte-for-byte as served. Fetched 2026-10-30; sources may change over time,
 # so a re-fetch can produce different bytes than the committed copies.
 set -e
-cd "$(dirname "$0")/../public"
+cd "$(dirname "$0")/../../corpus/public"
 UA="Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/128.0"
 get() { curl -sSfL -A "$UA" --max-time 120 -o "$1" "$2"; echo "$1"; }
 

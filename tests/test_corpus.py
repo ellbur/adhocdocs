@@ -33,7 +33,7 @@ needs_ocr = pytest.mark.skipif(not have_ocr(), reason="tesseract with English da
 def matter(tmp_path_factory):
     m = Matter.create(tmp_path_factory.mktemp("corpus") / "matter")
     for d in sorted(CORPUS.iterdir()):
-        if d.is_dir() and d.name != "tools":
+        if d.is_dir():
             ingest_paths(m, [d], d.name, f"{d.name}-2026")
     return Matter(m.root)
 

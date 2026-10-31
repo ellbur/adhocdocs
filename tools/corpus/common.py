@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pymupdf
 
-CORPUS = Path(__file__).resolve().parent.parent
+CORPUS = Path(__file__).resolve().parents[2] / "corpus"
 FONT_DIR = Path(os.environ.get("ADHOC_FONT_DIR", "/usr/share/fonts/liberation"))
 
 FONTS = {
