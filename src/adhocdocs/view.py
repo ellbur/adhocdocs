@@ -168,7 +168,7 @@ def viewer_binary() -> str:
     found = shutil.which("adhoc-viewer")
     if found:
         return found
-    raise NotRunning("adhoc-viewer not found: build it with `cargo build --release` in viewer/, or set ADHOC_VIEWER_BIN")
+    raise NotRunning("adhoc-viewer not found: build it with `uv run adhoc setup`, or set ADHOC_VIEWER_BIN")
 
 
 def launch(m: Matter, user: str, wait=False):

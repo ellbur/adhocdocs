@@ -56,10 +56,19 @@ def adhoc(argv=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("init", help="create an empty matter")
     s.add_argument("path")
-    s = sub.add_parser("ingest", help="add files or directories to the matter")
-    s.add_argument("paths", nargs="+")
+    s = sub.add_parser("setup", help="check prerequisites, then build the viewer and the session image")
+    s.add_argument("--check", action="store_true", help="only check the prerequisites")
+    s.add_argument("--no-viewer", action="store_true", help="don't build the viewer")
+    s.add_argument("--no-image", action="store_true", help="don't build the session image")
+    s.add_argument("--no-cache", action="store_true", help="rebuild the image from scratch (e.g. for a newer Claude Code)")
+    s = sub.add_parser("ingest", help="add files or directories to the matter",
+                       description="Add files or directories to the matter: give paths and --collection, "
+                                   "or --manifest for several collections at once.")
+    s.add_argument("paths", nargs="*")
     s.add_argument("--custodian", help="custodian ID, e.g. smith-j (part of document identity)")
-    s.add_argument("--collection", required=True, help="collection name, e.g. smith-laptop-2026-03")
+    s.add_argument("--collection", help="collection name, e.g. smith-laptop-2026-03")
+    s.add_argument("--manifest", help="a TOML file of [[collection]] tables (name, custodian, paths), "
+                                      "e.g. corpus/manifest.toml; see adhocdocs.ingest.load_manifest")
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
@@ -95,6 +104,14 @@ def adhoc(argv=None):
         m = Matter.create(a.path)
         out({"matter": str(m.root)})
         return
+    if a.cmd == "setup":
+        from . import setup
+        try:
+            out(setup.setup(a.check, not a.no_viewer, not a.no_image, a.no_cache))
+        except setup.SetupError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
+        return
     if a.cmd in ("open", "image", "status"):
         from . import container
         try:
@@ -108,15 +125,23 @@ def adhoc(argv=None):
             print(json.dumps({"error": str(e)}), file=sys.stderr)
             sys.exit(1)
         return
+    if a.cmd == "ingest":
+        if a.manifest and (a.paths or a.collection or a.custodian):
+            p.error("ingest: give --manifest alone, or paths with --collection")
+        if not a.manifest and not (a.paths and a.collection):
+            p.error("ingest: needs paths and --collection, or --manifest")
     m = Matter.find(a.matter)
     if a.cmd == "ingest":
-        from .ingest import ingest_paths
+        from .ingest import ingest_manifest, ingest_paths
 
         def report(doc, name, ext):
             out({"doc": doc, "name": name, "kind": ext.kind,
                  "layers": [{"view": l.view, "chars": len(l.text)} for l in ext.layers],
                  "children": len(ext.children)})
-        ingest_paths(m, a.paths, a.custodian, a.collection, report)
+        if a.manifest:
+            ingest_manifest(m, a.manifest, report)
+        else:
+            ingest_paths(m, a.paths, a.custodian, a.collection, report)
     elif a.cmd == "withdraw":
         doc = locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"]
         out(m.logs["store"].append(op="withdraw", doc=doc, reason=a.reason))

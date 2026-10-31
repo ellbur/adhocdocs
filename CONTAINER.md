@@ -154,7 +154,7 @@ Signing in has to be done by a person, so it hasn't been tested yet.
 
 **Not built yet:**
 - macOS and Windows: Unix sockets don't cross `podman machine`'s file sharing, so there the proxy, viewer and annotation API would need another way into the VM.
-- Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc image build --no-cache` gets the latest.
+- Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc setup --no-cache` (or `adhoc image build --no-cache`) gets the latest.
 
 **Audit log:** the host records each session in `<matter>/audit/`, which is
 never mounted ([`audit.py`](src/adhocdocs/audit.py); `adhoc audit sessions |
