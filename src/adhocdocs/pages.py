@@ -296,7 +296,12 @@ def image_html(page: Page, r: Resolved, crops, images: str) -> str:
             page.images[src] = c.png
         href = _loc(r, r.parts[0].start, r.parts[-1].end) if r.quoted else _sel_loc(r)
         out.append(f'<a href="loc:{href}"><img src="{src}" alt="{html.escape(c.alt)}" title="page {c.page}"></a>')
+    if any(c.rendered for c in crops):
+        out.append(f'<figcaption class="adhoc-mark">{RENDERED_NOTE}</figcaption>')
     return f'<figure class="adhoc-quote adhoc-image" data-ref="{r.id}">{"".join(out)}</figure>'
+
+
+RENDERED_NOTE = "Set from the document's text by adhocdocs, not its original layout."
 
 
 def table_html(r: Resolved) -> str:
@@ -462,7 +467,9 @@ def provenance(page: Page) -> list[dict]:
         else:
             row.update(locators=[{"doc": r.doc, "select": r.select}], rendered=" ".join(c.alt for c in shown.get("crops", [])))
         if shown.get("crops"):
-            row["images"] = [{"page": c.page, "rect": c.rect, "sha256": sha256(c.png), "words": c.alt} for c in shown["crops"]]
+            row["images"] = [{"page": c.page, "rect": c.rect, "sha256": sha256(c.png), "words": c.alt,
+                              "of": "the text set as pages by adhocdocs" if c.rendered else "the document's pages"}
+                             for c in shown["crops"]]
         row["citation"] = re.sub("<[^>]+>", "", page.cite(r, d.opts.get("signal")))
         rows.append(row)
     return rows

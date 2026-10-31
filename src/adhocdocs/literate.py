@@ -18,7 +18,9 @@ Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``, and
               properties, HTML tags (emails, web pages), or PDF fonts
               (approximate). The words are checked as for text.
 ``as=image``  (block only) a picture of the page: the lines a text quotation
-              is on, or a region reference (the default for regions)
+              is on, or a region reference (the default for regions).
+              Documents without pages (emails, Word files) are pictured as
+              their text set as pages, captioned as such
 ``as=table``  (block only) spreadsheet cells as a table (the default for a
               cells reference in a block)
 
@@ -414,6 +416,10 @@ def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
         return want, f"as={want} is for block quotations (::q)"
     if r.kind == "region" and want != "image":
         return want, "a page region can only be quoted as an image"
+    if r.kind == "region":
+        from .quoting import paginated
+        if not paginated(m, r.doc):
+            return want, "a page region needs a document with pages of its own (PDF or scan); quote its text as an image instead"
     if want == "table" and r.kind != "cells":
         return want, "as=table needs a cells reference (sheet=…&cells=…)"
     if want == "rich" and r.kind != "text":
@@ -422,8 +428,9 @@ def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
         return want, "spreadsheet cells can't be quoted as an image; use as=table"
     if want == "image" and r.kind == "text":
         from .produce import geometry
-        if not geometry(m, r.layer.id):
-            return want, "as=image needs a paginated document (PDF or scan) with word positions; try as=rich"
+        from .quoting import paginated
+        if paginated(m, r.doc) and not geometry(m, r.layer.id):
+            return want, "as=image needs word positions, and this layer has none; try as=rich"
     return want, None
 
 
