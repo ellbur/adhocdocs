@@ -1,0 +1,4 @@
+Galvanic Corrosion
+When two dissimilar metals touch in seawater, the less noble one gives itself up. That’s galvanic corrosion, and it’s why your aluminum bracket looks like oatmeal.
+Isolating washers, careful material choices and sacrificial anodes all help. So does not mixing hardware from the junk drawer.
+Rule of thumb: the fastener should be the more noble metal. A small anode and a big cathode is a recipe for trouble.
