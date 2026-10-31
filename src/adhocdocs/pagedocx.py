@@ -6,7 +6,7 @@ import io
 import re
 
 import docx
-from docx.shared import Inches
+from docx.shared import Inches, Pt
 
 from . import literate
 from .pages import Page, cells_text, layout_of, markdown, prepare
@@ -57,6 +57,11 @@ class Writer:
                 para.add_run().add_break()
             width = pymupdf.Pixmap(c.png).width / DPI
             para.add_run().add_picture(io.BytesIO(c.png), width=Inches(min(6.0, width)))
+        if any(c.rendered for c in crops):
+            from .pages import RENDERED_NOTE
+            para.add_run().add_break()
+            note = para.add_run(RENDERED_NOTE)
+            note.italic, note.font.size = True, Pt(8)
 
     def table(self, r):
         width = max(len(row) for row in r.cells)

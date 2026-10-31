@@ -128,15 +128,43 @@ def test_cells(m, tmp_path):
 
 def test_what_each_kind_allows(m, tmp_path):
     memo, mail = doc_of(m, "memo"), doc_of(m, "mail")
-    refs = [text_ref(m, "mail", "Bill of lading", "mail"),
+    refs = [{"id": "mailregion", "doc": mail, "select": {"page": 1, "xywh": [0.1, 0.1, 0.5, 0.5]}},
             {"id": "region", "doc": memo, "select": {"page": 1, "xywh": [0.1, 0.1, 0.5, 0.5]}},
             {"id": "bad", "doc": memo, "select": {"page": 1, "xywh": [0.8, 0.1, 0.5, 0.5]}},
             text_ref(m, "memo", "MEMORANDUM", "memo")]
     p = tmp_path / "bad.md"
-    p.write_text("::q{#mail as=image}\n\n:q{#memo as=image}\n\n:q{#region as=text}\n\n::q{#bad}\n\n::q{#memo as=table}\n\n"
+    p.write_text("::q{#mailregion}\n\n:q{#memo as=image}\n\n:q{#region as=text}\n\n::q{#bad}\n\n::q{#memo as=table}\n\n"
                  + literate.format_refs(refs))
     errors = {r["id"]: r.get("error", "") for r in pages.Page(m, p).check() if "id" in r}
-    assert "paginated" in errors["mail"] and "block" in errors["memo"]
+    assert "pages of its own" in errors["mailregion"] and "block" in errors["memo"]
     assert "image" in errors["region"] and "xywh" in errors["bad"]
     with pytest.raises(pages.PageError):
         pages.export(pages.Page(m, p), "html", tmp_path / "bad.html")
+
+
+def test_pictures_of_documents_without_pages(m, tmp_path):
+    """Emails and Word files are pictured as their text set as pages, with
+    their formatting, and say so."""
+    refs = [text_ref(m, "mail", "Bill of lading", "mail", 12), text_ref(m, "letter", "BELLWETHER MARINE SYSTEMS", "letter", 20)]
+    p = tmp_path / "rendered.md"
+    p.write_text("::q{#mail as=image highlight=yes}\n\n::q{#letter as=image}\n\n" + literate.format_refs(refs))
+    page = pages.Page(m, p)
+    html_doc, results = pages.render(page)
+    assert all(r.get("status") == "exact" for r in results if "id" in r)
+    assert html_doc.count("<img ") == 2 and html_doc.count(pages.RENDERED_NOTE) == 2
+    for d in literate.directives(page.prose):
+        [crop] = page.shown(d, page.resolved(d.id))["crops"]
+        assert crop.rendered and crop.png.startswith(b"\x89PNG")
+        assert crop.alt.split()[0] in ("Bill", "BELLWETHER")          # the quoted words were found on the rendered page
+    from adhocdocs.quoting import render_pages
+    r = page.resolved("letter")
+    pdf, geo = render_pages(m, r.doc, r.layer)
+    words = r.text.split()
+    assert len(geo) >= 0.95 * len(words)                             # nearly every word found again
+    out = tmp_path / "rendered.docx"
+    pages.export(page, "docx", out)
+    body = "\n".join(par.text for par in docx.Document(str(out)).paragraphs)
+    assert body.count(pages.RENDERED_NOTE) == 2
+    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text())["quotations"]
+    assert {i["of"] for q in prov for i in q["images"]} == {"the text set as pages by adhocdocs"}
+

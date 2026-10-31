@@ -801,7 +801,7 @@ def page(argv=None):
     s = sub.add_parser("export")
     s.add_argument("file")
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
-    s.add_argument("--out", required=True)
+    s.add_argument("-o", "--out", required=True)
     s.add_argument("--allow-reanchored", action="store_true")
     s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>...")
     s.add_argument("file")

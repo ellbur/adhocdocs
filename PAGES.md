@@ -60,7 +60,11 @@ through to its source.
     `highlight=yes` marking the quoted words), or a **region reference**
     (`page=…&xywh=…`, an Alt-drag in the viewer). The words behind it are
     still checked; export records each picture's page, rectangle, words and
-    hash. Pictures need pages: PDFs and scans, not emails or Word files.
+    hash. Documents without pages of their own (emails, Word files, web
+    pages) are pictured as their text set as pages, with its formatting.
+    The quoted words are found on those pages by reading them back, and
+    the picture is captioned as adhocdocs's rendering, not the original's
+    layout (in provenance too). Regions need real pages.
   - **spreadsheet cells** (`sheet=…&cells=…`, a grid selection): a table in
     a block quotation, the cells joined by semicolons inline. The cells'
     text is the quote fingerprint, so a changed cell breaks the reference.
@@ -101,7 +105,8 @@ through to its source.
   it in the page instead).
 - Formatting for OCR text, transcript views and tracked-change views other
   than the one shown, and paragraph-level formatting (headings, lists,
-  alignment). Pictures of documents without pages (emails, Word files).
+  alignment). Pictures of a Word file or email in its own layout (that
+  needs Word, or the sender's mail program).
 - A tool that suggests `join`s for scanned text.
 
 ## Decided
