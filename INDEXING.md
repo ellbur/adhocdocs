@@ -47,6 +47,10 @@ docstrings.*
   normalized subject. Threads are assembled from it at query time.
 - **`neardup`**: a MinHash signature of each text's word 5-shingles, for
   near-duplicate and version detection.
+- **`entities`**: detected entities in each text (people, organizations,
+  defined terms, document numbers) for the entity layer's suggestions
+  ([ENTITIES.md](ENTITIES.md)). It also writes a file per text and
+  `candidates.json`, which the viewer reads without Python.
 - **`names`**: the person-name mentions in each text, with their evidence
   and any role beside them, for the cast of characters (`analyze people`).
 - **`grep`** needs no index: a regex over the layer files, for strings an

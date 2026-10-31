@@ -12,6 +12,10 @@ exception: only a person can apply `privileged` and `redact…`, the tags a
 production acts on. Claude flags with `check-privilege` and a note giving
 the basis (`ann flag-privilege`; see [TOOLS.md](TOOLS.md)).
 
+The annotation log also holds the **entity list** (known people,
+organizations, terms… with a summary and a recap), under the same
+authorship rules, field by field: [ENTITIES.md](ENTITIES.md).
+
 ## Editing in the GUI: an exception to Principle 1
 
 Review means tagging many documents fast, often one key per document, and a
