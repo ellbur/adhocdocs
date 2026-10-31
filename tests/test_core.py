@@ -126,3 +126,17 @@ def test_resolve_exact_reanchored_broken(matter):
 
     matter.logs["store"].append(op="withdraw", doc=doc, reason="clawback")
     assert locators.resolve(Matter(matter.root), loc)["status"] == "broken"
+
+
+def test_same_sentence_and_paragraph():
+    text = ("Bellwether Marine Systems, Inc. has not paid. The pallet arrived at 2:47 p.m. and sat in Q-3.\n\n"
+            "Nobody received it. The quarantine log says so.")
+    toks = textnorm.tokenize(text)
+    words = [t for t, _, _ in toks]
+    units = Q.Units(text, textnorm.unpack_offsets(textnorm.pack_offsets(toks)))
+    assert Q.to_text(Q.parse("pallet /s sat")) == "(pallet /s sat)"
+    assert Q.spans(Q.parse("bellwether /s paid"), words, units)          # "Inc." doesn't end the sentence
+    assert Q.spans(Q.parse("pallet /s sat"), words, units)               # nor does "p.m."
+    assert not Q.spans(Q.parse("paid /s pallet"), words, units)
+    assert Q.spans(Q.parse("pallet /p paid"), words, units)
+    assert not Q.spans(Q.parse("pallet /p quarantine"), words, units)    # a blank line ends the paragraph

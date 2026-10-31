@@ -178,7 +178,10 @@ class Searcher:
             toks, offs = self._tokens(kw, layer.text)
             out = []
             allowed = self.allowed(doc, layer)
-            for i, j in Q.spans(node, toks):
+            units = None
+            if _needs_units(node):
+                units = Q.Units(self.text(layer.text), offs, self.segments(layer))
+            for i, j in Q.spans(node, toks, units):
                 s, e = offs[2 * i], offs[2 * (j - 1) + 1]
                 if allowed is None or any(a <= s and e <= b for a, b in allowed):
                     out.append((s, e, tuple(toks[i:j])))
@@ -433,6 +436,12 @@ class Searcher:
         items = [i for i in items if i["loc"] != "doc:" + doc and "via" not in i]
         header["index"] = "semantic (similar)"
         return header, items
+
+
+def _needs_units(node) -> bool:
+    if isinstance(node, Q.Near):
+        return node.unit != "w" or _needs_units(node.left) or _needs_units(node.right)
+    return isinstance(node, Q.Or) and any(_needs_units(i) for i in node.items)
 
 
 def may_match(node, text_hash, cands) -> bool:

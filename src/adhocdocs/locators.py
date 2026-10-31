@@ -74,6 +74,8 @@ def parse(s, store=None) -> dict:
     elif s.lstrip().startswith("{"):
         loc = json.loads(s)
     else:
+        if s.startswith("tr:"):          # a transcript alias: the same as doc:
+            s = "doc:" + s[3:]
         if not s.startswith("doc:"):
             raise LocatorError(f"not a locator: {s}")
         rest = s[4:]
@@ -151,6 +153,44 @@ def _find_quote(text: str, quote: dict) -> list[int]:
     return hits
 
 
+def _segments(matter, layer) -> list[dict]:
+    obj = matter.objects.get_object(layer.id)
+    return matter.objects.get_jsonl(obj.get("segments"))
+
+
+def expand_alias(matter, loc: dict, content: str) -> dict:
+    """Turn ``pl=14:3,15:7`` (transcript page:line, through ``line``
+    segments) or ``label=iv`` (a printed page label, through ``page-label``
+    segments) into the canonical char or page selector."""
+    state = matter.state
+    sel = dict(loc["select"])
+    layers = state.layers.get(content, [])
+    if loc.get("layer"):
+        layers = [l for l in layers if l.id == loc["layer"]]
+    else:
+        primary = state.primary_layer(content)
+        layers = sorted(layers, key=lambda l: l is not primary)
+    if "pl" in sel:
+        first, _, last = sel.pop("pl").partition(",")
+        last = last or first
+        for layer in layers:
+            lines = {s["label"]: s for s in _segments(matter, layer) if s["kind"] == "line"}
+            if first in lines and last in lines:
+                s, e = lines[first]["start"], lines[last]["end"]
+                if s > e:
+                    raise LocatorError(f"pl={first},{last} runs backwards")
+                return {"doc": loc["doc"], "layer": layer.id, "select": {**sel, "char": [s, e]}}
+        raise LocatorError(f"no transcript lines {first}–{last} in this document")
+    label = sel.pop("label")
+    for layer in layers:
+        text = None
+        for seg in _segments(matter, layer):
+            if seg["kind"] == "page-label" and seg.get("label") == label:
+                text = text or matter.objects.get_text(layer.text)
+                return {**{k: v for k, v in loc.items() if k != "select"}, "select": {**sel, "page": page_of(text, seg["start"])}}
+    raise LocatorError(f"no page labeled {label!r} in this document")
+
+
 def resolve(matter, loc) -> Resolution:
     """Check a locator against the store, following the steps in
     LOCATORS.md: exact, re-anchored (same text hash, or the quote found once
@@ -171,6 +211,9 @@ def resolve(matter, loc) -> Resolution:
             return Resolution(status="broken", loc=loc, error=f"document withdrawn ({reason})" if reason else "no such document")
     content = state.documents[doc]
     sel = loc.get("select") or {}
+    if "pl" in sel or "label" in sel:
+        loc = expand_alias(matter, loc, content)
+        sel = loc["select"]
     if "char" not in sel and "page" not in sel:
         return Resolution(status="re-anchored" if notes else "exact", loc=loc, notes=notes)
 

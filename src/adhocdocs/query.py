@@ -8,6 +8,7 @@
 ``-draft``, ``( … )``                       tightest, then w/ and pre/, then NOT, then AND
 ``pallet w/5 received``                     within 5 words, either order
 ``pallet pre/5 received``                   within 5 words, in this order
+``pallet /s received``, ``pallet /p received``  in the same sentence, or paragraph
 ``from:smith@acme.com`` ``to:`` ``cc:``     field filters (an address, or part of one)
 ``bcc:`` ``custodian:smith-j`` ``kind:email``
 ``name:memo``
@@ -49,6 +50,7 @@ class Near:
     right: object
     n: int
     ordered: bool
+    unit: str = "w"          # w (words), s (sentence) or p (paragraph)
 
 
 @dataclass(frozen=True)
@@ -81,7 +83,7 @@ TOKEN = re.compile(r'''
     \s*(?:
       (?P<lp>\() | (?P<rp>\)) |
       (?P<phrase>-?"[^"]*") |
-      (?P<near>(?:w|pre)/\d+)(?=\s) |
+      (?P<near>(?:w|pre)/\d+|/[sp])(?=\s) |
       (?P<word>[^\s()"]+)
     )''', re.X | re.I)
 
@@ -145,7 +147,10 @@ class Parser:
         node = self.or_()
         while self.peek()[0] == "near":
             op, n = self.take()[1].lower().split("/")
-            node = Near(node, self.or_(), int(n), op == "pre")
+            if n in ("s", "p"):
+                node = Near(node, self.or_(), 0, False, n)
+            else:
+                node = Near(node, self.or_(), int(n), op == "pre")
             for side in (node.left, node.right):
                 if not positional(side):
                     raise QueryError("proximity needs words, phrases, OR groups or other proximity on each side")
@@ -226,7 +231,8 @@ def to_text(node) -> str:
         s = f'"{s}"' if len(node.words) > 1 else s
         return s + "*" if node.prefix else s
     if isinstance(node, Near):
-        return f"({to_text(node.left)} {'pre' if node.ordered else 'w'}/{node.n} {to_text(node.right)})"
+        op = f"/{node.unit}" if node.unit != "w" else f"{'pre' if node.ordered else 'w'}/{node.n}"
+        return f"({to_text(node.left)} {op} {to_text(node.right)})"
     if isinstance(node, Field):
         return f"{node.name}:{node.value}"
     if isinstance(node, And):
@@ -240,8 +246,49 @@ def to_text(node) -> str:
 
 # -- matching within a token list ------------------------------------------------
 
-def spans(node, toks: list[str]) -> list[tuple[int, int]]:
-    """Token spans [i, j) where a Words or Near node matches."""
+ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "inc", "co", "corp", "ltd", "llc", "no", "nos", "v", "vs", "st", "jr", "sr",
+                 "u.s", "e.g", "i.e", "etc", "art", "sec", "fig", "p", "pp", "cf", "id", "al", "jan", "feb", "mar",
+                 "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "a.m", "p.m"}
+_SENTENCE_END = re.compile(r"""([.!?])["”’')\]]*\s+(?=["“‘(\[]?[A-Z0-9])""")
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n|\f")
+
+
+class Units:
+    """Which sentence and paragraph each token is in, for /s and /p.
+    Paragraphs end at blank lines, page breaks, and the ends of ``paragraph``,
+    ``list-item``, ``heading`` and ``row`` segments; sentences also end at
+    ., ! or ? before a capital, except after common abbreviations."""
+
+    def __init__(self, text: str, offsets, segments=()):
+        self.text, self.offsets, self.segments = text, offsets, segments
+        self._ids = {}
+
+    def _breaks(self, unit) -> list[int]:
+        cuts = {m.start() for m in _PARAGRAPH_BREAK.finditer(self.text)}
+        cuts |= {s["end"] for s in self.segments if s["kind"] in ("paragraph", "list-item", "heading", "row")}
+        if unit == "s":
+            for m in _SENTENCE_END.finditer(self.text):
+                word = re.search(r"([\w.]+)$", self.text[max(0, m.start() - 12):m.start()])
+                if m.group(1) == "." and word and word.group(1).lower().rstrip(".") in ABBREVIATIONS:
+                    continue
+                cuts.add(m.end(1))
+        return sorted(cuts)
+
+    def ids(self, unit) -> list[int]:
+        if unit not in self._ids:
+            cuts, out, k = self._breaks(unit), [], 0
+            for i in range(len(self.offsets) // 2):
+                start = self.offsets[2 * i]
+                while k < len(cuts) and cuts[k] <= start:
+                    k += 1
+                out.append(k)
+            self._ids[unit] = out
+        return self._ids[unit]
+
+
+def spans(node, toks: list[str], units: Units | None = None) -> list[tuple[int, int]]:
+    """Token spans [i, j) where a Words or Near node matches. ``units`` is
+    needed for /s and /p."""
     if isinstance(node, Words):
         w = node.words
         n = len(w)
@@ -255,8 +302,17 @@ def spans(node, toks: list[str]) -> list[tuple[int, int]]:
                 out.append((i, i + n))
         return out
     if isinstance(node, Near):
-        a, b = spans(node.left, toks), spans(node.right, toks)
+        a, b = spans(node.left, toks, units), spans(node.right, toks, units)
         out = []
+        if node.unit != "w":
+            if units is None:
+                raise QueryError("/s and /p need the text's sentences and paragraphs")
+            ids = units.ids(node.unit)
+            for sa in a:
+                for sb in b:
+                    if ids[sa[0]] == ids[sa[1] - 1] == ids[sb[0]] == ids[sb[1] - 1]:
+                        out.append((min(sa[0], sb[0]), max(sa[1], sb[1])))
+            return sorted(set(out))
         for sa in a:
             for sb in b:
                 if sb[0] >= sa[1] and sb[0] - sa[1] < node.n:
@@ -265,5 +321,5 @@ def spans(node, toks: list[str]) -> list[tuple[int, int]]:
                     out.append((sb[0], sa[1]))
         return sorted(set(out))
     if isinstance(node, Or):
-        return sorted({sp for i in node.items for sp in spans(i, toks)})
+        return sorted({sp for i in node.items for sp in spans(i, toks, units)})
     raise TypeError(node)

@@ -58,6 +58,12 @@ which layers a search reads.
 
 The full syntax is in `search --help`. Choices worth knowing:
 
+- `/s` and `/p` mean the same sentence and the same paragraph. Sentences
+  end at `.`, `!` or `?` before a capital, except after common abbreviations
+  (`Inc.`, `No.`, `v.`, `p.m.`…). Paragraphs end at blank lines, page breaks
+  and the ends of paragraph and row segments. Text extracted from PDFs has
+  no paragraph marks within a page beyond blank lines, so there `/p` is
+  coarser.
 - Proximity (`w/5`, `pre/5`) and precedence follow Westlaw and Lexis,
   because lawyers already know them: OR binds tightest, then proximity,
   then NOT, then AND.
@@ -113,7 +119,6 @@ at this size but will want a cache for large matters.
 
 ## Not built yet
 
-- `/s` and `/p` (same sentence, same paragraph).
 - An audit record of searches written from outside Claude's reach. Until
   then, a search saved with `--list` keeps its query, index settings and
   `as_of`, which is enough to rerun it.

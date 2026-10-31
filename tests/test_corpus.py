@@ -158,3 +158,12 @@ def test_semantic(matter):
     header, items = s.finish(*s.semantic("the receiving dock put an unlabeled pallet in quarantine"))
     assert not header["exhaustive"] and header["coverage"]["pending"] == 0
     assert any("Q3" in i["doc"].get("name", "") or "dock" in i["doc"].get("name", "") for i in items)
+
+
+def test_transcript_and_label_aliases(matter):
+    dep = next(d for d, r in open_index(matter, "fields").rows().items() if r["name"] == "deposition-kettering-2026-04-28.pdf")
+    r = locators.resolve(matter, f"tr:{dep}#pl=6:12,6:13")
+    assert r["status"] == "exact" and r["text"].startswith("the pallet in Q-3") and r["text"].endswith("against that PO.")
+    assert locators.resolve(matter, f"doc:{dep}#label=6")["loc"]["select"] == {"page": 6}
+    with pytest.raises(locators.LocatorError):
+        locators.resolve(matter, f"doc:{dep}#pl=99:1")
