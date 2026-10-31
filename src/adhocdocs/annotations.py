@@ -30,6 +30,17 @@ from .matter import Matter, new_event_id, now
 
 CLAUDE = "claude"
 
+# Privilege calls are a lawyer's. Claude can't apply the tags that withhold
+# (``privileged``) or redact (``redact…``) in a production, even when asked;
+# it flags documents and passages for review with PRIVILEGE_CHECK instead.
+PRIVILEGE_CHECK = "check-privilege"
+PRIVILEGE_CHECK_DESCRIPTION = ("Check for possible privilege: flagged for a lawyer's review. "
+                               "Not a privilege call; the note gives the reason.")
+
+
+def is_privilege_call(tag: str) -> bool:
+    return tag == "privileged" or tag.startswith("redact")
+
 
 class Refused(Exception):
     """A write the rules don't allow."""
@@ -106,6 +117,9 @@ class Annotations:
             if ev.get("hotkey") and any(t != ev["tag"] and o.get("hotkey") == ev["hotkey"] for t, o in self.definitions.items()):
                 raise Refused(f"hotkey {ev['hotkey']!r} is already in use")
         elif op in ("tag", "untag"):
+            if op == "tag" and author == CLAUDE and is_privilege_call(ev["tag"]):
+                raise Refused(f"privilege calls are a lawyer's: Claude can't apply {ev['tag']!r}, even when asked. "
+                              "Flag it for review instead: ann flag-privilege <locator> --basis \"…\"")
             if ev["tag"] not in self.definitions:
                 near = [t for t in self.definitions if t.lower() == ev["tag"].lower() or ev["tag"].lower() in t.lower()]
                 raise Refused(f"no tag {ev['tag']!r} is defined" + (f" (did you mean {', '.join(near)}?)" if near else "")

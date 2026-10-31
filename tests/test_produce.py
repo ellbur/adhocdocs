@@ -119,3 +119,39 @@ def test_unplaceable_redaction_stops_production(m, tmp_path):
     import adhocdocs.produce as P
     with pytest.raises(P.ProductionError, match="can't place"):
         P.pages_for(Matter(m.root), letter, [{"tag": "redact", "target": {"doc": letter, "layer": "sha256:" + "0" * 64, "select": {"char": [0, 5]}}}])
+
+
+def test_privilege_calls_are_a_persons_and_claude_flags(m, tmp_path):
+    from adhocdocs.annotations import CLAUDE, PRIVILEGE_CHECK, Refused, write
+    user = "user:owen"
+    write(m, user, {"op": "define-tag", "tag": "privileged"})
+    memo = named(m, "memo-collection-bellwether-2026-03-16.pdf")[0]
+    email = named(m, "2026-03-06_INV-2026-0347_reminder.eml")[0]
+    letter = named(m, "demand-letter-2026-03-25.pdf")[0]
+    # Claude can't make the call, even when asked
+    with pytest.raises(Refused, match="privilege calls are a lawyer's"):
+        write(m, CLAUDE, {"op": "tag", "tag": "privileged", "target": {"doc": memo}, "requested_by": "user"})
+    # ...so it flags, with a basis (what ann flag-privilege writes)
+    write(m, CLAUDE, {"op": "define-tag", "tag": PRIVILEGE_CHECK})
+    for doc, basis in ((memo, "Collection strategy prepared for counsel"), (email, "Mentions outside counsel")):
+        write(m, CLAUDE, {"op": "tag", "tag": PRIVILEGE_CHECK, "target": {"doc": doc}})
+        write(m, CLAUDE, {"op": "note", "target": {"doc": doc}, "body": basis})
+    write(m, user, {"op": "tag", "tag": "privileged", "target": {"doc": memo}})      # the lawyer withholds one
+    # a privileged tag Claude applied before it was refused is a flag, not a decision
+    m.annotation_log.append(op="tag", tag="privileged", target={"doc": letter}, author=CLAUDE)
+
+    p = make_list(m, tmp_path, ["memo-collection-bellwether-2026-03-16.pdf", "demand-letter-2026-03-25.pdf",
+                                "2026-03-06_INV-2026-0347_reminder.eml"])
+    r = produce.produce(Matter(m.root), p, "vol001", "HFS")
+    out = Path(r["path"])
+    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text().splitlines()[1:])}
+    assert recs[memo].get("withheld") == "privileged"
+    assert "withheld" not in recs[letter] and "withheld" not in recs[email]
+    assert [row["bates"] for row in map(json.loads, (out / "privlog.jsonl").read_text().splitlines())] == [recs[memo]["begin"]]
+
+    check = {row["bates"].split("–")[0]: row for row in map(json.loads, (out / "privilege-check.jsonl").read_text().splitlines())}
+    assert check[recs[memo]["begin"]]["status"] == "withheld (privileged)"
+    assert check[recs[memo]["begin"]]["basis"] == "Collection strategy prepared for counsel"
+    assert check[recs[email]["begin"]]["status"] == "open: produced"
+    assert "only a person's tag acts on" in check[recs[letter]["begin"]]["basis"]
+    assert r["privilege_check"]["open"] == 2 and "review privilege-check.csv" in r["warning"]

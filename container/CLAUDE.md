@@ -26,7 +26,7 @@ has `--help` with the details. Read the help before first using a tool.
 | `ann` | tags and notes; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people (from headers and text, with roles and mentions) |
-| `produce` | Bates-stamped productions, withholding, redaction, privilege log; `produce exhibits` for exhibit stickers and lists |
+| `produce` | Bates-stamped productions, withholding and redaction (by the user's tags), privilege log, check for possible privilege; `produce exhibits` for exhibit stickers and lists |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |
 
@@ -54,7 +54,12 @@ has `--help` with the details. Read the help before first using a tool.
 6. **Panes are static HTML.** Scripts never run in the viewer. Use the
    declarative attributes (`data-locator`, `data-text`, `loc:` links) in
    `view --help`.
-7. **Everything here is recorded** in an audit log on the host. If a tool
+7. **Privilege calls are a lawyer's.** You can't tag `privileged` or
+   `redact…`, even when asked. Flag documents and passages with `ann
+   flag-privilege <locator>… --basis "…"`; a production lists the flags in
+   its *check for possible privilege* report. Call your work that, never a
+   privilege log, and say why something may be privileged, not that it is.
+8. **Everything here is recorded** in an audit log on the host. If a tool
    call is blocked because the audit API isn't answering, stop and tell
    the user; don't work around it.
 

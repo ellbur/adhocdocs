@@ -100,11 +100,21 @@ joined to the person they stand for.
   and Opticon load files ([`produce.py`](src/adhocdocs/produce.py)).
   Families stay together. `bates:` locators resolve through production
   records, and pages cite produced documents by Bates number.
-- **Withholding, redaction and privilege logs.** *Built*, from tags. A
-  document tagged `privileged` becomes a slip sheet. Ranges or regions
-  tagged `redact…` are redacted, with the text beneath removed. Both go in
-  the production's privilege log, with the basis taken from tag
-  descriptions and the user's notes.
+- **Withholding, redaction and privilege logs.** *Built*, from the user's
+  tags. A document a person tagged `privileged` becomes a slip sheet.
+  Ranges or regions a person tagged `redact…` are redacted, with the text
+  beneath removed. Both go in the production's privilege log, with the
+  basis taken from tag descriptions and the user's notes.
+- **Check for possible privilege.** *Built.* Privilege calls are a
+  lawyer's, so Claude can't apply `privileged` or `redact…` tags, even when
+  asked. It flags documents and passages instead (`ann flag-privilege
+  --basis`, the tag `check-privilege` plus a note giving the reason). Each
+  production writes `privilege-check.csv`: every flag on a produced
+  document, its basis, and whether a person withheld, redacted or produced
+  it. Production goes ahead with flags open and says how many; it is the
+  lawyer's list to review before serving, not a privilege log. A
+  withhold or redact tag Claude applied earlier is reported as a flag and
+  never acted on.
 - **Exports of pages** with the provenance of every quotation. *Built*:
   [PAGES.md](PAGES.md).
 - **Exhibits.** *Built* (`produce exhibits`): documents stamped as numbered

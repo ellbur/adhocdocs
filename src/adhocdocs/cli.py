@@ -602,6 +602,17 @@ the annotation API, which records them as Claude's. Claude can't edit or
 remove the user's tags, notes or tag definitions.
 
 Pass --requested-by user when the user asked for the change.
+
+Privilege calls are a lawyer's: Claude can't apply ``privileged`` or
+``redact…`` (the tags production withholds and redacts by), even when asked.
+Flag a document or passage for review instead, with the reason:
+
+  ann flag-privilege <locator>... --basis "Legal advice from GC to the CFO"
+
+This tags it ``check-privilege`` and notes the basis on it. Production lists
+flags in its "check for possible privilege" report (privilege-check.csv).
+Call it that, never a privilege log: the lawyer decides.
+
 Tags must be defined (define-tag) before use. A tag in an exclusive --group
 replaces the group's other tag on the same target.
 """
@@ -661,6 +672,12 @@ def ann(argv=None):
         s.add_argument("--family", action="store_true", help="every document in each one's family")
         s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
         s.add_argument("--requested-by")
+    s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
+    s.add_argument("locators", nargs="+")
+    s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
+    s.add_argument("--family", action="store_true", help="every document in each one's family")
+    s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
+    s.add_argument("--requested-by")
     s = sub.add_parser("note", help="add a note (body on stdin, or --body)")
     s.add_argument("target", nargs="?")
     s.add_argument("--reply-to")
@@ -745,6 +762,16 @@ def ann(argv=None):
         from . import literate
         for r in literate.check(m, body):
             out(r)
+    elif a.cmd == "flag-privilege":
+        req = {"requested_by": a.requested_by}
+        events = []
+        if annotations.PRIVILEGE_CHECK not in annotations.Annotations.load(m).definitions:
+            events += annapi.request(m, {**req, "op": "define-tag", "tag": annotations.PRIVILEGE_CHECK,
+                                         "description": annotations.PRIVILEGE_CHECK_DESCRIPTION})["events"]
+        for t in _targets(m, a.locators, a.family, a.dupes):
+            events += annapi.request(m, {**req, "op": "tag", "tag": annotations.PRIVILEGE_CHECK, "target": t})["events"]
+            events += annapi.request(m, {**req, "op": "note", "target": t, "body": a.basis})["events"]
+        out({"events": events})
     else:
         req = {"op": a.cmd, "requested_by": getattr(a, "requested_by", None)}
         if a.cmd in ("tag", "untag"):
