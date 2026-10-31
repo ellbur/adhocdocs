@@ -1,41 +1,215 @@
 # adhocdocs
 
-Tools for working with evidentiary documents from Claude Code.
+Tools for working with evidentiary documents from Claude Code. You load a
+matter's documents once, then work with Claude in a sealed session that
+sees only that matter. Claude searches, reads, tags, drafts and builds
+productions. A document viewer on your desktop shows you what Claude points
+at, and sends back what you select.
 
-## Trying it
+It runs on Linux for now.
+
+## Setting up
+
+You need:
+
+- [uv](https://docs.astral.sh/uv/), which brings its own Python
+- rootless [Podman](https://podman.io/), for the session container
+- Rust via [rustup](https://rustup.rs/) (the viewer pins its version), clang, and WebKitGTK 4.1, to build the viewer
+- `tesseract` with English data, to OCR scanned pages when you add documents
+
+Then, from a clone of this repository:
 
 ```sh
-uv sync
-uv run adhoc init /tmp/m && export ADHOC_MATTER=/tmp/m
+uv sync                                   # the tools
+(cd viewer && cargo build --release)      # the viewer
+uv run adhoc image build                  # the session image: a few minutes, once
+```
+
+The image is built on your machine. It installs Claude Code with
+Anthropic's official installer. To pick up a newer Claude Code, rebuild it
+with `uv run adhoc image build --no-cache`.
+
+The commands below run from the clone. A matter can live anywhere.
+
+## Making a matter
+
+A matter is a directory that holds one case's documents, your tags and
+notes, and Claude's work. Create it and add documents on your own machine,
+outside any session:
+
+```sh
+uv run adhoc init ~/matters/smith-v-jones
+uv run adhoc --matter ~/matters/smith-v-jones ingest \
+    --custodian smith-j --collection smith-laptop-2026-03 /path/to/smith-files
+```
+
+Adding documents works for these formats:
+- PDF, including scans, which are OCRed
+- images
+- email (`.eml`, `.mbox`), with attachments
+- `.docx` and `.xlsx`
+- CSV, HTML and text
+- zip archives
+
+Originals are kept exactly as given, and identical files are stored once.
+Add more documents at any time; the session catches its indexes up when it
+starts. Each `ingest` names the collection the files came from. The
+custodian is optional.
+
+To try it out, make a matter from the sample documents in `corpus/`. It
+holds a fictional supply dispute plus some real public-domain court and
+government documents:
+
+```sh
+uv run adhoc init ~/matters/demo
 for d in corpus/*/; do
-  n=$(basename "$d"); [ "$n" = tools ] && continue
-  uv run adhoc ingest --custodian "$n" --collection "$n" "$d"
+  n=$(basename "$d")
+  uv run adhoc --matter ~/matters/demo ingest --custodian "$n" --collection "$n" "$d"
 done
+```
+
+## Starting a session
+
+```sh
+uv run adhoc open ~/matters/demo
+```
+
+This starts three things:
+
+- **Claude Code**, in a container that holds only this matter. Its
+  documents are read-only; its workspace (`<matter>/workspace`) is
+  writable. It has no internet access: only Claude's own sign-in and API
+  hosts are reachable.
+- **The viewer**, a window on your desktop showing this matter's documents.
+- **An audit log** on your machine, outside the container, recording every
+  prompt, every command Claude runs, and every network connection.
+
+When you leave Claude Code (`/exit` or Ctrl+D), the container and viewer
+close. To pick up an earlier conversation, run `uv run adhoc open
+~/matters/demo -- claude --resume`.
+
+Indexes build in the background when a session starts. Keyword search is
+ready within seconds. Semantic search over a new matter takes a few
+minutes; until then, Claude's searches say what they couldn't yet cover.
+
+### Signing in
+
+The first time you open a matter, Claude Code asks you to sign in:
+
+1. Choose to sign in with your Claude account (or an Anthropic Console
+   account for API billing).
+2. Claude Code shows a link. It can't open a browser from inside the
+   container, so open the link yourself, on this computer.
+3. Sign in, copy the code the page gives you, and paste it back into the
+   terminal.
+
+Each matter keeps its own sign-in in `<matter>/claude-home`, so you sign in
+once per matter, not every session. adhocdocs never reads or copies your
+credentials. If you use an API key instead, set `ANTHROPIC_API_KEY` before
+`adhoc open`; it is passed through and not saved.
+
+**Before you sign in, consider which account to use.** Free, Pro and Max
+accounts are under Anthropic's Consumer Terms, which allow chats to be used
+for training unless you opt out in your privacy settings. Team, Enterprise
+and API accounts are under the Commercial Terms, which don't. Which to use
+for client documents is your (or your firm's) decision.
+
+### Working with Claude
+
+Talk to Claude in plain language. It knows the tools (a guide is built into
+the container) and will open things in the viewer as it goes. Some prompts
+to try on the sample matter:
+
+**Finding things**
+
+- *"What is this dispute about? Give me a short summary with the key documents."*
+- *"Find every document that mentions invoice INV-2026-0347 and list them in date order."*
+- *"Who signed for the delivery, and what evidence is there that the goods arrived?"*
+- *"Search for 'never received' within ten words of 'pallet'. Did you search everything?"*
+- *"What did Kettering say in the deposition about the proof of delivery? Show me the page and line."*
+
+**Organizing**
+
+- *"Make tags hot, privileged and responsive, with hotkeys h, p and r."*
+- *"Tag every document about the proof of delivery as hot."*
+- *"Reconstruct the email threads about the past-due invoice. Are any messages missing?"*
+- *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
+- *"Who are the people in this case, and how do they relate to each other?"*
+
+**Writing**
+
+- *"Write a chronology of the dispute as a page, quoting the documents for each entry."*
+- *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
+
+Claude's quotations in pages are references to the documents, not retyped
+text. So an export can show where every quote came from, and a quote that
+no longer matches its document is flagged.
+
+**Producing**
+
+- *"Produce everything tagged responsive with Bates prefix SMITH, withhold what's tagged privileged, and give me the privilege log."*
+
+**With the viewer.** Select text, a region of a page, or cells in a
+spreadsheet, then ask about it:
+
+- *"What is this?"* or *"Find other documents that say the same thing as what I selected."*
+- *"Show me the list of hot documents."* Then step through them in the viewer with `]` and `[`.
+- *"Make me a review form for these documents with a responsive/not responsive choice."* Then tick your answers in the viewer and ask Claude to record them.
+
+In the viewer, press `?` for its keys. `t` opens the tag palette, tag
+hotkeys tag the current selection or document, and `N` adds a note. Your
+tags and notes are recorded as yours, and Claude's as Claude's. Claude
+can't change yours.
+
+Everything Claude writes goes to `<matter>/workspace`: pages, lists,
+exports and productions. Open them from there on your own machine.
+
+### Afterwards
+
+```sh
+uv run adhoc --matter ~/matters/demo audit sessions   # what each session did
+uv run adhoc --matter ~/matters/demo audit show --kind prompt --kind tool
+uv run adhoc --matter ~/matters/demo audit verify     # the log is intact
+```
+
+## Using the tools directly
+
+Every tool also works outside a session, on the host, with `--matter` or
+`ADHOC_MATTER` naming the matter. Each prints JSON and has `--help`. These
+commands exercise them on the sample matter:
+
+```sh
+export ADHOC_MATTER=~/matters/demo
+uv run idx update                       # build the indexes (semantic search takes a few minutes)
+uv run idx status
 uv run search '"never received" w/10 pallet'
 uv run search 'who signed for the delivery' --index hybrid
 uv run search grep 'PN 44-B/7'
-uv run idx status
+uv run search '"never received"' --list nr.list.jsonl
+uv run list cat nr.list.jsonl
+uv run text "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
+uv run analyze threads
+uv run analyze groups                   # near-duplicates and versions
+uv run analyze people
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
-uv run page export memo.md --format docx -o memo.docx   # memo.md quotes with :q{#nr}
-(cd viewer && cargo build --release)   # the viewer: needs Rust 1.89, clang, WebKitGTK 4.1
-uv run adhoc view && uv run view list nr.list.jsonl   # after search '"never received"' --list nr.list.jsonl
-uv run adhoc ann-api &   # the annotation API; then e.g. ann define-tag hot, ann tag hot <doc>
-uv run pytest            # ADHOC_TEST_SEMANTIC=1 to include semantic search
+uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
+uv run adhoc view && uv run view list nr.list.jsonl        # the viewer, outside a session
+uv run adhoc ann-api &                                     # the annotation API, then:
+uv run ann define-tag hot && uv run ann tag hot <doc>
+uv run adhoc status                                        # inside a session: mounts, network, services
 ```
 
-`corpus/` is a 51-file test matter: a fictional supply dispute plus real
-public-domain federal documents. [tools/corpus/SOURCES.md](tools/corpus/SOURCES.md) lists
-every file's source and the facts the tests check. OCR needs `tesseract`
-with English data, either system-wide or in
-`~/.cache/adhocdocs/models/tessdata/`. Every command has `--help` and prints
-JSON.
-
-To work on a matter the intended way, inside the container (needs rootless
-Podman; the first run builds the image):
+Tests:
 
 ```sh
-uv run adhoc open /tmp/m        # claude, with only this matter's documents
+uv run pytest                           # ADHOC_TEST_SEMANTIC=1 to include semantic search
+(cd viewer && cargo test)
 ```
+
+[tools/corpus/SOURCES.md](tools/corpus/SOURCES.md) lists every sample
+file's source and the facts the tests check. If `tesseract` has no English
+data system-wide, put `eng.traineddata` in
+`~/.cache/adhocdocs/models/tessdata/`.
 
 ## Design
 
@@ -48,7 +222,7 @@ uv run adhoc open /tmp/m        # claude, with only this matter's documents
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer
-- [CONTAINER.md](CONTAINER.md): the container, sign-in, and Anthropic's terms
+- [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
 
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.
