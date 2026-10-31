@@ -1,9 +1,10 @@
 # Literate Pages
 
-*Status: built, except the viewer's `page` pane:
-[`literate.py`](src/adhocdocs/literate.py) has the format (directives,
-`refs` block, alterations), [`pages.py`](src/adhocdocs/pages.py) rendering,
-citations and export, and `page --help` the usage.*
+*Status: built: [`literate.py`](src/adhocdocs/literate.py) has the format
+(directives, `refs` block, alterations, `as=`),
+[`pages.py`](src/adhocdocs/pages.py) rendering, citations and export,
+[`quoting.py`](src/adhocdocs/quoting.py) formatting and pictures of pages,
+and `page --help` the usage. `page view` shows a page in the viewer.*
 
 A **page** is written work product (a memo, a chronology, a draft brief
 section) that quotes and cites documents. Following Principle 5, quotations
@@ -47,6 +48,26 @@ through to its source.
   The renderer's own copy sits inside, so the HTML also reads in a browser.
   Marks are separate spans. Quotations link (`loc:`) to their source.
   Re-anchored and low-confidence-OCR quotations get classes for markers.
+- **Quoting more than words.** A quotation can also be shown as:
+  - **formatted text** (`as=rich`): bold, italic, underline and so on.
+    The formatting comes from the original at render time: Word run
+    properties, HTML tags (emails, web pages), or PDF fonts (approximate,
+    since fonts don't record intent). The words are still the layer's, and
+    are checked as for plain text; only how they look is added. Export
+    records where the formatting came from.
+  - **a picture of the page** (`as=image`, block only): the full lines a
+    text quotation is on, cropped from MuPDF's rendering (with
+    `highlight=yes` marking the quoted words), or a **region reference**
+    (`page=…&xywh=…`, an Alt-drag in the viewer). The words behind it are
+    still checked; export records each picture's page, rectangle, words and
+    hash. Pictures need pages: PDFs and scans, not emails or Word files.
+  - **spreadsheet cells** (`sheet=…&cells=…`, a grid selection): a table in
+    a block quotation, the cells joined by semicolons inline. The cells'
+    text is the quote fingerprint, so a changed cell breaks the reference.
+
+  Formatting and pictures aren't stored with the text layers. They're
+  recomputed from the original, so documents ingested before this existed
+  get them too.
 - **Citations are generated** from the locator, the document's **cite-as**
   name and the page's `cite-style`. Cite-as names live in
   `workspace/cite-as.jsonl`, outside document identity. Without one, a name
@@ -70,8 +91,11 @@ through to its source.
 
 ## Not built yet
 
-- The viewer's `page` pane, and clicking a low-confidence marker to see the
-  page image.
+- Clicking a low-confidence marker to see the page image (`as=image` shows
+  it in the page instead).
+- Formatting for OCR text, transcript views and tracked-change views other
+  than the one shown, and paragraph-level formatting (headings, lists,
+  alignment). Pictures of documents without pages (emails, Word files).
 - A tool that suggests `join`s for scanned text.
 
 ## Decided

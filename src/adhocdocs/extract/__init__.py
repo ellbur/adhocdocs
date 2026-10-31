@@ -21,6 +21,9 @@ class Layer:
     primary: bool = False
     derived_from: int | None = None   # index of the source layer in the same Extraction
     offset_map: list = field(default_factory=list)
+    # Formatting runs from the original ((start, end, {"b", "i", …})). Not
+    # stored: quoting recomputes them from the original (see adhocdocs.quoting).
+    styles: list = field(default_factory=list)
 
 
 @dataclass
@@ -52,6 +55,7 @@ class TextBuilder:
         self.length = 0
         self.segments: list[dict] = []
         self.geometry: list[dict] = []
+        self.styles: list = []
 
     def add(self, s: str) -> tuple[int, int]:
         s = clean(s)
@@ -76,7 +80,7 @@ class TextBuilder:
 
     def layer(self, view: str, presentation=None, primary=False) -> Layer:
         segs = sorted(self.segments, key=lambda s: (s["start"], -s["end"]))
-        return Layer(view, self.text, segs, self.geometry, presentation, primary)
+        return Layer(view, self.text, segs, self.geometry, presentation, primary, styles=self.styles)
 
 
 def text_presentation(text: str, segments: list) -> str:

@@ -60,7 +60,9 @@ text is now at the old offsets.
   one row per line), and its quote is that text; the viewer selects cells
   this way. A quoted page reference can't use cells yet: it needs a char
   range.
-- `xywh=` selectors parse, but nothing resolves them yet.
+- `page=3&xywh=x,y,w,h` (fractions of the page) is a region of a page; it
+  resolves to that page, and is checked to lie on it. Pages quote regions
+  as images.
 
 ## Decisions to confirm
 

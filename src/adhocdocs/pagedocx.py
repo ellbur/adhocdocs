@@ -2,13 +2,14 @@
 block quotations and footnoted citations. Quotations are written as
 literal text from the document, with the renderer's marks."""
 
+import io
 import re
 
 import docx
 from docx.shared import Inches
 
 from . import literate
-from .pages import Page, layout_of, markdown, prepare
+from .pages import Page, cells_text, layout_of, markdown, prepare
 
 TOKEN = re.compile(r"ADHOCFILL\d+X")
 
@@ -34,13 +35,36 @@ class Writer:
         self.source, self.fills = prepare(page)
         self.footnotes = []
 
-    def quote_runs(self, para, d, r, block):
-        for p in literate.pieces(r, layout=layout_of(d, r), inline=not block):
+    def quote_runs(self, para, d, r, block, styles=()):
+        for p in literate.pieces(r, layout=layout_of(d, r, self.page), inline=not block, styles=styles):
             if "mark" in p:
                 para.add_run(p["mark"])
-            else:
-                run = para.add_run(p["text"])
-                run.italic = p["em"] or None
+                continue
+            run = para.add_run(p["text"])             # python-docx turns \n into a line break
+            st = p.get("style", ())
+            run.italic = (p["em"] or "i" in st) or None
+            run.bold = "b" in st or None
+            run.underline = "u" in st or None
+            run.font.strike = "s" in st or None
+            run.font.superscript = "sup" in st or None
+            run.font.subscript = "sub" in st or None
+
+    def picture(self, para, crops):
+        from .quoting import DPI
+        import pymupdf
+        for i, c in enumerate(crops):
+            if i:
+                para.add_run().add_break()
+            width = pymupdf.Pixmap(c.png).width / DPI
+            para.add_run().add_picture(io.BytesIO(c.png), width=Inches(min(6.0, width)))
+
+    def table(self, r):
+        width = max(len(row) for row in r.cells)
+        t = self.doc.add_table(rows=len(r.cells), cols=width)
+        t.style = "Table Grid"
+        for i, row in enumerate(r.cells):
+            for j, cell in enumerate(row):
+                t.cell(i, j).text = cell
 
     def cite_runs(self, para, html_cite):
         for text, italic in _strip_tags(html_cite):
@@ -54,13 +78,24 @@ class Writer:
         if d.kind == "cite":
             self.cite_runs(para, citation)
             return
+        shown = self.page.shown(d, r)
+        if shown["error"]:
+            raise ValueError(f"reference {d.id}: {shown['error']}")
+        styles = (shown.get("styles") or ()) if shown["as"] == "rich" else ()
         if d.kind == "block":
             para.paragraph_format.left_indent = Inches(0.5)
             para.paragraph_format.right_indent = Inches(0.5)
-            self.quote_runs(para, d, r, True)
+            if shown["as"] == "image":
+                self.picture(para, shown["crops"])
+            elif shown["as"] == "table":
+                self.table(r)
+            else:
+                self.quote_runs(para, d, r, True, styles)
+        elif r.kind == "cells":
+            para.add_run("“" + cells_text(r) + "”")
         else:
             para.add_run("“")
-            self.quote_runs(para, d, r, False)
+            self.quote_runs(para, d, r, False, styles)
             para.add_run("”")
         mode = d.opts.get("cite", "inline")
         if mode == "footnote":

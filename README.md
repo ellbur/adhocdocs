@@ -147,6 +147,7 @@ to try on the sample matter:
 - *"Write a chronology of the dispute as a page, quoting the documents for each entry."*
 - *"Show me a timeline of the emails, one lane per thread."* Or: *"…of the chronology entries."*
 - *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
+- *"In the memo, show the signature line of the delivery receipt as a picture, and the aging report rows as a table."*
 
 Claude's quotations in pages are references to the documents, not retyped
 text. So an export can show where every quote came from, and a quote that
