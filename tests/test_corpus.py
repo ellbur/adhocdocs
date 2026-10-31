@@ -167,3 +167,18 @@ def test_transcript_and_label_aliases(matter):
     assert locators.resolve(matter, f"doc:{dep}#label=6")["loc"]["select"] == {"page": 6}
     with pytest.raises(locators.LocatorError):
         locators.resolve(matter, f"doc:{dep}#pl=99:1")
+
+
+@needs_ocr
+def test_reocr_into_the_workspace(tmp_path):
+    from adhocdocs.cli import layers
+    m = Matter.create(tmp_path / "m")
+    ingest_paths(m, [CORPUS / "public" / "txsd-latshaw-drilling-v-saia-motor-freight-2013.pdf"], None, "public")
+    doc = Matter(m.root).state.live_documents()[0]
+    layers(["--matter", str(m.root), "ocr", doc, "--dpi", "300"])
+    m = Matter(m.root)
+    views = {l.view: l.feed for l in m.state.layers[m.state.documents[doc]]}
+    assert views == {"native": "store", "ocr": "workspace"}
+    assert not (m.store_dir / "objects").joinpath("x").exists()          # nothing written to the store
+    found = lambda layers: search(m, '"united states district court"', layers=layers)[1]
+    assert found("native") == [] and len(found("ocr")) == 1

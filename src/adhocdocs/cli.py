@@ -129,7 +129,12 @@ def adhoc(argv=None):
 
 @run
 def layers(argv=None):
-    p = parser("layers", "List the text layers of a document (or content hash).")
+    argv = sys.argv[1:] if argv is None else argv
+    rest = argv[2:] if argv[:1] == ["--matter"] else argv
+    if rest[:1] == ["ocr"]:
+        return layers_ocr(argv[:len(argv) - len(rest)] + rest[1:])
+    p = parser("layers", "List the text layers of a document (or content hash).\n"
+                         "layers ocr <doc> [--dpi N] [--psm N]: OCR it again, as a new layer in the workspace.")
     p.add_argument("doc")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
@@ -143,6 +148,35 @@ def layers(argv=None):
              "chars": len(m.objects.get_text(l.text)), "text_path": str(m.objects.path(l.text)),
              "parts": sorted(k for k in ("segments", "geometry", "presentation") if k in obj),
              "feed": l.feed})
+
+
+def layers_ocr(argv):
+    """A new OCR layer, made in the workspace (the store is read-only). It
+    joins the workspace change feed, so indexes pick it up; search it with
+    --layers ocr or --layers all."""
+    from .extract import Extraction
+    from .extract.pdf import ocr_layer
+    from .ingest import store_layers
+    p = parser("layers ocr", layers_ocr.__doc__)
+    p.add_argument("doc")
+    p.add_argument("--dpi", type=int, default=400)
+    p.add_argument("--psm", type=int, default=3, help="tesseract page segmentation mode (3 auto, 4 one column, 6 one block)")
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    doc = locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"]
+    state = m.state
+    content = state.documents[doc]
+    meta = m.objects.get_object(state.metadata[doc])
+    if meta.get("kind") not in ("pdf", "image"):
+        raise ValueError(f"only PDFs and images can be OCRed (this is {meta.get('kind')})")
+    layer = ocr_layer(m.objects.get_bytes(content), meta["kind"], meta.get("name"), a.dpi, a.psm)
+    before = {l.id for l in state.layers.get(content, [])}
+    store_layers(m, content, Extraction(kind=meta["kind"], layers=[layer]), log="workspace", objects=m.workspace_objects)
+    new = [l for l in m.state.layers.get(content, []) if l.id not in before]
+    confs = [g["conf"] for g in layer.geometry if "conf" in g]
+    out({"doc": doc, "layer": new[0].id if new else "(identical to an existing layer)", "view": "ocr",
+         "chars": len(layer.text), "mean_confidence": round(sum(confs) / len(confs), 3) if confs else None,
+         "settings": {"dpi": a.dpi, "psm": a.psm}})
 
 
 @run

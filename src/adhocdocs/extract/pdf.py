@@ -63,9 +63,9 @@ def tessdata() -> list[str]:
     return ["--tessdata-dir", str(d)] if (d / "eng.traineddata").exists() else []
 
 
-def ocr_png(png: bytes) -> list:
+def ocr_png(png: bytes, psm: int = 3) -> list:
     """Words from tesseract, grouped into lines: (word, box, conf)."""
-    r = subprocess.run(["tesseract", "stdin", "stdout", *tessdata(), "-l", "eng", "--psm", "3", "-c", "tessedit_create_tsv=1"],
+    r = subprocess.run(["tesseract", "stdin", "stdout", *tessdata(), "-l", "eng", "--psm", str(psm), "-c", "tessedit_create_tsv=1"],
                        input=png, capture_output=True)
     if r.returncode:
         raise RuntimeError("tesseract failed: " + r.stderr.decode().strip().splitlines()[0])
@@ -90,8 +90,27 @@ def ocr_png(png: bytes) -> list:
     return lines
 
 
-def ocr_page(page) -> list:
-    return ocr_png(page.get_pixmap(dpi=OCR_DPI).tobytes("png"))
+def ocr_page(page, dpi: int = OCR_DPI, psm: int = 3) -> list:
+    return ocr_png(page.get_pixmap(dpi=dpi).tobytes("png"), psm)
+
+
+def ocr_layer(data: bytes, kind: str, name: str | None, dpi: int = OCR_DPI, psm: int = 3) -> Layer:
+    """OCR every page, whatever text the file already has: for re-reading a
+    scan whose existing text, or first OCR, is poor."""
+    if kind == "image":
+        pix = pymupdf.Pixmap(data)
+        if pix.alpha or pix.n > 3:
+            pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+        doc = pymupdf.open("pdf", pymupdf.open(stream=pix.tobytes("png"), filetype="png").convert_to_pdf())
+    else:
+        doc = pymupdf.open(stream=data, filetype="pdf")
+    b = TextBuilder()
+    for i, page in enumerate(doc, 1):
+        if i > 1:
+            b.raw("\f")
+        _add_lines(b, ocr_page(page, dpi, psm), i)
+    mark_transcript(b)
+    return b.layer("ocr")
 
 
 PAGE_LABEL = re.compile(r"^\s*(?:Page\s+)?(\d{1,5})\s*$", re.I)

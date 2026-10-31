@@ -64,8 +64,14 @@ passes, a .docx with tracked changes accepted and with them shown.
 
 `.msg` and PST (their Python readers are GPL; to decide), .docx footnotes/comments/headers/footers, sanitized
 presentations of the original HTML (presentations are currently generated
-from the layer text), and a `layers` tool for making derived layers in the
-workspace (the workspace feed is ready for them).
+from the layer text), and derived views other than OCR made in the
+workspace.
+
+*Built:* `layers ocr <doc> [--dpi] [--psm]` OCRs a document again into a
+new layer in the workspace (the store is read-only in the session). It
+joins the workspace change feed, so the indexes pick it up, and searches
+reach it with `--layers ocr` or `--layers all`. Making it primary is a
+host-side decision, recorded in the provenance log.
 
 ## Decisions to confirm
 
