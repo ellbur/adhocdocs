@@ -57,6 +57,15 @@ def adhoc(argv=None):
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
+    s = sub.add_parser("open", help="start a session for a matter: the container, the viewer and the annotation API")
+    s.add_argument("path", nargs="?", help="the matter (default: --matter, $ADHOC_MATTER or the enclosing matter)")
+    s.add_argument("--no-viewer", action="store_true")
+    s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
+    s.add_argument("command", nargs="*", help="run this instead of claude (after --)")
+    s = sub.add_parser("image", help="build the session image on this machine")
+    s.add_argument("action", choices=["build"])
+    s.add_argument("--no-cache", action="store_true")
+    sub.add_parser("status", help="inside a session: the matter, mounts, network and services")
     s = sub.add_parser("view", help="start the document viewer for this matter")
     s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
     s.add_argument("--wait", action="store_true", help="run in the foreground")
@@ -69,6 +78,19 @@ def adhoc(argv=None):
     if a.cmd == "init":
         m = Matter.create(a.path)
         out({"matter": str(m.root)})
+        return
+    if a.cmd in ("open", "image", "status"):
+        from . import container
+        try:
+            if a.cmd == "status":
+                out(container.status())
+            elif a.cmd == "image":
+                container.build_image(a.no_cache)
+            else:
+                sys.exit(container.open_session(Matter.find(a.path or a.matter), a.user, not a.no_viewer, a.command))
+        except container.ContainerError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
         return
     m = Matter.find(a.matter)
     if a.cmd == "ingest":
