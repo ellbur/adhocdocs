@@ -82,3 +82,16 @@ def test_relay_over_unix_socket(tmp_path):
         relay.cancel(); upstream.close()
         return out
     assert asyncio.run(run()) == b"via-socket:hi"
+
+
+def test_session_guide_names_real_tools():
+    """The guide Claude reads in the session must only name installed commands."""
+    import re
+    import tomllib
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    scripts = set(tomllib.loads((root / "pyproject.toml").read_text())["project"]["scripts"])
+    guide = (root / "container" / "CLAUDE.md").read_text()
+    named = set(re.findall(r"^\| `(\w+)`", guide, re.M))
+    assert named and named <= scripts, named - scripts
+    assert len(guide.splitlines()) < 80          # it's loaded into every session: keep it short

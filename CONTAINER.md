@@ -78,6 +78,9 @@ on a subscription.
 - **The image is built on the user's machine** from our Containerfile, which
   installs Claude Code with Anthropic's official installer. Claude Code runs
   as published, with normal auto-update.
+- **Claude learns the tools from a managed `CLAUDE.md`**
+  ([`container/CLAUDE.md`](container/CLAUDE.md), installed at
+  `/etc/claude-code/CLAUDE.md`). It's kept short, and points at `--help`.
 
 **Mounts:** the store and annotation log read-only (originals can't change,
 and annotation writes go through the API that stamps authorship); the
