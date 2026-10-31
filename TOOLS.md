@@ -40,7 +40,8 @@ them.
   `view` drives it): [VIEWER.md](VIEWER.md).
 - **List display.** *Built*, as list panes with a linked preview (`view
   list`): [LISTS.md](LISTS.md). Search results are shown the same way.
-- **Timeline / chronology display.** *Proposed.*
+- **Timeline / chronology display.** *Built*, as a pane (`view timeline`):
+  a list's items by date, in lanes ([LISTS.md](LISTS.md#the-timeline-display)).
 
 ## Search and indexing
 

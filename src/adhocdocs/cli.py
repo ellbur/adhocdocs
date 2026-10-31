@@ -734,6 +734,11 @@ a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
 
+Timelines: `view timeline FILE` shows a list file's items by date, in
+lanes (--lanes group, custodian, from, kind). For a chronology, give items
+their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
+label), each with a locator to its evidence.
+
 Windows: the viewer can have several, each with its own panes (say, a list
 on one screen and documents on another). Pane IDs are unique across them
 (p1 in the first window, w2-p1 in the second), a command naming a pane goes
@@ -792,6 +797,15 @@ def view(argv=None):
     s.add_argument("--pane", help="replace this list pane's content")
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     where(s)
+    s = sub.add_parser("timeline", help="show a list file's items by date, in lanes, with a linked preview pane")
+    s.add_argument("file", help="a list file; items' fields date and event make it a chronology")
+    s.add_argument("--lanes", choices=["auto", "group", "custodian", "from", "kind", "none"], default="auto",
+                   help="auto: the list's groups if it has them, else custodian")
+    s.add_argument("--scale", choices=["auto", "day", "week", "month", "year"], default="auto")
+    s.add_argument("--title")
+    s.add_argument("--pane", help="replace this timeline pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
+    where(s)
     s = sub.add_parser("close")
     s.add_argument("pane")
     s = sub.add_parser("layout")
@@ -847,6 +861,13 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence,
              "title": header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "timeline":
+        from .timeline import timeline_html
+        files, sequence, summary = timeline_html(m, Path(a.file), a.lanes, a.scale, a.title)
+        header, _ = lists.read(a.file)
+        c = {"cmd": "pane", "kind": "timeline", "files": files, "sequence": sequence,
+             "title": a.title or header.get("title") or Path(a.file).stem, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
     elif a.cmd in ("close",):
         c["pane"] = a.pane
     elif a.cmd == "layout":
@@ -861,9 +882,12 @@ def view(argv=None):
         c["limit"] = a.limit
     elif a.cmd in ("clear-highlights", "clear-marks"):
         c["pane"] = a.pane
-    if a.cmd in ("open", "sequence", "pane", "list"):
+    if a.cmd in ("open", "sequence", "pane", "list", "timeline"):
         c.update(window=a.window, new_window=a.new_window)
-    out(viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False}))
+    result = viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False})
+    if a.cmd == "timeline":
+        result["timeline"] = {k: summary[k] for k in ("items", "dated", "undated", "lanes", "segments", "truncated")}
+    out(result)
 
 
 # -- analyze ---------------------------------------------------------------------------------

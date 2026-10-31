@@ -22,7 +22,7 @@ has `--help` with the details. Read the help before first using a tool.
 | `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings |
 | `text`, `layers` | the text at a locator (checked), a document's text layers |
 | `list` | list files (`*.list.jsonl`): sort, group, filter |
-| `view` | the user's viewer: open and highlight things, show lists and panes, read what they selected |
+| `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags and notes; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people |
