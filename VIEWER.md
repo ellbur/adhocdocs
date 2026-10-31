@@ -69,6 +69,7 @@ open source.
 |---|---|
 | `document` | a document in page, flow (its presentation), text or grid mode (spreadsheets), with layer and mode switches, tag chips, a side panel of range tags and notes, and family and duplicate links |
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
+| `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
 
 Panes are shown as tabs, one at a time or tiled (`split-v`, `split-h`,

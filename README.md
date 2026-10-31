@@ -145,6 +145,7 @@ to try on the sample matter:
 **Writing**
 
 - *"Write a chronology of the dispute as a page, quoting the documents for each entry."*
+- *"Show me a timeline of the emails, one lane per thread."* Or: *"…of the chronology entries."*
 - *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
 
 Claude's quotations in pages are references to the documents, not retyped

@@ -55,3 +55,24 @@ new list of the ones I've selected, sorted by recipient").
   become native without changing the list format.
 - Multi-selection in web panes, with tag hotkeys acting on every selected
   row.
+
+## The timeline display
+
+`view timeline <file>` shows the same list file by date
+([`timeline.py`](src/adhocdocs/timeline.py)), in a pane that works like the
+list display: a linked preview pane, selecting, tagging, and `j`/`k` or
+`]`/`[` stepping through the items in date order.
+
+- **Lanes:** horizontal bands, by the list's groups (so `analyze threads
+  --list` gives a lane per thread), custodian, sender or kind.
+- **Chronologies are lists too.** An item's `fields` can carry its own `date`
+  (a day, or just `YYYY-MM` or `YYYY`, drawn dashed) and `event`, the label
+  shown instead of the document's name. The locator points at the evidence
+  for the entry, so a chronology is checked like any other quotation.
+- **Breaks:** long empty stretches are cut out of the axis and shown as a
+  hatched break labeled with their length, so documents years apart don't
+  spread over a mile of screen. The automatic scale is the finest that fits
+  without cutting the axis into many pieces.
+- **No controls** here either: to zoom, filter or regroup, the user asks
+  Claude, which renders it again (`--scale`, `--lanes`, a different list).
+
