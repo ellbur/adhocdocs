@@ -82,6 +82,12 @@ organizations.
 
 ## Review and output
 
-All *proposed*: redaction and privilege logs (redactions are derived
-documents); export and production (Bates stamping, exhibits, provenance of
-every quotation).
+- **Productions.** *Built:* `produce` writes Bates-stamped PDFs (originals'
+  pages, or text rendered to pages), a production record, and Concordance
+  and Opticon load files ([`produce.py`](src/adhocdocs/produce.py)).
+  Families stay together. `bates:` locators resolve through production
+  records, and pages cite produced documents by Bates number.
+- **Exports of pages** with the provenance of every quotation. *Built*:
+  [PAGES.md](PAGES.md).
+- *Proposed:* redaction (redactions are derived documents), privilege logs,
+  exhibit stamping, and native and TIFF productions.

@@ -52,8 +52,8 @@ through to its source.
   `workspace/cite-as.jsonl`, outside document identity. Without one, a name
   is made from metadata: "Kettering Dep." from a deposition title, "Email
   from A to B" from headers, else the title or file name. The default style
-  gives "Kettering Dep. 6:12–14", "Warehouse Log at 2" and "Email from …
-  (Mar. 9, 2026)". A page can name a Python file with its own `cite(info)`.
+  gives "Kettering Dep. 6:12–14", "HFS000124–25" (for a produced document's
+  pages), "Warehouse Log at 2" and "Email from … (Mar. 9, 2026)". A page can name a Python file with its own `cite(info)`.
   Inline citations follow the quotation in parentheses; `cite=footnote`
   and `cite=none` change that.
 - **Checking** (`page check`) resolves every reference and flags Markdown
@@ -72,7 +72,6 @@ through to its source.
 
 - The viewer's `page` pane, and clicking a low-confidence marker to see the
   page image.
-- Bates citations, which wait for production records.
 - A tool that suggests `join`s for scanned text.
 
 ## Decided

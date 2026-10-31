@@ -104,6 +104,9 @@ class Page:
             sel = (self.refs.get(r.id) or {}).get("select") or {}
             if "page" in sel:
                 info["pages"] = sel["page"] if isinstance(sel["page"], list) else [sel["page"], sel["page"]]
+        from .produce import bates_for
+        pages = list(range(info["pages"][0], info["pages"][1] + 1)) if info.get("pages") else None
+        info["bates"] = bates_for(self.m, r.doc, pages)
         return info
 
     def cite(self, r: Resolved, signal=None) -> str:
@@ -159,10 +162,26 @@ def default_name(info: dict) -> str:
     return name.rsplit(".", 1)[0]
 
 
+def bates_range(a: str, b: str) -> str:
+    """HFS000124–25: the end keeps only the digits that change (at least two)."""
+    if a == b:
+        return a
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    return f"{a}–{b[min(i, len(b) - 2):]}"
+
+
 def default_cite(info: dict) -> str:
-    """Jones Dep. 14:3–15:7 · Warehouse Log at 2 · Email from Zoë Müller to
-    Dana Okafor (Mar. 9, 2026), with "(emphasis added)" when needed."""
+    """Jones Dep. 14:3–15:7 · HFS000124–25 (a produced document's pages) ·
+    Warehouse Log at 2 · Email from Zoë Müller to Dana Okafor (Mar. 9, 2026),
+    with "(emphasis added)" when needed."""
     s = default_name(info)
+    if info.get("bates") and not info.get("lines"):
+        s = bates_range(*info["bates"])
+        if info.get("emphasis_added"):
+            s += " (emphasis added)"
+        return f"<i>{html.escape(info['signal'])}</i> " + html.escape(s) if info.get("signal") else html.escape(s)
     if info.get("lines"):
         s += " " + _range(*info["lines"])
     elif info.get("pages") and (info.get("kind") in ("pdf", "image") or info.get("page_labels")):
