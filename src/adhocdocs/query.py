@@ -187,7 +187,8 @@ class Parser:
                 prefix = body.endswith("*")
                 words = tuple(textnorm.words(body.rstrip("*")))
                 if not words:
-                    raise QueryError(f"no searchable characters in {val!r}; try: search grep")
+                    raise QueryError(f"no searchable characters in {val!r}; try: search grep "
+                                     "(or search all, to list every document)")
                 node = Words(words, prefix)
             return Not(node) if neg else node
         if kind is None:

@@ -522,6 +522,93 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
 
 # -- editing references --------------------------------------------------------------------
 
+_QUOTE_MARKS = {"'": "'’‘", "’": "'’‘", "‘": "'’‘", '"': '"“”', "“": '"“”', "”": '"“”'}
+
+
+def _words_pattern(words: str) -> str:
+    """Words as typed, matched exactly except that any run of whitespace
+    matches any run (line breaks included) and straight and curly quote
+    marks match each other."""
+    tokens = words.split()
+    if not tokens:
+        raise PageError("--words is empty")
+    def tok(t):
+        return "".join(f"[{re.escape(_QUOTE_MARKS[c])}]" if c in _QUOTE_MARKS else re.escape(c) for c in t)
+    return r"\s+".join(tok(t) for t in tokens)
+
+
+def _doc_name(m: Matter, doc: str) -> str:
+    md = m.state.metadata.get(doc)
+    return (m.objects.get_object(md).get("name") if md else None) or ""
+
+
+def _docs_for(m: Matter, where: str | None) -> list[str]:
+    """--in: a doc locator or hash prefix, or part of a file name (unique)."""
+    if where is None:
+        return m.state.live_documents()
+    w = where.removeprefix("doc:")
+    if re.fullmatch(r"(sha256:)?[0-9a-f]{6,64}", w):
+        return [locators.parse("doc:" + w, m.objects)["doc"]]
+    docs = [d for d in m.state.live_documents() if where.lower() in _doc_name(m, d).lower()]
+    if not docs:
+        raise PageError(f"no document's name contains {where!r}")
+    return docs
+
+
+def _describe(m: Matter, doc: str) -> str:
+    cust = (m.objects.get_object(doc) or {}).get("custodian", "")
+    return f"{doc[7:19]} {_doc_name(m, doc)}" + (f" ({cust.removeprefix('cust:')})" if cust else "")
+
+
+def find_words(m: Matter, where: str | None, words: list[str], view: str | None = None) -> list[dict]:
+    """Locators for quoting the given words: one text range per entry of
+    ``words`` (several make an elided quotation), all in one document,
+    found in its primary layer (or the layer with ``view``). Each must occur
+    exactly once there, after the previous one."""
+    found, repeated = {}, None
+    for doc in _docs_for(m, where):
+        content = m.state.documents[doc]
+        if view:
+            layers = [l for l in m.state.layers.get(content, []) if l.view == view]
+            layer = layers[-1] if layers else None
+        else:
+            layer = m.state.primary_layer(content)
+        if layer is None:
+            continue
+        text = m.objects.get_text(layer.text)
+        spans, pos, ok = [], 0, True
+        for w in words:
+            hits = [h for h in re.finditer(_words_pattern(w), text) if h.start() >= pos]
+            if len(hits) > 1 and repeated is None:
+                ctx = "; ".join(f"…{text[max(0, h.start() - 30):h.end() + 30]}…".replace("\n", " ") for h in hits[:5])
+                repeated = f"{w!r} occurs {len(hits)} times in {_doc_name(m, doc)}; add words to make it unique: {ctx}"
+            if len(hits) != 1:
+                ok = False
+                break
+            spans.append(hits[0].span())
+            pos = hits[0].end()
+        if ok:
+            found[doc] = (layer, text, spans)
+    if not found and repeated:
+        raise PageError(repeated)
+    if not found:
+        hint = ""
+        for doc in _docs_for(m, where)[:50]:
+            layer = m.state.primary_layer(m.state.documents[doc])
+            if layer and re.search(_words_pattern(words[0]), m.objects.get_text(layer.text), re.I):
+                hint = f" ({words[0]!r} matches in {_doc_name(m, doc)} if case is ignored)"
+                break
+        scope = f"in {where}" if where else "in any one document"
+        raise PageError(f"the words weren't found {scope}, exactly once and in order{hint}. "
+                        "They must be the document's own words; whitespace and quote marks may differ.")
+    if len(found) > 1:
+        names = "; ".join(_describe(m, d) for d in list(found)[:10])
+        raise PageError(f"the words occur in {len(found)} documents; pick one with --in: {names}")
+    doc, (layer, text, spans) = next(iter(found.items()))
+    return [{"doc": doc, "layer": layer.id, "select": {"char": [a, b]}, "quote": locators.make_quote(text, a, b)}
+            for a, b in spans]
+
+
 def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
     """Add a reference made from locators (several make an elided quotation),
     with layer and quote fingerprints taken from the store."""

@@ -19,14 +19,14 @@ has `--help` with the details. Read the help before first using a tool.
 
 | Tool | For |
 |---|---|
-| `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings |
+| `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings, `search all` to list documents (with `--where`, `--tag`) |
 | `text`, `layers` | the text at a locator (checked), a document's text layers |
 | `list` | list files (`*.list.jsonl`): sort, group, filter; key sets (`condense`, `set`, `cover`, `uncover`) |
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags and notes; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people (from headers and text, with roles and mentions) |
-| `produce` | Bates-stamped productions, withholding, redaction, privilege log; `produce exhibits` for exhibit stickers and lists |
+| `produce` | Bates-stamped productions, withholding and redaction (by the user's tags), privilege log, check for possible privilege; `produce exhibits` for exhibit stickers and lists |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |
 
@@ -34,8 +34,10 @@ has `--help` with the details. Read the help before first using a tool.
 
 1. **Never type a quotation into durable work.** In pages, notes and
    exports, every quotation is a reference (`:q{#id}` plus a `refs` entry
-   made by `page ref add` from a locator), and the renderer fills in the
-   words. A quotation can also show the words' formatting (`as=rich`), a
+   made by `page ref add`), and the renderer fills in the words. To quote
+   a passage you've read, give its words: `page ref add page.md <id> --in
+   <doc> --words "…"` (repeat `--words` to elide); from a search hit or
+   selection, pass its locator. A quotation can also show the words' formatting (`as=rich`), a
    picture of the page (`as=image`), or spreadsheet cells (`as=table`). In conversation you may quote freely, but say when you're
    paraphrasing.
 2. **Searches have coverage.** Every search reports what it searched
@@ -52,7 +54,12 @@ has `--help` with the details. Read the help before first using a tool.
 6. **Panes are static HTML.** Scripts never run in the viewer. Use the
    declarative attributes (`data-locator`, `data-text`, `loc:` links) in
    `view --help`.
-7. **Everything here is recorded** in an audit log on the host. If a tool
+7. **Privilege calls are a lawyer's.** You can't tag `privileged` or
+   `redact…`, even when asked. Flag documents and passages with `ann
+   flag-privilege <locator>… --basis "…"`; a production lists the flags in
+   its *check for possible privilege* report. Call your work that, never a
+   privilege log, and say why something may be privileged, not that it is.
+8. **Everything here is recorded** in an audit log on the host. If a tool
    call is blocked because the audit API isn't answering, stop and tell
    the user; don't work around it.
 

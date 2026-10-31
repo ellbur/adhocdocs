@@ -11,12 +11,21 @@
   is the original's physical page ``page_map[n]``, or null when the pages
   were rendered from text)
 - ``<name>.dat`` and ``<name>.opt``: Concordance and Opticon load files
-- ``privlog.csv`` and ``privlog.jsonl``: withheld and redacted documents
+- ``privlog.csv`` and ``privlog.jsonl``: the privilege log, the documents a
+  person withheld or redacted
+- ``privilege-check.csv`` and ``privilege-check.jsonl``: check for possible
+  privilege, the flags on documents in the production, with the reason
+  given and whether a person withheld, redacted or produced them
 
-Documents tagged ``privileged`` (by default) are withheld: a slip sheet
-takes their Bates number. Ranges and page regions tagged with a tag starting
-``redact`` (``redact``, ``redact-privilege``…) are redacted: MuPDF removes
-the text beneath on pages, and rendered text has the range replaced.
+Documents a person tagged ``privileged`` (by default) are withheld: a slip
+sheet takes their Bates number. Ranges and page regions a person tagged with
+a tag starting ``redact`` (``redact``, ``redact-privilege``…) are redacted:
+MuPDF removes the text beneath on pages, and rendered text has the range
+replaced. Privilege calls are a lawyer's, so only a person's tags do this.
+Claude flags (``check-privilege``, from ``ann flag-privilege``); a withhold
+or redact tag that Claude applied (before Claude was refused them) is
+reported as a flag too, never acted on. Flagged documents are produced
+unless a person decided otherwise, and the result says how many are open.
 
 A production is work product in the workspace. The Bates numbers it assigns
 attach to documents from outside, and ``bates:`` locators resolve through
@@ -199,8 +208,14 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
     ann = Annotations.load(m)
     whole = {}                                  # doc -> withhold tag
     ranged = {}                                 # doc -> redaction applications
+    from .annotations import PRIVILEGE_CHECK, is_user
+    flags = []                                  # check for possible privilege
     for app in ann.applications():
         t = app["target"]
+        decides = app["tag"] in withhold or bool(redact and app["tag"].startswith(redact))
+        if app["tag"] == PRIVILEGE_CHECK or (decides and not is_user(app["by"])):
+            flags.append(app)
+            continue
         if not t.get("select") and app["tag"] in withhold:
             whole.setdefault(t["doc"], app["tag"])
         elif t.get("select") and redact and app["tag"].startswith(redact):
@@ -243,9 +258,14 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
     (out / "production.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]))
     _load_files(out, name, records, fields)
     _privilege_log(m, out, records, fields, ann)
+    check = _privilege_check(out, records, fields, ann, flags)
     ev = m.logs["workspace"].append(op="export", kind="production", name=name, begin=header["begin"], end=header["end"],
                                     record="sha256:" + hashlib.sha256((out / "production.jsonl").read_bytes()).hexdigest())
-    return {**header, "path": str(out), "event": ev["id"]}
+    result = {**header, "path": str(out), "event": ev["id"], "privilege_check": check}
+    if check["open"]:
+        result["warning"] = (f"{check['open']} document(s) flagged for possible privilege were produced; "
+                             "a lawyer should review privilege-check.csv before this is served")
+    return result
 
 
 def _fields(m):
@@ -332,6 +352,46 @@ def _privilege_log(m, out: Path, records: list, fields: dict, ann):
 
 
 # -- resolving Bates numbers -----------------------------------------------------------------------
+
+PRIVCHECK_FIELDS = ("bates", "date", "author", "recipients", "type", "description", "flagged", "flagged_by",
+                    "basis", "status")
+
+
+def _privilege_check(out: Path, records: list, fields: dict, ann, flags: list) -> dict:
+    """Check for possible privilege: one row per flag on a document in the
+    production. The basis is the notes on the flagged target. Status says
+    what a person decided: withheld, redacted, or open (produced as is).
+    This is a list for a lawyer's review, not a privilege log."""
+    import csv
+    from .annotations import PRIVILEGE_CHECK, target_key
+    by_doc = {r["doc"]: r for r in records}
+    rows = []
+    for app in flags:
+        r = by_doc.get(app["target"]["doc"])
+        if r is None:
+            continue
+        f = fields.get(r["doc"], {})
+        t = app["target"]
+        notes = [n["body"].strip() for n in ann.notes.values() if target_key(n["target"]) == target_key(t)]
+        if app["tag"] != PRIVILEGE_CHECK:
+            notes.insert(0, f"tagged {app['tag']!r} by {app['by']}, which only a person's tag acts on")
+        passage = (t.get("quote") or {}).get("exact")
+        status = (f"withheld ({r['withheld']})" if r.get("withheld")
+                  else f"redacted ({', '.join(r['redactions'])})" if r.get("redactions") else "open: produced")
+        rows.append({"bates": r["begin"] if r["begin"] == r["end"] else f"{r['begin']}–{r['end']}",
+                     "date": (f.get("date") or "")[:10], "author": "; ".join(f.get("from") or []) or (f.get("author") or ""),
+                     "recipients": "; ".join(f.get("to") or []), "type": f.get("kind") or "",
+                     "description": f.get("subject") or f.get("title") or f.get("name") or "",
+                     "flagged": f"passage: {passage}" if passage else ("passage" if t.get("select") else "document"),
+                     "flagged_by": app["by"], "basis": "; ".join(notes), "status": status})
+    with open(out / "privilege-check.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=PRIVCHECK_FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    (out / "privilege-check.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return {"flags": len(rows), "open": len({r["bates"] for r in rows if r["status"].startswith("open")}),
+            "file": "privilege-check.csv"}
+
 
 def _productions(m: Matter) -> list[dict]:
     out = []

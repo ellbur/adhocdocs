@@ -131,6 +131,23 @@ def test_grep_is_literal(matter):
     assert len(items) >= 10
 
 
+def test_search_all_lists_every_document(matter):
+    from adhocdocs.search import to_list
+    s = Searcher(matter, Options())
+    header, items = s.finish(*s.all())
+    assert header["matches"] == {"documents": len(matter.state.live_documents()), "hits": 0}
+    dates = [i["doc"].get("date") for i in items]
+    dated = [d for d in dates if d]
+    assert dated == sorted(dated) and dates[len(dated):] == [None] * (len(dates) - len(dated))   # undated last
+    kids = [i for i in items if i["doc"].get("parent")]       # attachments name their parent
+    assert kids and all(i["loc"][4:] in matter.state.children[i["doc"]["parent"][4:]] for i in kids)
+    s = Searcher(matter, Options(where="custodian:muller-z kind:email"))
+    _, items = s.finish(*s.all())
+    assert items and all(i["doc"]["custodian"] == "muller-z" and i["doc"]["kind"] == "email" for i in items)
+    head, *rows = to_list(header, items, "doc")
+    assert "score" not in head["columns"] and all(r["fields"] == {} for r in rows)
+
+
 @needs_ocr
 def test_ocr(matter):
     got = files(matter, search(matter, "TCF-889104")[1])

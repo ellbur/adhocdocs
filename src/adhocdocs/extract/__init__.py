@@ -153,6 +153,18 @@ def kind_for(name: str | None, data: bytes) -> str:
         return "other"
 
 
+# kind_for's names for formats whose extractors report another kind
+_EXTRACTED_KIND = {"xlsx": "spreadsheet", "csv": "spreadsheet", "zip": "archive", "mbox": "mailbox"}
+
+
+def unextracted_kind(name: str | None, data: bytes) -> str:
+    """The kind to record when extraction failed: what the original is (a
+    PDF stays a PDF, so it can be OCRed later), as extraction would have
+    named it."""
+    kind = kind_for(name, data)
+    return _EXTRACTED_KIND.get(kind, kind)
+
+
 def extract(name: str | None, data: bytes) -> Extraction:
     kind = kind_for(name, data)
     if kind == "pdf":

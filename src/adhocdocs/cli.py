@@ -211,7 +211,7 @@ def layers_ocr(argv):
     """A new OCR layer, made in the workspace (the store is read-only). It
     joins the workspace change feed, so indexes pick it up; search it with
     --layers ocr or --layers all."""
-    from .extract import Extraction
+    from .extract import Extraction, unextracted_kind
     from .extract.pdf import ocr_layer
     from .ingest import store_layers
     p = parser("layers ocr", layers_ocr.__doc__)
@@ -224,11 +224,16 @@ def layers_ocr(argv):
     state = m.state
     content = state.documents[doc]
     meta = m.objects.get_object(state.metadata[doc])
-    if meta.get("kind") not in ("pdf", "image"):
+    data = m.objects.get_bytes(content)
+    kind = meta.get("kind")
+    if kind not in ("pdf", "image"):
+        # matters ingested before failed extractions kept their kind recorded a PDF as "other"
+        kind = unextracted_kind(meta.get("name"), data)
+    if kind not in ("pdf", "image"):
         raise ValueError(f"only PDFs and images can be OCRed (this is {meta.get('kind')})")
-    layer = ocr_layer(m.objects.get_bytes(content), meta["kind"], meta.get("name"), a.dpi, a.psm)
+    layer = ocr_layer(data, kind, meta.get("name"), a.dpi, a.psm)
     before = {l.id for l in state.layers.get(content, [])}
-    store_layers(m, content, Extraction(kind=meta["kind"], layers=[layer]), log="workspace", objects=m.workspace_objects)
+    store_layers(m, content, Extraction(kind=kind, layers=[layer]), log="workspace", objects=m.workspace_objects)
     new = [l for l in m.state.layers.get(content, []) if l.id not in before]
     confs = [g["conf"] for g in layer.geometry if "conf" in g]
     out({"doc": doc, "layer": new[0].id if new else "(identical to an existing layer)", "view": "ocr",
@@ -345,6 +350,7 @@ SEARCH_HELP = """\
 search "<query>" [--index keyword|semantic|hybrid]   (keyword is the default)
 search grep <regex>                                  regex over layer text, no index
 search similar <locator>                             semantic neighbours
+search all [--where "custodian:smith-j"] [--tag …]   every document (no text matched), by date
 
 Output: a JSON header (query, index, as_of, exhaustive, coverage, matches),
 then one line per document (--by doc) or per hit (--by hit). Each hit has a
@@ -359,10 +365,10 @@ def search(argv=None):
     from .search import Options, Searcher, to_list
     argv = sys.argv[1:] if argv is None else argv
     mode = "query"
-    if argv and argv[0] in ("grep", "similar"):
+    if argv and argv[0] in ("grep", "similar", "all"):
         mode, argv = argv[0], argv[1:]
     p = parser("search", SEARCH_HELP)
-    p.add_argument("q", metavar="query|regex|locator")
+    p.add_argument("q", metavar="query|regex|locator", nargs="?" if mode == "all" else None)
     p.add_argument("--index", choices=["keyword", "semantic", "hybrid"], default="keyword")
     p.add_argument("--within", help="list file, or - for locators on stdin")
     p.add_argument("--where", help="field filters, in query syntax")
@@ -377,6 +383,10 @@ def search(argv=None):
     # "-tag:x" and "-word" are query syntax (and "-name" a tag filter), not options
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x not in ("-", "-i", "-h") else x for x in argv]
     a = p.parse_args(argv)
+    if mode == "all":
+        if a.q:
+            p.error("search all takes no query; filter with --where, --tag or --within")
+        a.q, a.by = "", "doc"
     a.q = a.q.strip()
     a.tag = [t.strip() for t in a.tag]
     m = Matter.find(a.matter)
@@ -400,7 +410,9 @@ def search(argv=None):
         node = Q.parse(a.q)
         out({"parsed": Q.to_text(node), "fts": sorted({l.fts() for l, _ in Q.leaves(node)})})
         return
-    if mode == "grep":
+    if mode == "all":
+        header, items = s.all()
+    elif mode == "grep":
         header, items = s.grep(a.q)
     elif mode == "similar":
         header, items = s.similar(a.q)
@@ -590,6 +602,17 @@ the annotation API, which records them as Claude's. Claude can't edit or
 remove the user's tags, notes or tag definitions.
 
 Pass --requested-by user when the user asked for the change.
+
+Privilege calls are a lawyer's: Claude can't apply ``privileged`` or
+``redact…`` (the tags production withholds and redacts by), even when asked.
+Flag a document or passage for review instead, with the reason:
+
+  ann flag-privilege <locator>... --basis "Legal advice from GC to the CFO"
+
+This tags it ``check-privilege`` and notes the basis on it. Production lists
+flags in its "check for possible privilege" report (privilege-check.csv).
+Call it that, never a privilege log: the lawyer decides.
+
 Tags must be defined (define-tag) before use. A tag in an exclusive --group
 replaces the group's other tag on the same target.
 """
@@ -649,6 +672,12 @@ def ann(argv=None):
         s.add_argument("--family", action="store_true", help="every document in each one's family")
         s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
         s.add_argument("--requested-by")
+    s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
+    s.add_argument("locators", nargs="+")
+    s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
+    s.add_argument("--family", action="store_true", help="every document in each one's family")
+    s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
+    s.add_argument("--requested-by")
     s = sub.add_parser("note", help="add a note (body on stdin, or --body)")
     s.add_argument("target", nargs="?")
     s.add_argument("--reply-to")
@@ -733,6 +762,16 @@ def ann(argv=None):
         from . import literate
         for r in literate.check(m, body):
             out(r)
+    elif a.cmd == "flag-privilege":
+        req = {"requested_by": a.requested_by}
+        events = []
+        if annotations.PRIVILEGE_CHECK not in annotations.Annotations.load(m).definitions:
+            events += annapi.request(m, {**req, "op": "define-tag", "tag": annotations.PRIVILEGE_CHECK,
+                                         "description": annotations.PRIVILEGE_CHECK_DESCRIPTION})["events"]
+        for t in _targets(m, a.locators, a.family, a.dupes):
+            events += annapi.request(m, {**req, "op": "tag", "tag": annotations.PRIVILEGE_CHECK, "target": t})["events"]
+            events += annapi.request(m, {**req, "op": "note", "target": t, "body": a.basis})["events"]
+        out({"events": events})
     else:
         req = {"op": a.cmd, "requested_by": getattr(a, "requested_by", None)}
         if a.cmd in ("tag", "untag"):
@@ -763,6 +802,8 @@ PAGE_HELP = """\
 Literate pages: Markdown whose quotations are references to document text.
 
   page ref add page.md <id> <locator>...   add a reference (several locators: an elided quotation)
+  page ref add page.md <id> --in <doc> --words "<the document's words>" [--words …]
+                                           the same, found from the words to quote
   page check page.md                       resolve every reference and lint
   page refs update page.md                 rewrite re-anchored references
   page render page.md [-o out.html]        static HTML (the viewer fills in quotations)
@@ -803,10 +844,19 @@ def page(argv=None):
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
     s.add_argument("-o", "--out", required=True)
     s.add_argument("--allow-reanchored", action="store_true")
-    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>...")
+    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>... | --in DOC --words WORDS...",
+                       description="Add a reference from locators, or from the words to quote: "
+                       "--words is matched exactly in the document's text, except that whitespace "
+                       "(line breaks too) and straight/curly quote marks may differ, and must occur "
+                       "once. Repeat --words for an elided quotation (in order).")
     s.add_argument("file")
     s.add_argument("id")
-    s.add_argument("locators", nargs="+", help="string or JSON locators (e.g. a search hit's loc)")
+    s.add_argument("locators", nargs="*", help="string or JSON locators (e.g. a search hit's loc)")
+    s.add_argument("--in", dest="in_doc", metavar="DOC",
+                   help="with --words: a doc locator or hash prefix, or part of its file name; "
+                        "default: whichever one document has the words")
+    s.add_argument("--words", action="append", help="the words to quote, as they appear in the document")
+    s.add_argument("--layer", metavar="VIEW", help="with --words: search this layer view (e.g. ocr), not the primary")
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
@@ -843,7 +893,10 @@ def page(argv=None):
         elif a.cmd == "export":
             out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
         elif a.cmd == "ref-add":
-            out(pages.add_ref(m, a.file, a.id, a.locators, a.replace))
+            if bool(a.locators) == bool(a.words):
+                raise pages.PageError("give locators, or --words (with --in), not both")
+            locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
+            out(pages.add_ref(m, a.file, a.id, locs, a.replace))
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)

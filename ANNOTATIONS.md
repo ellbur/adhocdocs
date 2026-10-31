@@ -7,7 +7,10 @@ Claude, and editing in the viewer for the user.*
 
 **Tags** and **notes** record judgments about documents ("hot",
 "privileged", "contradicts Jones's testimony"). Both the user and Claude
-make them, and each records who made it.
+make them, and each records who made it. Privilege calls are the
+exception: only a person can apply `privileged` and `redact…`, the tags a
+production acts on. Claude flags with `check-privilege` and a note giving
+the basis (`ann flag-privilege`; see [TOOLS.md](TOOLS.md)).
 
 ## Editing in the GUI: an exception to Principle 1
 

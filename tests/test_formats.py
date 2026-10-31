@@ -114,3 +114,18 @@ def test_zip_and_mbox_become_families(tmp_path):
     assert len(items) == 1
     header, _ = s.finish(*s.keyword("anything"))
     assert header["coverage"]["empty"] == 3     # the two zips and the mailbox: extracted, no text of their own
+
+
+def test_failed_extraction_keeps_the_kind(tmp_path, monkeypatch):
+    # e.g. a scan when tesseract is missing: the PDF must stay a PDF so it can be OCRed later
+    import adhocdocs.ingest as ingest
+    from adhocdocs.extract import unextracted_kind
+
+    def broken(name, data):
+        raise FileNotFoundError("tesseract")
+    monkeypatch.setattr(ingest, "extract", broken)
+    m = Matter.create(tmp_path / "m")
+    doc = ingest_bytes(m, b"%PDF-1.4 scanned", "scan.pdf", {"source": {"collection": "c", "path": "scan.pdf"}})
+    assert m.objects.get_object(m.state.metadata[doc])["kind"] == "pdf"
+    assert unextracted_kind("book.xlsx", b"PK\x03\x04") == "spreadsheet"
+    assert unextracted_kind("blob", b"\xff\xfe\x00\x81") == "other"

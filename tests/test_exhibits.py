@@ -93,7 +93,7 @@ def test_exhibits(m, tmp_path):
 def test_withheld_documents_are_not_exhibits(m, tmp_path):
     msa = doc_of(m, "msa")
     annotations.write(m, annotations.CLAUDE, {"op": "define-tag", "tag": "privileged"})
-    annotations.write(m, annotations.CLAUDE, {"op": "tag", "tag": "privileged", "target": "doc:" + msa})
+    annotations.write(m, "user:owen", {"op": "tag", "tag": "privileged", "target": "doc:" + msa})
     produce(m, list_of(tmp_path / "p.list.jsonl", [{"loc": "doc:" + msa}]), "vol-w", "WH")
     with pytest.raises(ProductionError, match="withheld"):
         exhibits.exhibits(m, list_of(tmp_path / "w.list.jsonl", [{"loc": "doc:" + msa}]), "dep-w")
