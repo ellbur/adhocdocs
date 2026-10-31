@@ -6,9 +6,14 @@ use std::collections::HashMap;
 
 const CACHE_DOCS: usize = 8;
 
+const CACHE_PAGES: usize = 64;
+
 pub struct Renderer {
     docs: HashMap<String, Document>,
     order: Vec<String>,
+    // recently rendered pages, so a prefetched page is served at once
+    pages: HashMap<(String, i32, u32), Vec<u8>>,
+    page_order: Vec<(String, i32, u32)>,
 }
 
 pub fn magic_for(kind: &str, name: &str) -> String {
@@ -22,7 +27,7 @@ pub fn magic_for(kind: &str, name: &str) -> String {
 
 impl Renderer {
     pub fn new() -> Self {
-        Renderer { docs: HashMap::new(), order: vec![] }
+        Renderer { docs: HashMap::new(), order: vec![], pages: HashMap::new(), page_order: vec![] }
     }
 
     fn doc(&mut self, content: &str, bytes: impl FnOnce() -> Option<(Vec<u8>, String)>) -> Result<&Document, String> {
@@ -53,6 +58,21 @@ impl Renderer {
 
     /// Page `n` (from 1) as PNG, `width` pixels wide.
     pub fn png(&mut self, content: &str, n: i32, width: u32, bytes: impl FnOnce() -> Option<(Vec<u8>, String)>) -> Result<Vec<u8>, String> {
+        let key = (content.to_string(), n, width);
+        if let Some(png) = self.pages.get(&key) {
+            return Ok(png.clone());
+        }
+        let png = self.render(content, n, width, bytes)?;
+        self.pages.insert(key.clone(), png.clone());
+        self.page_order.push(key);
+        if self.page_order.len() > CACHE_PAGES {
+            let old = self.page_order.remove(0);
+            self.pages.remove(&old);
+        }
+        Ok(png)
+    }
+
+    fn render(&mut self, content: &str, n: i32, width: u32, bytes: impl FnOnce() -> Option<(Vec<u8>, String)>) -> Result<Vec<u8>, String> {
         let d = self.doc(content, bytes)?;
         let page = d.load_page(n - 1).map_err(|e| e.to_string())?;
         let b = page.bounds().map_err(|e| e.to_string())?;

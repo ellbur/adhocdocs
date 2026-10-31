@@ -229,10 +229,12 @@ class DocumentPane {
       id: this.id, kind: "document", mode: this.mode, doc: this.info?.doc, layer: this.layer, view: this.currentLayer()?.view,
       visible: this.visible, sequence: this.sequence && { position: this.sequence.position + 1, length: this.sequence.items.length, from: this.sequence.from },
       selection: this.selection, marks: this.marks, highlights: this.highlights.map((h) => ({ loc: h.loc, label: h.label })),
+      open_ms: this.timings || [],
     };
   }
 
   async open(locIn, opts = {}) {
+    this.openedAt = performance.now();        // for open_ms: until the first page (or text) is showing
     const loc = parseLoc(locIn);
     const info = await docInfo(loc.doc);
     const fresh = !this.info || this.info.doc !== info.doc;
@@ -278,6 +280,7 @@ class DocumentPane {
     else if (layer) await this.renderText();
     this.renderAnnotations();
     this.updateStatus();
+    if (this.mode !== "page") this.shown();
   }
   async setMode(m) { this.mode = m; await this.render(); }
 
@@ -294,11 +297,7 @@ class DocumentPane {
       return p;
     });
     this.pageWidth = width;
-    const layer = this.currentLayer();
-    if (layer?.geometry) {
-      const [geo, t] = await Promise.all([geometry(layer.id), layerText(layer.id)]);
-      this.words = { geo, cps: t.cps };
-    }
+    // Page images first: the text layer over them can arrive later.
     this.observer?.disconnect();
     this.observer = new IntersectionObserver((entries) => {
       for (const e of entries) if (e.isIntersecting) this.fillPage(e.target);
@@ -306,14 +305,26 @@ class DocumentPane {
     for (const p of this.pageEls) this.observer.observe(p);
     wrap.addEventListener("mouseup", (ev) => this.onMouseUp(ev, document));
     this.setupRegionSelect(wrap);
+    const layer = this.currentLayer();
+    if (layer?.geometry) {
+      const [geo, t] = await Promise.all([geometry(layer.id), layerText(layer.id)]);
+      this.words = { geo, cps: t.cps };
+      for (const p of this.pageEls) if (p.dataset.filled) this.fillWords(p);
+    }
   }
+  pageWidthPx() { return Math.round((this.pageWidth * devicePixelRatio) / 200) * 200; }
   fillPage(p) {
     if (p.dataset.filled) return;
     p.dataset.filled = "1";
     const n = Number(p.dataset.page);
-    const w = Math.round((this.pageWidth * devicePixelRatio) / 200) * 200;
-    p.prepend(el("img", { src: `/page/${this.info.doc}/${n}?w=${w}`, draggable: "false", alt: "" }));
-    if (!this.words) return;
+    const img = el("img", { src: `/page/${this.info.doc}/${n}?w=${this.pageWidthPx()}`, draggable: "false", alt: "" });
+    img.addEventListener("load", () => this.shown(), { once: true });
+    p.prepend(img);
+    if (this.words) this.fillWords(p);
+  }
+  fillWords(p) {
+    if (p.querySelector(".words")) return;
+    const n = Number(p.dataset.page);
     const words = el("div", { class: "words" });
     const H = p.clientHeight, W = p.clientWidth;
     for (const g of this.words.geo) {
@@ -333,6 +344,21 @@ class DocumentPane {
       }
     });
     this.drawBoxes();
+  }
+  shown() {
+    if (this.openedAt === null) return;
+    this.timings = [...(this.timings || []).slice(-49), Math.round(performance.now() - this.openedAt)];
+    this.openedAt = null;
+    this.prefetch();
+  }
+  // Warm the viewer's page cache with the next document's first page.
+  async prefetch() {
+    const s = this.sequence;
+    if (!s || s.position + 1 >= s.items.length || !this.pageWidth) return;
+    try {
+      const info = await docInfo(parseLoc(s.items[s.position + 1]).doc);
+      if (info.pages) fetch(`/page/${info.doc}/1?w=${this.pageWidthPx()}`);
+    } catch {}
   }
   boxesFor(s, e) {
     if (!this.words) return [];
