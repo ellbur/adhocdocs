@@ -137,7 +137,8 @@ to try on the sample matter:
 **Organizing**
 
 - *"Make tags hot, privileged and responsive, with hotkeys h, p and r."*
-- *"Tag every document about the proof of delivery as hot."*
+- *"Find the few documents that establish the proof of delivery and save them as a set. Say what each one adds, and show me which others just repeat them."*
+- Later: *"Show me the proof-of-delivery set again,"* or *"Tag its key documents as hot."*
 - *"Reconstruct the email threads about the past-due invoice. Are any messages missing?"*
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
 - *"Who are the people in this case, and how do they relate to each other?"*
@@ -196,6 +197,8 @@ uv run search 'who signed for the delivery' --index hybrid
 uv run search grep 'PN 44-B/7'
 uv run search '"never received"' --list nr.list.jsonl
 uv run list cat nr.list.jsonl
+uv run search '"proof of delivery" OR POD' --list pod.list.jsonl
+uv run list condense nr.list.jsonl pod.list.jsonl --out pod.set.list.jsonl   # a key set: repeats folded away
 uv run text "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run analyze threads
 uv run analyze groups                   # near-duplicates and versions

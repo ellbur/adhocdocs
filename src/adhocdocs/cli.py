@@ -419,14 +419,33 @@ def search(argv=None):
 
 # -- list ----------------------------------------------------------------------------------
 
+LIST_HELP = """\
+Make and change list files (*.list.jsonl).
+
+Key sets: the few documents that explain something, with every other
+relevant document accounted for (format in adhocdocs.sets). Make one from
+candidate lists (search --list, ann find --list):
+
+  list condense pod-*.list.jsonl --out pod.set.list.jsonl --question "Were the goods delivered?"
+
+That folds duplicates, copies of one email, emails quoted by later ones and
+near-duplicates under a representative. Then record your judgment:
+
+  list set pod.set.list.jsonl <doc> why="the signed proof of delivery"
+  list cover pod.set.list.jsonl <doc>... --by <doc> --note "same facts as the carrier's notice"
+  list uncover pod.set.list.jsonl <doc>      (a covered document that matters on its own)
+"""
+
+
 @run
 def list_(argv=None):
-    p = parser("list", "Make and change list files (*.list.jsonl).")
+    p = parser("list", LIST_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("new", help="make a list from locators on stdin, one per line")
     s.add_argument("out")
     s.add_argument("--title", required=True)
     s.add_argument("--columns", nargs="*")
+    s.add_argument("--question", help="what the list answers (for a key set)")
     s = sub.add_parser("cat", help="print the items of lists")
     s.add_argument("files", nargs="+")
     for name in ("sort", "group"):
@@ -440,6 +459,28 @@ def list_(argv=None):
     s.add_argument("inp")
     s.add_argument("out")
     s.add_argument("--tag", action="append", required=True)
+    s = sub.add_parser("condense", help="a key set from candidate lists: redundant documents folded under "
+                                        "a representative")
+    s.add_argument("inputs", nargs="+", metavar="inp")
+    s.add_argument("--out", required=True)
+    s.add_argument("--title")
+    s.add_argument("--question", help="what the set answers")
+    s.add_argument("--near", type=float, default=0.9, help="near-duplicate similarity (0 turns it off)")
+    s.add_argument("--quoted", type=float, default=0.9,
+                   help="how much of an email a later one must contain to cover it (0 turns it off)")
+    s = sub.add_parser("set", help="set fields on an item, e.g. why=\"the signed POD\" (key= removes one)")
+    s.add_argument("file")
+    s.add_argument("doc")
+    s.add_argument("values", nargs="+", metavar="key=value")
+    s = sub.add_parser("cover", help="put documents under the item that covers them (a judgment: restates)")
+    s.add_argument("file")
+    s.add_argument("docs", nargs="+")
+    s.add_argument("--by", required=True, help="the document that covers them")
+    s.add_argument("--reason", default="restates")
+    s.add_argument("--note", help="why")
+    s = sub.add_parser("uncover", help="make covered documents representatives again")
+    s.add_argument("file")
+    s.add_argument("docs", nargs="+")
     argv = sys.argv[1:] if argv is None else argv
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x != "-h" else x for x in argv]
     matter_everywhere(sub)
@@ -448,6 +489,8 @@ def list_(argv=None):
 
     if a.cmd == "new":
         header, items = lists.new(a.title, [line.strip() for line in sys.stdin if line.strip()], a.columns)
+        if a.question:
+            header["question"] = a.question
         lists.write(a.out, header, items)
         out({"written": a.out, "items": len(items)})
         return
@@ -457,6 +500,33 @@ def list_(argv=None):
                 out(it)
         return
     m = Matter.find(a.matter)
+    if a.cmd in ("condense", "set", "cover", "uncover"):
+        from . import sets
+
+        def doc(s):
+            return locators.parse("doc:" + s.removeprefix("doc:"), m.objects)["doc"]
+        if a.cmd == "condense":
+            header, items, summary = sets.condense(m, [(f, *lists.read(f)) for f in a.inputs], a.title,
+                                                   a.question, a.near, a.quoted)
+            lists.write(a.out, header, items)
+            out({"written": a.out, **summary})
+            return
+        header, items = lists.read(a.file)
+        if a.cmd == "set":
+            values = {}
+            for kv in a.values:
+                k, eq, v = kv.partition("=")
+                if not eq or not k:
+                    raise ValueError(f"expected key=value, got {kv!r}")
+                values[k] = v or None
+            sets.set_fields(items, doc(a.doc), values)
+        elif a.cmd == "cover":
+            sets.cover(items, [doc(d) for d in a.docs], doc(a.by), a.reason, a.note)
+        else:
+            sets.uncover(items, [doc(d) for d in a.docs])
+        lists.write(a.file, header, items)
+        out({"written": a.file, "items": len(items), "covered": sum(len(it.get("children", [])) for it in items)})
+        return
     header, items = lists.read(a.inp)
     if a.cmd in ("sort", "group"):
         from .index import open_index
@@ -683,7 +753,7 @@ def page(argv=None):
     s = sub.add_parser("export")
     s.add_argument("file")
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
-    s.add_argument("-o", "--out", required=True)
+    s.add_argument("--out", required=True)
     s.add_argument("--allow-reanchored", action="store_true")
     s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>...")
     s.add_argument("file")

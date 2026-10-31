@@ -16,6 +16,43 @@ quickly.
   git. A list given a name and kept is a **saved set**. Order is the file's
   order; sorting means writing a new list.
 
+## Key sets
+
+Asked for the documents about something, a user rarely wants all of them:
+most repeat the others. A **key set** is the few documents that explain it,
+with every other candidate accounted for. It's a list file with a
+convention ([`sets.py`](src/adhocdocs/sets.py) has the details):
+
+- **Items are representatives**, each with a `why` field: what it
+  establishes.
+- **Children are the documents each covers**, with `covered` (why they add
+  nothing: `duplicate`, `same-text`, `same-message`,
+  `quoted-in-later-email`, `near-duplicate`, or the judgment `restates`)
+  and `covered_by`.
+- **The header says what the set answers** (`question`) and where its
+  candidates came from (`sources`, with each search's query and coverage).
+
+`list condense` makes one from candidate lists, folding what can be found
+mechanically. `list cover`, `list set` and `list uncover` record judgments,
+and condensing again with new candidates keeps them.
+
+- **Nothing is dropped.** A covered document stays in the file under its
+  representative, so "these 4 of 23" can be checked, and the list display
+  shows it indented under the row that covers it.
+- **Not a tag.** Tags are judgments across the whole matter (hot,
+  privileged, responsive). Whether a document is the best evidence of one
+  point is about that point, and a tag per point would swamp the
+  vocabulary.
+- **Not a page.** A page explains in prose and quotes; a key set records
+  what was considered and why the rest was set aside. A page can name the
+  set it draws on.
+- **Versions aren't folded by default.** The near-duplicate threshold (0.9)
+  is high, because a memo and its revision may differ in exactly what
+  matters.
+- **Attachments aren't folded under their email.** The attachment is
+  usually the evidence, and the email the wrapper; they are separate
+  documents, and family is already a column (`family`).
+
 ## Columns
 
 A column is either a list field (from the item's `fields`, e.g. `score`,
@@ -55,6 +92,8 @@ new list of the ones I've selected, sorted by recipient").
   become native without changing the list format.
 - Multi-selection in web panes, with tag hotkeys acting on every selected
   row.
+- Key sets as a convention on list files, not a new format, so the list
+  display, filtering and tagging work on them unchanged.
 
 ## The timeline display
 
