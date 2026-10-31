@@ -119,9 +119,10 @@ at this size but will want a cache for large matters.
 
 ## Not built yet
 
-- An audit record of searches written from outside Claude's reach. Until
-  then, a search saved with `--list` keeps its query, index settings and
-  `as_of`, which is enough to rerun it.
+- Nothing specific to search in the audit log: the log has each `search`
+  command and its whole output, but not parsed out. A search saved with
+  `--list` keeps its query, index settings and `as_of`, which is enough to
+  rerun it.
 
 ## Decided
 
