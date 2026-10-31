@@ -30,6 +30,13 @@ with English data, either system-wide or in
 `~/.cache/adhocdocs/models/tessdata/`. Every command has `--help` and prints
 JSON.
 
+To work on a matter the intended way, inside the container (needs rootless
+Podman; the first run builds the image):
+
+```sh
+uv run adhoc open /tmp/m        # claude, with only this matter's documents
+```
+
 ## Design
 
 - [DESIGN.md](DESIGN.md): principles

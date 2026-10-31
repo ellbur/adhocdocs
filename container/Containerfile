@@ -1,0 +1,36 @@
+# The session image: adhocdocs tools, OCR, the embedding model, and Claude Code
+# installed by Anthropic's official installer. Built on the user's machine by
+# `adhoc image build`; we publish this file, never an image containing Claude Code.
+FROM docker.io/library/python:3.14-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng curl ca-certificates \
+      git ripgrep jq less procps \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml uv.lock /opt/adhocdocs/src/
+COPY src /opt/adhocdocs/src/src
+# exactly the locked versions
+RUN pip install --no-cache-dir uv \
+ && cd /opt/adhocdocs/src \
+ && uv export --frozen --no-dev --no-emit-project --no-hashes -o /tmp/requirements.txt \
+ && pip install --no-cache-dir -r /tmp/requirements.txt \
+ && pip install --no-cache-dir --no-deps . \
+ && pip uninstall -y uv && rm /tmp/requirements.txt
+
+# The embedding model ships in the image: the session has no network to fetch it.
+ENV ADHOC_MODELS=/opt/adhocdocs/models
+RUN python -c "from adhocdocs.index.semantic import model_hash; print(model_hash())" \
+ && chmod -R a+rX /opt/adhocdocs/models
+
+COPY container/managed-settings.json /etc/claude-code/managed-settings.json
+COPY container/adhoc-session /usr/local/bin/adhoc-session
+
+# The launcher maps the host user to this user (--userns=keep-id:uid=1000).
+RUN useradd --create-home --uid 1000 --shell /bin/bash adhoc
+USER adhoc
+ENV HOME=/home/adhoc PATH=/home/adhoc/.local/bin:$PATH
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+WORKDIR /matter/workspace
+ENTRYPOINT ["/usr/local/bin/adhoc-session"]

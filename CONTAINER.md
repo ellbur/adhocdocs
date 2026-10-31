@@ -1,7 +1,9 @@
 # The Container
 
-*Status: decided, not built. The matter layout the tools use is in
-[`matter.py`](src/adhocdocs/matter.py).*
+*Status: built: [`container/`](container) (the image),
+[`container.py`](src/adhocdocs/container.py) (`adhoc open`, `adhoc image
+build`, `adhoc status`) and [`proxy.py`](src/adhocdocs/proxy.py). The mounts
+are listed in `container.py`'s docstring.*
 
 Claude Code can run any code, so the only way to be sure it sees one
 matter's documents and nothing else (Principle 2) is a box holding only that
@@ -57,14 +59,14 @@ on a subscription.
 ```
  user's machine
  ┌──────────────────────────────────────────────────────────────────┐
- │ adhoc (launcher)          viewer (host)        <matter>/         │
- │   │ starts, attaches        ▲ view API           store/   (ro)   │
+ │ adhoc (launcher)    proxy, viewer, ann API    <matter>/          │
+ │   │ starts, attaches        ▲ Unix sockets       store/   (ro)   │
  │   ▼                         │                    annotations/(ro)│
  │ ┌─────────────────────────────────────────┐      workspace/ (rw) │
  │ │ container: one matter, one session      │      claude-home/    │
  │ │   claude (official, unmodified)         │                      │
  │ │   adhocdocs CLIs: search, idx, view, …  │                      │
- │ │   network: Anthropic only               │                      │
+ │ │   network: none (proxy: Anthropic only) │                      │
  │ └─────────────────────────────────────────┘                      │
  └──────────────────────────────────────────────────────────────────┘
 ```
@@ -84,12 +86,31 @@ viewer and annotation API sockets (the launcher runs `adhoc view` and
 `adhoc ann-api`, and sets `ADHOC_VIEW_SOCKET` and `ADHOC_ANN_SOCKET`). There is nothing else: no host home, no other
 matter, no Podman socket.
 
-**Network:** an `--internal` Podman network with no route out, plus a small
-proxy container on both networks that passes TLS through to allowlisted
-hosts by name, never decrypting. `HTTPS_PROXY` points at it; bypassing it
-fails because there is no route. The allowlist is set by the launcher on
-the host. The exact host list must be checked against Claude Code's network
-docs when building.
+**Network: none, plus a proxy on the host.** The session runs with
+`--network none`, so the kernel gives it a loopback interface and nothing
+else: no route out, no DNS. The launcher runs an allowlist proxy on the host,
+listening on a Unix socket in the session's socket directory, and a relay in
+the session forwards `127.0.0.1:3128` to it for Claude Code's `HTTPS_PROXY`.
+The proxy passes TLS through to allowed host names without decrypting it,
+refuses everything else, and logs each decision to `<matter>/run/proxy.log`.
+Claude can kill the relay, which only cuts the session off, and can't
+change the allowlist, which lives on the host.
+
+The allowlist is the hosts Claude Code needs to sign in, call the API and
+update itself (from its
+[network docs](https://code.claude.com/docs/en/network-config#network-access-requirements)):
+`api.anthropic.com`, `claude.ai`, `claude.com`, `platform.claude.com`,
+`sso.claude.com`, `downloads.claude.ai`. Telemetry, plugin registries,
+GitHub, claude.ai connectors (`mcp-proxy.anthropic.com`) and artifacts are
+not on it. Some features go through `api.anthropic.com` itself, which the
+network can't tell apart: web search and fetch, connectors, artifacts. The
+image's managed settings turn those off. That second layer is enforced by
+Claude Code, not by the model. It doesn't touch sign-in methods.
+
+*Earlier plan:* an `--internal` Podman network with the proxy in its own
+container on both networks. `--network none` is simpler and needs no
+network kernel modules, and the proxy joins the viewer and annotation API as
+a host service on a socket.
 
 **Sign-in:** inside the container, through Anthropic's flow. Claude Code
 shows a URL, the user signs in on the host and pastes back the code. With
@@ -116,6 +137,20 @@ firms, and the files and options are the same as Docker's. On macOS and
 Windows it runs in `podman machine`. The viewer stays native and reads the
 matter store on the host directly, not through the VM.
 
+**Tested** on Linux with Podman 6.1 (rootless):
+- The store and annotations are read-only in the session; the workspace and `claude-home` are writable.
+- The session has only a loopback interface, no DNS, and no direct route out.
+- The proxy refuses `example.com` and passes `api.anthropic.com`.
+- `claude` reaches the API through the proxy and keeps its config in the matter's `claude-home`.
+- `ann` writes are recorded as `claude`, and writing the log directly fails.
+- `search`, `idx`, semantic search (offline, model in the image) and `view` all work from inside.
+
+Signing in has to be done by a person, so it hasn't been tested yet.
+
+**Not built yet:**
+- macOS and Windows: Unix sockets don't cross `podman machine`'s file sharing, so there the proxy, viewer and annotation API would need another way into the VM.
+- Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc image build --no-cache` gets the latest.
+
 **Observable, not changeable:** `adhoc status` in the container reports the
 matter, mounts, read-only state, allowlist and viewer status, and nothing
 about credentials.
@@ -126,6 +161,9 @@ about credentials.
   machine.
 - Inform about account types, recommend nothing.
 - Podman, rootless.
-- Internal network plus a host-name-filtering pass-through proxy.
+- No network in the session; a host-name-filtering pass-through proxy on the
+  host, reached over a socket.
+- Telemetry, connectors, artifacts, web search and fetch turned off by the
+  image's managed settings.
 - Check our reading with Anthropic if the project goes anywhere; until then
   build as designed, with sign-in-per-session as the fallback.

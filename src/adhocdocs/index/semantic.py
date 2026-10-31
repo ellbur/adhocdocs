@@ -41,14 +41,15 @@ def model():
 
 
 def model_hash() -> str:
-    """SHA-256 of the model's weights, cached by path, size and mtime."""
+    """SHA-256 of the model's weights. Cached by resolved path and size (the
+    Hugging Face cache stores files by content), in the models directory when
+    it is writable; the image's copy is read-only and hashed at build time."""
     model()
     files = sorted(models_dir().rglob("*.onnx"))
     if not files:
         return "unknown"
-    f = files[0]
-    st = f.stat()
-    key = f"{f}:{st.st_size}:{st.st_mtime_ns}"
+    f = files[0].resolve()
+    key = f"{f}:{f.stat().st_size}"
     cache = models_dir() / "hashes.json"
     known = json.loads(cache.read_text()) if cache.exists() else {}
     if key not in known:
@@ -57,7 +58,10 @@ def model_hash() -> str:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 h.update(chunk)
         known[key] = "sha256:" + h.hexdigest()
-        cache.write_text(json.dumps(known))
+        try:
+            cache.write_text(json.dumps(known))
+        except OSError:
+            pass
     return known[key]
 
 

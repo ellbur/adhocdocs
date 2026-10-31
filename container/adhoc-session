@@ -1,0 +1,12 @@
+#!/bin/sh
+# Session entry point. The session has no network: a relay forwards
+# localhost:3128 to the host's allowlist proxy, over a mounted Unix socket.
+# Then catch the indexes up with anything ingested while no session ran, and
+# hand the terminal to Claude Code, unmodified. `-- cmd …` runs cmd instead.
+python -m adhocdocs.proxy relay 127.0.0.1:3128 /run/adhoc/proxy.sock 2>/dev/null &
+idx update --background >/dev/null 2>&1 || true
+if [ "$1" = "--" ]; then
+  shift
+  exec "$@"
+fi
+exec claude "$@"

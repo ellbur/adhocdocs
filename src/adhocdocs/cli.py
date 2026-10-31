@@ -25,6 +25,12 @@ def parser(prog, doc):
     return p
 
 
+def matter_everywhere(sub):
+    """Accept --matter after the subcommand too, not only before it."""
+    for sp in sub.choices.values():
+        sp.add_argument("--matter", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+
+
 def run(fn):
     """Errors as one JSON line on stderr and exit status 1, not tracebacks."""
     def wrapper(argv=None):
@@ -57,6 +63,15 @@ def adhoc(argv=None):
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
+    s = sub.add_parser("open", help="start a session for a matter: the container, the viewer and the annotation API")
+    s.add_argument("path", nargs="?", help="the matter (default: --matter, $ADHOC_MATTER or the enclosing matter)")
+    s.add_argument("--no-viewer", action="store_true")
+    s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
+    s.add_argument("command", nargs="*", help="run this instead of claude (after --)")
+    s = sub.add_parser("image", help="build the session image on this machine")
+    s.add_argument("action", choices=["build"])
+    s.add_argument("--no-cache", action="store_true")
+    sub.add_parser("status", help="inside a session: the matter, mounts, network and services")
     s = sub.add_parser("view", help="start the document viewer for this matter")
     s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
     s.add_argument("--wait", action="store_true", help="run in the foreground")
@@ -64,11 +79,25 @@ def adhoc(argv=None):
     s.add_argument("--user", required=True)
     s = sub.add_parser("ann-api", help="serve the annotation API (writes stamped `claude`) on a Unix socket")
     s.add_argument("--socket", help="default: $ADHOC_ANN_SOCKET or <matter>/run/annotations.sock")
+    matter_everywhere(sub)
     a = p.parse_args(argv)
 
     if a.cmd == "init":
         m = Matter.create(a.path)
         out({"matter": str(m.root)})
+        return
+    if a.cmd in ("open", "image", "status"):
+        from . import container
+        try:
+            if a.cmd == "status":
+                out(container.status())
+            elif a.cmd == "image":
+                container.build_image(a.no_cache)
+            else:
+                sys.exit(container.open_session(Matter.find(a.path or a.matter), a.user, not a.no_viewer, a.command))
+        except container.ContainerError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
         return
     m = Matter.find(a.matter)
     if a.cmd == "ingest":
@@ -169,6 +198,7 @@ def idx(argv=None):
     s.add_argument("--updater", required=True, help="command that reads change events on stdin")
     s.add_argument("--kind", default="custom")
     s.add_argument("--settings", default="{}", help="JSON")
+    matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
 
@@ -315,6 +345,7 @@ def list_(argv=None):
     s.add_argument("--tag", action="append", required=True)
     argv = sys.argv[1:] if argv is None else argv
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x != "-h" else x for x in argv]
+    matter_everywhere(sub)
     a = p.parse_args(argv)
     a.tag = [t.strip() for t in getattr(a, "tag", None) or []]
 
@@ -435,6 +466,7 @@ def ann(argv=None):
         s.add_argument("--requested-by")
     argv = sys.argv[1:] if argv is None else argv
     argv = [" " + x if x.startswith("-") and not x.startswith("--") and x not in ("-", "-h") else x for x in argv]
+    matter_everywhere(sub)
     a = p.parse_args(argv)
     if getattr(a, "tag", None) and isinstance(a.tag, list):
         a.tag = [t.strip() for t in a.tag]
@@ -563,6 +595,7 @@ def page(argv=None):
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
+    matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
     try:
@@ -645,6 +678,7 @@ def view(argv=None):
     s.add_argument("--limit", type=int, default=50)
     s = sub.add_parser("clear-marks")
     s.add_argument("--pane")
+    matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
 
