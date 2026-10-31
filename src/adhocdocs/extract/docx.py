@@ -18,17 +18,50 @@ from .simple import col_name
 W_P, W_TBL, W_TR, W_TC = qn("w:p"), qn("w:tbl"), qn("w:tr"), qn("w:tc")
 W_T, W_DELTEXT, W_TAB, W_BR = qn("w:t"), qn("w:delText"), qn("w:tab"), qn("w:br")
 W_INS, W_DEL = qn("w:ins"), qn("w:del")
+W_R, W_RPR = qn("w:r"), qn("w:rPr")
+W_VAL = qn("w:val")
+
+
+def _run_style(r) -> frozenset:
+    """A run's direct formatting, and what its character style's name says."""
+    out = set()
+    rpr = r.find(W_RPR)
+    if rpr is None:
+        return frozenset()
+    def on(tag):
+        el = rpr.find(qn(tag))
+        return el is not None and el.get(W_VAL) not in ("0", "false", "none")
+    if on("w:b"):
+        out.add("b")
+    if on("w:i"):
+        out.add("i")
+    if on("w:u"):
+        out.add("u")
+    if on("w:strike") or on("w:dstrike"):
+        out.add("s")
+    va = rpr.find(qn("w:vertAlign"))
+    if va is not None and va.get(W_VAL) in ("superscript", "subscript"):
+        out.add("sup" if va.get(W_VAL) == "superscript" else "sub")
+    rs = rpr.find(qn("w:rStyle"))
+    name = (rs.get(W_VAL) or "").lower() if rs is not None else ""
+    if "strong" in name or "bold" in name:
+        out.add("b")
+    if "emphasis" in name or "italic" in name:
+        out.add("i")
+    return frozenset(out)
 
 
 def _runs_text(p, mode: str, b: TextBuilder):
     """Append a paragraph's text. ``mode`` is native, markup or original."""
-    def walk(el, change):
+    def walk(el, change, style=frozenset()):
         for child in el:
             tag = child.tag
             if tag == W_INS:
-                walk(child, "insertion")
+                walk(child, "insertion", style)
             elif tag == W_DEL:
-                walk(child, "deletion")
+                walk(child, "deletion", style)
+            elif tag == W_R:
+                walk(child, change, _run_style(child))
             elif tag in (W_T, W_DELTEXT, W_TAB, W_BR):
                 keep = (mode == "markup"
                         or (mode == "native" and change != "deletion")
@@ -42,10 +75,12 @@ def _runs_text(p, mode: str, b: TextBuilder):
                 start, end = b.add(s)
                 if mode == "markup" and change and end > start:
                     b.segment(start, end, change)
+                if style and end > start:
+                    b.styles.append((start, end, style))
             elif tag in (W_P, W_TBL):
                 continue
             else:
-                walk(child, change)
+                walk(child, change, style)
     walk(p, None)
 
 
