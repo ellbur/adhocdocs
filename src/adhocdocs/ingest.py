@@ -89,3 +89,63 @@ def ingest_paths(m: Matter, paths, custodian: str | None, collection: str, repor
                 identity["custodian"] = f"cust:{custodian}"
             docs.append(ingest_bytes(m, f.read_bytes(), f.name, identity, report))
     return docs
+
+
+MANIFEST_KEYS = {"name", "custodian", "paths"}
+
+
+def load_manifest(path) -> list[dict]:
+    """Read an ingest manifest: a TOML file of ``[[collection]]`` tables,
+    each ingested as ``adhoc ingest --collection NAME --custodian CUSTODIAN
+    PATHS...`` would be::
+
+        [[collection]]
+        name = "smith-laptop-2026-03"   # required
+        custodian = "smith-j"           # optional
+        paths = ["smith-files"]         # files or directories, relative to the manifest
+
+    Everything is checked, and every path must exist, before anything is
+    ingested. Returns the collections with absolute paths.
+    """
+    import tomllib
+    path = Path(path)
+    try:
+        data = tomllib.loads(path.read_text())
+    except OSError as e:
+        raise ValueError(f"cannot read manifest {path}: {e.strerror}")
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{path}: {e}")
+    extra = set(data) - {"collection"}
+    if extra:
+        raise ValueError(f"{path}: unknown top-level key(s) {', '.join(sorted(extra))}; expected [[collection]]")
+    colls = data.get("collection")
+    if not isinstance(colls, list) or not colls:
+        raise ValueError(f"{path}: no [[collection]] entries")
+    out = []
+    for i, c in enumerate(colls, 1):
+        where = f"{path}: collection {i}"
+        extra = set(c) - MANIFEST_KEYS
+        if extra:
+            raise ValueError(f"{where}: unknown key(s) {', '.join(sorted(extra))}")
+        name = c.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"{where}: needs a name")
+        custodian = c.get("custodian")
+        if custodian is not None and (not isinstance(custodian, str) or not custodian):
+            raise ValueError(f"{where} ({name}): custodian must be a non-empty string")
+        paths = c.get("paths")
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p for p in paths):
+            raise ValueError(f"{where} ({name}): paths must be a non-empty list of strings")
+        resolved = [(path.parent / p).resolve() for p in paths]
+        for p, r in zip(paths, resolved):
+            if not r.exists():
+                raise ValueError(f"{where} ({name}): {p} does not exist (looked for {r})")
+        out.append({"name": name, "custodian": custodian, "paths": resolved})
+    return out
+
+
+def ingest_manifest(m: Matter, path, report=None) -> list[str]:
+    docs = []
+    for c in load_manifest(path):
+        docs += ingest_paths(m, c["paths"], c["custodian"], c["name"], report)
+    return docs

@@ -10,24 +10,28 @@ It runs on Linux for now.
 
 ## Setting up
 
-You need:
-
-- [uv](https://docs.astral.sh/uv/), which brings its own Python
-- rootless [Podman](https://podman.io/), for the session container
-- Rust via [rustup](https://rustup.rs/) (the viewer pins its version), clang, and WebKitGTK 4.1, to build the viewer
-- `tesseract` with English data, to OCR scanned pages when you add documents
-
+You need [uv](https://docs.astral.sh/uv/), which brings its own Python.
 Then, from a clone of this repository:
 
 ```sh
-uv sync                                   # the tools
-(cd viewer && cargo build --release)      # the viewer
-uv run adhoc image build                  # the session image: a few minutes, once
+uv run adhoc setup
 ```
 
+This checks for everything else first and, if anything is missing, says
+what to install:
+
+- rootless [Podman](https://podman.io/), for the session container
+- Rust via [rustup](https://rustup.rs/) (the viewer pins its version), clang,
+  a C toolchain and WebKitGTK 4.1, to build the viewer
+- `tesseract` with English data, to OCR scanned pages when you add documents
+
+Then it builds the viewer and the session image. The first run takes a few
+minutes; later runs reuse what's built and finish quickly, so run it again
+after pulling changes. `uv run adhoc setup --check` only checks.
+
 The image is built on your machine. It installs Claude Code with
-Anthropic's official installer. To pick up a newer Claude Code, rebuild it
-with `uv run adhoc image build --no-cache`.
+Anthropic's official installer. To pick up a newer Claude Code, run
+`uv run adhoc setup --no-cache`.
 
 The commands below run from the clone. A matter can live anywhere.
 
@@ -62,11 +66,13 @@ government documents:
 
 ```sh
 uv run adhoc init ~/matters/demo
-for d in corpus/*/; do
-  n=$(basename "$d")
-  uv run adhoc --matter ~/matters/demo ingest --custodian "$n" --collection "$n" "$d"
-done
+uv run adhoc --matter ~/matters/demo ingest --manifest corpus/manifest.toml
 ```
+
+[corpus/manifest.toml](corpus/manifest.toml) lists the collections and
+their custodians. Write one like it to add several collections of your own
+in one command. Paths in it are relative to the manifest. Every entry is
+checked before anything is added.
 
 ## Starting a session
 

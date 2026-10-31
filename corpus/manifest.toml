@@ -1,0 +1,33 @@
+# The sample matter: one collection per directory. Ingest it all with
+#   uv run adhoc --matter ~/matters/demo ingest --manifest corpus/manifest.toml
+# Paths are relative to this file.
+
+[[collection]]
+name = "delacroix-m"
+custodian = "delacroix-m"
+paths = ["delacroix-m"]
+
+[[collection]]
+name = "kettering-t"
+custodian = "kettering-t"
+paths = ["kettering-t"]
+
+[[collection]]
+name = "muller-z"
+custodian = "muller-z"
+paths = ["muller-z"]
+
+[[collection]]
+name = "okafor-d"
+custodian = "okafor-d"
+paths = ["okafor-d"]
+
+[[collection]]
+name = "voss-r"
+custodian = "voss-r"
+paths = ["voss-r"]
+
+# Public court and government documents: no custodian.
+[[collection]]
+name = "public"
+paths = ["public"]
