@@ -261,7 +261,16 @@ class Searcher:
         out = {k: row.get(k) for k in ("name", "kind", "date", "custodian", "subject") if row.get(k)}
         if row.get("from"):
             out["from"] = row["from"]
+        parent = self.parents.get(doc)
+        if parent:                       # an attachment or archive member: its family is one hop away
+            out["parent"] = "doc:" + parent
         return out
+
+    @property
+    def parents(self) -> dict:
+        if not hasattr(self, "_parents"):
+            self._parents = {c: p for p, cs in self.state.children.items() for c in cs}
+        return self._parents
 
     def item(self, doc, score, hits):
         hits = [h for h in hits if h is not None]

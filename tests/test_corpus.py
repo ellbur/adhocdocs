@@ -139,6 +139,8 @@ def test_search_all_lists_every_document(matter):
     dates = [i["doc"].get("date") for i in items]
     dated = [d for d in dates if d]
     assert dated == sorted(dated) and dates[len(dated):] == [None] * (len(dates) - len(dated))   # undated last
+    kids = [i for i in items if i["doc"].get("parent")]       # attachments name their parent
+    assert kids and all(i["loc"][4:] in matter.state.children[i["doc"]["parent"][4:]] for i in kids)
     s = Searcher(matter, Options(where="custodian:muller-z kind:email"))
     _, items = s.finish(*s.all())
     assert items and all(i["doc"]["custodian"] == "muller-z" and i["doc"]["kind"] == "email" for i in items)
