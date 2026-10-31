@@ -67,7 +67,7 @@ open source.
 
 | Pane | Shows |
 |---|---|
-| `document` | a document in page, flow (its presentation) or text mode, with layer and mode switches, tag chips, a side panel of range tags and notes, and family and duplicate links |
+| `document` | a document in page, flow (its presentation), text or grid mode (spreadsheets), with layer and mode switches, tag chips, a side panel of range tags and notes, and family and duplicate links |
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
 
@@ -101,6 +101,17 @@ a socket in the directory the session shares with the host. The viewer
 connects only to `svc-*.sock` there, and sanitizes the reply like any
 pane.
 
+**Spreadsheets** open in grid mode: one sheet at a time, with sheet tabs,
+built from the layer text (sheets are pages, rows lines, cells
+tab-separated), so it shows exactly what search and locators see: the
+values Excel last calculated. Click, drag or Shift+arrows select a
+rectangle, and row and column headers select whole rows and columns. A
+selection is a `sheet=…&cells=B2:D10` locator whose quote is the cells'
+text, so tags, notes and marks work on it as on any range. Search hits
+(char ranges) light up the cells they fall in. Only the first 3,000 rows of
+a sheet are drawn, unless a locator points further down; text mode and
+search reach the rest.
+
 ## State
 
 `view state` reports the layout, panes, and per pane: the document, layer
@@ -113,7 +124,6 @@ whether the user, Claude or a pane went there.
 ## Not built yet
 
 - Multiple top-level windows (panes tile in one window).
-- The spreadsheet grid view (sheets show as text), and selecting cells.
 - `cid:` inline images in email. Remote images are not loaded; each shows a
   placeholder with its URL, since its presence may be evidence.
 - A marker on literate-page quotes that opens the page image (shading

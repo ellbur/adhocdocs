@@ -8,6 +8,11 @@ with selectors ``page=14``, ``page=14-16``, ``char=1200,1340``,
 ``page=3&xywh=0.1,0.2,0.5,0.05`` and ``sheet=Q3&cells=B2:D10``. Hash
 prefixes of 8 or more hex digits are accepted on input and expanded.
 
+``cells`` is a rectangle (``B2:D10``, or one cell ``B2``) on a sheet named by
+``sheet`` (percent-encoded in the string form; the first sheet if left
+out). Its text is the rectangle's cells, tab-separated, one row per line,
+and its quote fingerprint is that text alone, with no prefix or suffix.
+
 JSON form (durable; used in pages, notes, search results)::
 
     {"doc": ..., "layer": ..., "select": {"char": [s, e]},
@@ -17,6 +22,8 @@ Offsets are Unicode code points into the layer text, half-open.
 """
 
 import json
+import re
+from urllib.parse import quote as _pct, unquote as _unpct
 
 from .objects import HASH_PREFIX
 
@@ -44,7 +51,9 @@ def _parse_selector(s: str) -> dict:
             sel["char"] = [int(a), int(b)]
         elif key == "xywh":
             sel["xywh"] = [float(x) for x in val.split(",")]
-        elif key in ("sheet", "cells", "label", "pl"):
+        elif key == "sheet":
+            sel[key] = _unpct(val)
+        elif key in ("cells", "label", "pl"):
             sel[key] = val
         else:
             raise LocatorError(f"unknown selector: {key}")
@@ -57,6 +66,8 @@ def _format_selector(sel: dict) -> str:
         if isinstance(val, list):
             sep = "-" if key == "page" else ","
             parts.append(f"{key}={sep.join(str(v) for v in val)}")
+        elif key == "sheet":
+            parts.append(f"sheet={_pct(val, safe='')}")
         else:
             parts.append(f"{key}={val}")
     return "&".join(parts)
@@ -130,6 +141,62 @@ def page_range(text: str, page: int | list) -> tuple[int, int]:
 
 def page_of(text: str, offset: int) -> int:
     return text.count("\f", 0, offset) + 1
+
+
+def _col(letters: str) -> int:
+    n = 0
+    for ch in letters:
+        n = n * 26 + ord(ch) - 64
+    return n - 1
+
+
+def parse_cells(spec: str) -> tuple[int, int, int, int]:
+    """``B2:D10`` -> (first col, first row, last col, last row), 0-based, inclusive."""
+    ends = []
+    for ref in spec.upper().split(":"):
+        m = re.fullmatch(r"([A-Z]{1,3})([1-9][0-9]*)", ref)
+        if not m:
+            raise LocatorError(f"not a cell reference: {ref!r}")
+        ends.append((_col(m[1]), int(m[2]) - 1))
+    if len(ends) == 1:
+        ends *= 2
+    if len(ends) != 2:
+        raise LocatorError(f"not a cell range: {spec!r}")
+    (c0, r0), (c1, r1) = ends
+    return min(c0, c1), min(r0, r1), max(c0, c1), max(r0, r1)
+
+
+def sheet_range(text: str, segments: list[dict], sheet: str | None) -> tuple[int, int]:
+    """Char range of a sheet, by name (``sheet`` segments), or the first."""
+    if sheet is None:
+        return page_range(text, 1)
+    for seg in segments:
+        if seg["kind"] == "sheet" and seg.get("name") == sheet:
+            return seg["start"], seg["end"]
+    raise LocatorError(f"no sheet named {sheet!r}")
+
+
+def cells_text(text: str, start: int, end: int, rect) -> tuple[str, tuple[int, int] | None]:
+    """The rectangle's text (cells by tabs, rows by newlines) in the sheet
+    at ``text[start:end]``, and the char span from its first to its last
+    non-empty cell (None if all are empty), for highlighting."""
+    c0, r0, c1, r1 = rect
+    rows, span, pos = [], None, start
+    for r, line in enumerate(text[start:end].split("\n")):
+        if r > r1:
+            break
+        if r >= r0:
+            cells, cpos = [], pos
+            for c, cell in enumerate(line.split("\t")):
+                if c0 <= c <= c1:
+                    cells.append(cell)
+                    if cell:
+                        span = (cpos if span is None else span[0], cpos + len(cell))
+                cpos += len(cell) + 1
+            rows.append("\t".join(cells + [""] * (c1 - c0 + 1 - len(cells))))
+        pos += len(line) + 1
+    rows += ["\t" * (c1 - c0)] * (r1 - r0 + 1 - len(rows))
+    return "\n".join(rows), span
 
 
 class Resolution(dict):
@@ -214,6 +281,8 @@ def resolve(matter, loc) -> Resolution:
     if "pl" in sel or "label" in sel:
         loc = expand_alias(matter, loc, content)
         sel = loc["select"]
+    if "cells" in sel:
+        return _resolve_cells(matter, loc, content, notes)
     if "char" not in sel and "page" not in sel:
         return Resolution(status="re-anchored" if notes else "exact", loc=loc, notes=notes)
 
@@ -260,3 +329,25 @@ def resolve(matter, loc) -> Resolution:
     if quote and quote.get("exact") != selected:
         return Resolution(status="broken", loc=loc, error="quote does not match the text at these offsets")
     return Resolution(status=status, loc=loc, text=selected, notes=notes)
+
+
+def _resolve_cells(matter, loc, content, notes) -> Resolution:
+    """A rectangle of cells: in the given layer, else the primary. Its quote,
+    when it has one, must still match; ``span`` is the char range it covers."""
+    state = matter.state
+    sel = loc["select"]
+    layer = state.layer(loc["layer"]) if loc.get("layer") else state.primary_layer(content)
+    if layer is None or layer not in state.layers.get(content, []):
+        return Resolution(status="broken", loc=loc, error="no such layer in this document")
+    text = matter.objects.get_text(layer.text)
+    try:
+        s, e = sheet_range(text, _segments(matter, layer), sel.get("sheet"))
+        selected, span = cells_text(text, s, e, parse_cells(sel["cells"]))
+    except LocatorError as err:
+        return Resolution(status="broken", loc=loc, error=str(err))
+    quote = loc.get("quote")
+    if quote and quote.get("exact") != selected:
+        return Resolution(status="broken", loc=loc, error="quote does not match the cells")
+    loc = {**loc, "layer": layer.id, "quote": {"exact": selected}}
+    return Resolution(status="re-anchored" if notes else "exact", loc=loc, text=selected, notes=notes,
+                      span=list(span) if span else None)

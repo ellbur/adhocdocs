@@ -20,7 +20,17 @@ const el = (tag, attrs = {}, ...kids) => {
   return e;
 };
 const cpLen = (s) => { let n = 0; for (const _ of s) n++; return n; };
-const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End", "?"]);
+const MAX_GRID_ROWS = 3000;
+const colName = (i) => { let s = ""; for (i++; i; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + ((i - 1) % 26)) + s; return s; };
+const colIndex = (letters) => [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+// "B2:D10" -> {r0, c0, r1, c1}, 0-based and inclusive
+function parseCells(spec) {
+  const ends = String(spec).toUpperCase().split(":").map((x) => /^([A-Z]{1,3})([1-9]\d*)$/.exec(x));
+  if (!ends.length || ends.length > 2 || ends.some((m) => !m)) return null;
+  const [a, b = a] = ends.map((m) => [Number(m[2]) - 1, colIndex(m[1])]);
+  return { r0: Math.min(a[0], b[0]), r1: Math.max(a[0], b[0]), c0: Math.min(a[1], b[1]), c1: Math.max(a[1], b[1]) };
+}
+const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "?"]);
 
 // -- locators -------------------------------------------------------------------------
 
@@ -37,6 +47,7 @@ function parseLoc(s) {
       if (k === "char") sel.char = v.split(",").map(Number);
       else if (k === "page") sel.page = v.includes("-") ? v.split("-").map(Number) : Number(v);
       else if (k === "xywh") sel.xywh = v.split(",").map(Number);
+      else if (k === "sheet") sel.sheet = decodeURIComponent(v);
       else sel[k] = v;
     }
     loc.select = sel;
@@ -51,6 +62,8 @@ function locString(loc) {
   if (sel.page !== undefined) parts.push("page=" + (Array.isArray(sel.page) ? sel.page.join("-") : sel.page));
   if (sel.char) parts.push("char=" + sel.char.join(","));
   if (sel.xywh) parts.push("xywh=" + sel.xywh.join(","));
+  if (sel.sheet !== undefined) parts.push("sheet=" + encodeURIComponent(sel.sheet));
+  if (sel.cells) parts.push("cells=" + sel.cells);
   if (parts.length) s += "#" + parts.join("&");
   return s;
 }
@@ -223,6 +236,12 @@ class DocumentPane {
     if (top && this.pageEls?.[top - 1]) this.body.scrollTop = this.pageEls[top - 1].offsetTop - 8;
   }
   title() { return this.info ? (this.info.meta.name || short(this.info.doc)) : "(empty)"; }
+  // the modes this document and layer can be shown in, the default first
+  modes() {
+    const info = this.info, layer = this.currentLayer();
+    if (!info) return [];
+    return [info.meta.kind === "spreadsheet" && layer && "grid", info.pages && "page", layer?.presentation && "flow", "text"].filter(Boolean);
+  }
   currentLayer() { return this.info?.layers.find((l) => l.id === this.layer); }
   state() {
     return {
@@ -244,12 +263,13 @@ class DocumentPane {
     if (!layer && !fresh) layer = this.currentLayer();
     this.layer = (layer || info.layers.find((l) => l.primary) || info.layers[0] || {}).id || null;
     const paged = !!info.pages && this.currentLayer()?.geometry !== false;
-    const mode = opts.mode || (fresh ? null : this.mode) || (info.pages ? "page" : (this.currentLayer()?.presentation ? "flow" : "text"));
-    this.mode = mode === "page" && !info.pages ? "text" : mode === "flow" && !this.currentLayer()?.presentation ? "text" : mode;
+    const mode = opts.mode || (fresh ? null : this.mode) || this.modes()[0];
+    this.mode = this.modes().includes(mode) ? mode : "text";
+    if (fresh) this.grid = null;
     if (fresh) { this.selection = null; this.highlights = []; }
     await this.render();
     const sel = loc.select || {};
-    if (sel.char || sel.page !== undefined) {
+    if (sel.char || sel.cells || sel.page !== undefined) {
       this.flash(loc);
       await this.scrollTo(loc);
     }
@@ -263,7 +283,7 @@ class DocumentPane {
       el("span", { class: "pane-title", title: info.doc }, this.title()),
       el("span", { class: "seg" }, ...info.layers.map((l) => el("button", { class: l.id === this.layer ? "on" : "", title: "layer " + short(l.id),
         onclick: () => this.open({ doc: info.doc, layer: l.id }, { quiet: true }) }, l.view + (l.primary ? "*" : "")))),
-      el("span", { class: "seg" }, ...["page", "flow", "text"].filter((m) => m !== "page" || info.pages).filter((m) => m !== "flow" || layer?.presentation)
+      el("span", { class: "seg" }, ...this.modes()
         .map((m) => el("button", { class: m === this.mode ? "on" : "", onclick: () => this.setMode(m) }, m))),
       el("span", { class: "chips" }), el("span", { class: "status" }));
     const links = [];
@@ -277,6 +297,7 @@ class DocumentPane {
     if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer.")); }
     if (this.mode === "page") await this.renderPages();
     else if (this.mode === "flow") await this.renderFlow();
+    else if (this.mode === "grid") await this.renderGrid();
     else if (layer) await this.renderText();
     this.renderAnnotations();
     this.updateStatus();
@@ -365,6 +386,7 @@ class DocumentPane {
     return this.words.geo.filter((g) => g.start < e && s < g.end);
   }
   drawBoxes() {
+    if (this.mode === "grid") return this.paintCells();
     if (this.mode === "page") {
       for (const p of this.pageEls || []) p.querySelectorAll(".box").forEach((b) => b.remove());
       const draw = (s, e, cls) => {
@@ -469,6 +491,206 @@ class DocumentPane {
     box.addEventListener("mouseup", (ev) => this.onMouseUp(ev, document));
     this.drawBoxes();
   }
+  // grid mode: one sheet at a time as a table, built from the layer text
+  // (sheets are pages, rows lines, cells tab-separated). Cells are selected
+  // as rectangles: a sheet plus cells locator, with its text as the quote.
+  async renderGrid() {
+    const layer = this.currentLayer();
+    const [t, segs] = await Promise.all([layerText(layer.id), segments(layer.id)]);
+    let sheets = segs.filter((x) => x.kind === "sheet").map((x) => ({ name: x.name, start: x.start, end: x.end }));
+    if (!sheets.length) {
+      let pos = 0;
+      sheets = t.text.split("\f").map((p, i) => { const n = cpLen(p), sh = { name: null, label: `Sheet ${i + 1}`, start: pos, end: pos + n }; pos += n + 1; return sh; });
+    }
+    const keep = this.grid?.layer === layer.id ? this.grid : null;
+    this.grid = { layer: layer.id, cps: t.cps, sheets, sheet: keep ? keep.sheet : 0, anchor: keep?.anchor || null, focus: keep?.focus || null };
+    this.drawSheet();
+  }
+  drawSheet(minRows = 0) {
+    const g = this.grid, sh = g.sheets[g.sheet];
+    // rows of cells, each with its char range
+    const rows = [];
+    let row = [], cellStart = sh.start, text = "";
+    for (let i = sh.start; i <= sh.end; i++) {
+      const c = i < sh.end ? g.cps[i] : "\n";
+      if (c === "\t" || c === "\n") {
+        row.push({ s: cellStart, e: i, text });
+        cellStart = i + 1; text = "";
+        if (c === "\n") { rows.push(row); row = []; }
+      } else text += c;
+    }
+    g.rows = rows;
+    g.ncols = Math.max(1, ...rows.map((r) => r.length));
+    const limit = Math.max(MAX_GRID_ROWS, minRows + 100);
+    const table = el("table", { class: "grid" });
+    const head = el("tr", {}, el("th", { class: "corner" }));
+    for (let c = 0; c < g.ncols; c++) head.append(el("th", { class: "col", "data-c": c }, colName(c)));
+    const tbody = el("tbody");
+    table.append(el("thead", {}, head), tbody);
+    g.cells = [];
+    rows.slice(0, limit).forEach((r, ri) => {
+      const tr = el("tr", {}, el("th", { class: "row", "data-r": ri }, String(ri + 1)));
+      const els = [];
+      for (let c = 0; c < g.ncols; c++) {
+        const cell = r[c];
+        const td = el("td", { "data-r": ri, "data-c": c });
+        if (cell?.text) {
+          td.append(el("span", { "data-s": cell.s }, cell.text));
+          if (cell.text.length > 40) td.title = cell.text;
+          if (/^-?[\d,]*\.?\d+(e[-+]?\d+)?%?$/i.test(cell.text.trim())) td.className = "num";
+        }
+        tr.append(td);
+        els.push(td);
+      }
+      g.cells.push(els);
+      tbody.append(tr);
+    });
+    const tabs = g.sheets.length > 1 ? el("div", { class: "sheet-tabs" }, ...g.sheets.map((x, i) =>
+      el("button", { class: i === g.sheet ? "on" : "", onclick: () => { this.setSheet(i); this.drawSheet(); this.updateStatus(); changed(); } }, x.name ?? x.label))) : null;
+    const more = rows.length > limit ? el("p", { class: "hint", style: "padding:0 8px" },
+      `Showing the first ${limit} of ${rows.length} rows; search or text mode reaches the rest.`) : null;
+    const wrap = el("div", { class: "gridwrap" }, table);
+    this.body.replaceChildren(...[tabs, wrap, more].filter(Boolean));
+    this.setupCellSelect(table);
+    this.paintCells();
+  }
+  // a cell selection belongs to its sheet: switching sheets drops it
+  setSheet(i) {
+    const g = this.grid;
+    g.sheet = i;
+    g.anchor = g.focus = null;
+    if (this.selection?.select?.cells) this.selection = null;
+  }
+  setupCellSelect(table) {
+    const g = this.grid;
+    const at = (ev) => {
+      const t = ev.target.closest("td,th");
+      if (!t) return null;
+      const r = t.dataset.r !== undefined ? Number(t.dataset.r) : null, c = t.dataset.c !== undefined ? Number(t.dataset.c) : null;
+      return { r, c, th: t.tagName === "TH" };
+    };
+    let dragging = false;
+    table.addEventListener("mousedown", (ev) => {
+      const p = at(ev);
+      if (!p || ev.button !== 0) return;
+      ev.preventDefault();
+      focus(this.id);
+      const last = g.rows.length - 1, lastCol = g.ncols - 1;
+      if (p.th && p.r === null && p.c === null) { g.anchor = [0, 0]; g.focus = [last, lastCol]; }         // corner: all
+      else if (p.th && p.r !== null) { if (!ev.shiftKey || !g.anchor) g.anchor = [p.r, 0]; g.focus = [p.r, lastCol]; }   // a row
+      else if (p.th) { if (!ev.shiftKey || !g.anchor) g.anchor = [0, p.c]; g.focus = [last, p.c]; }      // a column
+      else { if (!ev.shiftKey || !g.anchor) g.anchor = [p.r, p.c]; g.focus = [p.r, p.c]; dragging = true; }
+      this.paintCells();
+      if (!dragging) this.cellsSelected();
+    });
+    table.addEventListener("mouseover", (ev) => {
+      if (!dragging) return;
+      const p = at(ev);
+      if (p && !p.th) { g.focus = [p.r, p.c]; this.paintCells(); }
+    });
+    window.addEventListener("mouseup", () => { if (dragging) { dragging = false; this.cellsSelected(); } });
+  }
+  rect() {
+    const g = this.grid;
+    if (!g?.anchor) return null;
+    const [r0, r1] = [g.anchor[0], g.focus[0]].sort((a, b) => a - b), [c0, c1] = [g.anchor[1], g.focus[1]].sort((a, b) => a - b);
+    return { r0, r1, c0, c1 };
+  }
+  rectText(x) {
+    const out = [];
+    for (let r = x.r0; r <= x.r1; r++) {
+      const row = [];
+      for (let c = x.c0; c <= x.c1; c++) row.push(this.grid.rows[r]?.[c]?.text ?? "");
+      out.push(row.join("\t"));
+    }
+    return out.join("\n");
+  }
+  cellsSelected() {
+    const x = this.rect(), sh = this.grid.sheets[this.grid.sheet];
+    if (!x) return;
+    const ref = colName(x.c0) + (x.r0 + 1) + (x.r0 === x.r1 && x.c0 === x.c1 ? "" : ":" + colName(x.c1) + (x.r1 + 1));
+    const select = sh.name !== null ? { sheet: sh.name, cells: ref } : { cells: ref };
+    this.selection = { doc: this.info.doc, layer: this.layer, select, quote: { exact: this.rectText(x) } };
+    this.updateStatus();
+    changed();
+  }
+  moveCell(key, extend) {
+    const g = this.grid;
+    if (!g?.rows.length) return;
+    const d = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[key];
+    const from = g.focus || [0, 0];
+    const to = [Math.min(Math.max(from[0] + d[0], 0), g.rows.length - 1), Math.min(Math.max(from[1] + d[1], 0), g.ncols - 1)];
+    if (!extend || !g.anchor) g.anchor = to;
+    g.focus = to;
+    this.paintCells();
+    g.cells[to[0]]?.[to[1]]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    this.cellsSelected();
+  }
+  // selection, highlights and marks on the current sheet
+  paintCells() {
+    const g = this.grid;
+    if (!g?.cells) return;
+    const sh = g.sheets[g.sheet];
+    for (const row of g.cells) for (const td of row) td.classList.remove("sel", "hl", "mark", "cur");
+    const paintRect = (x, cls) => {
+      for (let r = x.r0; r <= Math.min(x.r1, g.cells.length - 1); r++)
+        for (let c = x.c0; c <= x.c1; c++) g.cells[r]?.[c]?.classList.add(cls);
+    };
+    const paintChars = (s, e, cls) => {
+      if (e <= sh.start || s >= sh.end) return;
+      g.rows.forEach((row, r) => row.forEach((cell, c) => {
+        if (cell.s < e && s < Math.max(cell.e, cell.s + 1)) g.cells[r]?.[c]?.classList.add(cls);
+      }));
+    };
+    const paint = (x, cls) => {
+      if (x.cells) {
+        if ((x.cells.sheet ?? null) !== null ? x.cells.sheet !== sh.name : g.sheet !== 0) return;
+        const r = parseCells(x.cells.cells);
+        if (r) paintRect(r, cls);
+      } else if (x.range) paintChars(...x.range, cls);
+    };
+    for (const h of this.highlights) paint(h, "hl");
+    for (const mk of this.marks) if (mk.layer === this.layer) paint({ range: mk.select?.char, cells: mk.select?.cells && mk.select }, "mark");
+    const x = this.rect();
+    if (x) { paintRect(x, "sel"); g.cells[g.focus[0]]?.[g.focus[1]]?.classList.add("cur"); }
+  }
+  scrollToCells(sel) {
+    const g = this.grid;
+    if (!g) return;
+    let target = null, sheet = g.sheet;
+    if (sel.cells) {
+      sheet = sel.sheet !== undefined ? g.sheets.findIndex((x) => x.name === sel.sheet) : 0;
+      const r = parseCells(sel.cells);
+      if (sheet < 0 || !r) return;
+      target = [r.r0, r.c0];
+    } else if (sel.char) {
+      sheet = g.sheets.findIndex((x) => x.start <= sel.char[0] && sel.char[0] <= x.end);
+      if (sheet < 0) return;
+    } else if (sel.page) {
+      sheet = Math.min((Array.isArray(sel.page) ? sel.page[0] : sel.page) - 1, g.sheets.length - 1);
+    }
+    if (sheet !== g.sheet) this.setSheet(sheet);
+    if (sel.char) {
+      this.drawSheet();
+      g.rows.forEach((row, r) => row.forEach((cell, c) => { if (!target && cell.s <= sel.char[0] && sel.char[0] <= cell.e) target = [r, c]; }));
+    }
+    this.drawSheet(target ? target[0] : 0);
+    if (target) g.cells[target[0]]?.[target[1]]?.scrollIntoView({ block: "center", inline: "center" });
+    this.updateStatus();
+  }
+  gridStatus() {
+    const g = this.grid, sh = g.sheets[g.sheet];
+    const tr = this.body.querySelectorAll("tbody tr");
+    const top = this.body.getBoundingClientRect().top, bottom = top + this.body.clientHeight;
+    const vis = [...tr].filter((r) => { const b = r.getBoundingClientRect(); return b.bottom > top && b.top < bottom; });
+    const name = sh.name ?? sh.label;
+    if (vis.length) {
+      const a = Number(vis[0].firstChild.dataset.r) + 1, b = Number(vis[vis.length - 1].firstChild.dataset.r) + 1;
+      this.visible = { sheet: name, rows: [a, b] };
+    }
+    const sel = this.selection?.select?.cells;
+    return `${name} · ${g.rows.length} rows` + (sel ? ` · ${sel} selected` : "");
+  }
   textRoot() {
     if (this.mode === "flow") return this.frame?.contentDocument?.body;
     if (this.mode === "text") return $(".textmode", this.body);
@@ -490,12 +712,14 @@ class DocumentPane {
     (this.frame?.contentDocument || document).getSelection()?.removeAllRanges();
     document.getSelection().removeAllRanges();
     this.body.querySelectorAll(".region").forEach((r) => r.remove());
+    if (this.grid) { this.grid.anchor = this.grid.focus = null; this.paintCells(); }
     changed();
   }
 
   // where the locator is, scrolled into view
   async scrollTo(loc) {
     const sel = loc.select || {};
+    if (this.mode === "grid") return this.scrollToCells(sel);
     if (this.mode === "page") {
       let n = Array.isArray(sel.page) ? sel.page[0] : sel.page;
       if (sel.char) {
@@ -519,7 +743,7 @@ class DocumentPane {
   }
   flash(loc) {
     const sel = parseLoc(loc).select || {};
-    const h = { loc: locString(loc), label: "opened", range: sel.char, temp: true };
+    const h = { loc: locString(loc), label: "opened", range: sel.char, cells: sel.cells && { sheet: sel.sheet, cells: sel.cells }, temp: true };
     this.highlights.push(h);
     this.drawBoxes();
     setTimeout(() => { this.highlights = this.highlights.filter((x) => x !== h); this.drawBoxes(); }, 1800);
@@ -528,7 +752,8 @@ class DocumentPane {
     const l = parseLoc(loc);
     if (l.doc !== this.info?.doc || (l.layer && l.layer !== this.layer)) await this.open(l, { quiet: true });
     const sel = l.select || {};
-    this.highlights.push({ loc: locString(l), label, range: sel.char, region: sel.xywh && { page: sel.page, xywh: sel.xywh } });
+    this.highlights.push({ loc: locString(l), label, range: sel.char, region: sel.xywh && { page: sel.page, xywh: sel.xywh },
+                           cells: sel.cells && { sheet: sel.sheet, cells: sel.cells } });
     this.drawBoxes();
     await this.scrollTo(l);
   }
@@ -551,6 +776,8 @@ class DocumentPane {
         const bates = this.batesFor(n);
         if (bates) text += " · " + bates;
       }
+    } else if (this.mode === "grid" && this.grid) {
+      text = this.gridStatus();
     } else if (this.mode === "text") {
       const spans = [...this.body.querySelectorAll("[data-s]")];
       const top = this.body.getBoundingClientRect().top, bottom = top + this.body.clientHeight;
@@ -951,9 +1178,10 @@ function onKey(ev) {
   else if (k === "t") openPalette();
   else if (k === "N") newNote();
   else if (k === "v" && doc?.info?.layers.length > 1) { const ls = doc.info.layers; const i = ls.findIndex((l) => l.id === doc.layer); doc.open({ doc: doc.info.doc, layer: ls[(i + 1) % ls.length].id }, { quiet: true }); }
-  else if (k === "f" && doc?.info) { const modes = ["page", "flow", "text"].filter((m) => (m !== "page" || doc.info.pages) && (m !== "flow" || doc.currentLayer()?.presentation)); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
+  else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
+  else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) doc.clearSelection();
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · v layer · f mode · Tab pane · Alt-drag region");
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · v layer · f mode · Tab pane · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -961,6 +1189,14 @@ function onKey(ev) {
   if (handled) ev.preventDefault();
 }
 document.addEventListener("keydown", onKey);
+// Copying cells in grid mode gives their text, tab-separated, as a spreadsheet would.
+document.addEventListener("copy", (ev) => {
+  const p = focusedPane();
+  const x = p?.mode === "grid" && p.rect();
+  if (!x) return;
+  ev.clipboardData.setData("text/plain", p.rectText(x));
+  ev.preventDefault();
+});
 
 function mark() {
   const p = focusedPane();

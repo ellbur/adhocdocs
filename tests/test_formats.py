@@ -38,6 +38,41 @@ def test_xlsx():
     assert [s["name"] for s in layer.segments if s["kind"] == "sheet"] == ["Q1", "Q2"]
 
 
+def test_cell_locators(tmp_path):
+    from adhocdocs import annotations, locators
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes()))
+    wb["Q2"].title = "Q2 & later"
+    buf = io.BytesIO()
+    wb.save(buf)
+    m = Matter.create(tmp_path / "m")
+    doc = ingest_bytes(m, buf.getvalue(), "book.xlsx", {"custodian": "cust:a", "source": {"collection": "c", "path": "book.xlsx"}})
+    m = Matter(m.root)
+
+    r = locators.resolve(m, f"doc:{doc}#sheet=Q1&cells=B1:C2")
+    assert r["status"] == "exact" and r["text"] == "Amount\tNote\n48612.5\tnever received"
+    text = m.objects.get_text(m.state.layer(r["loc"]["layer"]).text)
+    assert text[slice(*r["span"])] == "Amount\tNote\nINV-2026/0347\t48612.5\tnever received"
+    assert r["loc"]["quote"] == {"exact": r["text"]}
+    assert locators.resolve(m, f"doc:{doc}#cells=a2")["text"] == "INV-2026/0347"       # first sheet by default
+    assert locators.resolve(m, f"doc:{doc}#cells=D9:E10")["text"] == "\t\n\t"          # past the data: empty
+
+    # sheet names are percent-encoded in the string form
+    loc = {"doc": doc, "select": {"sheet": "Q2 & later", "cells": "A1:C1"}}
+    s = locators.format(loc)
+    assert s.endswith("#sheet=Q2%20%26%20later&cells=A1:C1") and locators.parse(s)["select"] == loc["select"]
+    assert locators.resolve(m, s)["text"] == "nothing\t\there"
+
+    for bad in ("sheet=Nope&cells=A1", "cells=A0", "cells=1A"):
+        assert locators.resolve(m, f"doc:{doc}#{bad}")["status"] == "broken"
+    changed = {**r["loc"], "quote": {"exact": "something else"}}
+    assert locators.resolve(m, changed)["status"] == "broken"
+
+    # tags take cell ranges, with the quote filled in
+    annotations.write(m, annotations.CLAUDE, {"op": "define-tag", "tag": "key"})
+    [ev] = annotations.write(m, annotations.CLAUDE, {"op": "tag", "tag": "key", "target": f"doc:{doc}#sheet=Q1&cells=B2"})
+    assert ev["target"]["select"] == {"sheet": "Q1", "cells": "B2"} and ev["target"]["quote"] == {"exact": "48612.5"}
+
+
 def test_sniffing_zips():
     assert kind_for(None, DOCX.read_bytes()) == "docx"
     assert kind_for(None, xlsx_bytes()) == "xlsx"
