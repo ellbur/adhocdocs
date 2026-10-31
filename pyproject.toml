@@ -27,6 +27,7 @@ text = "adhocdocs.cli:text"
 list = "adhocdocs.cli:list_"
 ann = "adhocdocs.cli:ann"
 page = "adhocdocs.cli:page"
+view = "adhocdocs.cli:view"
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]

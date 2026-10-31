@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>adhocdocs</title>
+<link rel="stylesheet" href="/shell.css">
+</head>
+<body class="adhoc-shell">
+<nav id="tabs"></nav>
+<main id="panes"></main>
+<div id="palette" hidden>
+  <input id="palette-input" placeholder="Tag… (Enter applies, a new name defines it)" autocomplete="off">
+  <ul id="palette-list"></ul>
+</div>
+<div id="note-editor" hidden>
+  <div id="note-title"></div>
+  <textarea id="note-text" rows="8"></textarea>
+  <div class="row"><span class="hint">Ctrl+Enter saves · Esc cancels</span></div>
+</div>
+<div id="toast" hidden></div>
+<script src="/shell.js"></script>
+</body>
+</html>

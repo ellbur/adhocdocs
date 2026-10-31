@@ -32,9 +32,10 @@ them.
 
 ## Viewing
 
-- **Document viewer.** *Designed*: [VIEWER.md](VIEWER.md).
-- **List display.** *Designed*: [LISTS.md](LISTS.md). Search results are a
-  preset of it.
+- **Document viewer.** *Built*, a first version (`adhoc view` starts it,
+  `view` drives it): [VIEWER.md](VIEWER.md).
+- **List display.** *Built*, as list panes with a linked preview (`view
+  list`): [LISTS.md](LISTS.md). Search results are shown the same way.
 - **Timeline / chronology display.** *Proposed.*
 
 ## Search and indexing
@@ -45,14 +46,15 @@ them.
 
 ## Annotation
 
-- **Tags and notes.** *Built* (`ann`, plus the host-side annotation API),
-  except editing in the viewer: [ANNOTATIONS.md](ANNOTATIONS.md).
+- **Tags and notes.** *Built*: `ann` and the annotation API for Claude, and
+  hotkeys, a tag palette and notes in the viewer for the user:
+  [ANNOTATIONS.md](ANNOTATIONS.md).
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 
 ## Writing
 
 - **Literate pages.** *Built* (`page`: check, render, export to HTML,
-  .docx and PDF), except the viewer pane: [PAGES.md](PAGES.md).
+  .docx and PDF; shown in the viewer as a pane): [PAGES.md](PAGES.md).
 - **Quote checking.** *Built*: `text --json <locator>` resolves a locator
   and reports exact, re-anchored or broken, and `ann check` checks the
   references and quotations in a note, with the same checker `page check`

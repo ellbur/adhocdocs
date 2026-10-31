@@ -17,6 +17,8 @@ uv run search grep 'PN 44-B/7'
 uv run idx status
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run page export memo.md --format docx -o memo.docx   # memo.md quotes with :q{#nr}
+(cd viewer && cargo build --release)   # the viewer: needs Rust 1.89, clang, WebKitGTK 4.1
+uv run adhoc view && uv run view list nr.list.jsonl   # after search '"never received"' --list nr.list.jsonl
 uv run adhoc ann-api &   # the annotation API; then e.g. ann define-tag hot, ann tag hot <doc>
 uv run pytest            # ADHOC_TEST_SEMANTIC=1 to include semantic search
 ```
