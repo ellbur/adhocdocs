@@ -30,7 +30,7 @@ function parseCells(spec) {
   const [a, b = a] = ends.map((m) => [Number(m[2]) - 1, colIndex(m[1])]);
   return { r0: Math.min(a[0], b[0]), r1: Math.max(a[0], b[0]), c0: Math.min(a[1], b[1]), c1: Math.max(a[1], b[1]) };
 }
-const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "?"]);
+const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "?"]);
 
 // -- locators -------------------------------------------------------------------------
 
@@ -87,13 +87,26 @@ async function segments(id) { return cache.segments[id] ??= getJSON(`/api/layer/
 // -- state -------------------------------------------------------------------------------
 
 const adhoc = {
-  panes: [], focused: null, layout: "single", user: "user", history: [], nextId: 1,
+  panes: [], focused: null, layout: "single", user: "user", history: [], nextId: 1, window: "w1",
+  elsewhereMap: {},       // pane ID -> {window, kind}, for every window's panes
   annotations: { definitions: [], tags: [], notes: [] }, annLogSize: -1,
 };
 window.adhoc = adhoc;
 
 function post(msg) { window.ipc.postMessage(JSON.stringify(msg)); }
 function pane(id) { return adhoc.panes.find((p) => p.id === id); }
+// Pane IDs are unique across windows: p1, p2, … in the first, w2-p1, … in others.
+function newPaneId() { return (adhoc.window === "w1" ? "p" : adhoc.window + "-p") + adhoc.nextId++; }
+// A pane in this window or another one.
+function paneExists(id) { return !!id && (!!pane(id) || !!adhoc.elsewhereMap[id]); }
+function paneKind(id) { return pane(id)?.kind ?? adhoc.elsewhereMap[id]?.kind; }
+// Call a method on a pane here or, through the host, in the window that has it.
+const RELAYABLE = new Set(["seqOpen", "open", "step", "follow"]);
+function callPane(id, method, ...args) {
+  const p = pane(id);
+  if (p) return p[method]?.(...args);
+  if (adhoc.elsewhereMap[id]) post({ type: "relay", pane: id, method, args });
+}
 function focusedPane() { return pane(adhoc.focused); }
 function toast(msg) {
   const t = $("#toast");
@@ -101,14 +114,16 @@ function toast(msg) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.hidden = true), 3500);
 }
 function addHistory(loc, source) {
-  adhoc.history.push({ at: new Date().toISOString(), loc: typeof loc === "string" ? loc : locString(loc), source });
+  const entry = { at: new Date().toISOString(), loc: typeof loc === "string" ? loc : locString(loc), source };
+  adhoc.history.push(entry);                 // this window's, for marking visited items
   if (adhoc.history.length > 1000) adhoc.history.shift();
+  post({ type: "history", entry });         // the host keeps every window's, for `view history`
 }
 
 function snapshot() {
   return {
     running: true, focused: adhoc.focused,
-    windows: [{ id: "w1", layout: adhoc.layout, panes: adhoc.panes.map((p) => p.id) }],
+    windows: [{ id: adhoc.window, layout: adhoc.layout, panes: adhoc.panes.map((p) => p.id) }],
     panes: adhoc.panes.map((p) => p.state()),
   };
 }
@@ -134,12 +149,12 @@ function addPane(p, focusIt = true) {
   if (focusIt || !adhoc.focused) focus(p.id); else renderTabs();
   return p;
 }
-function closePane(id) {
+function closePane(id, moving = false) {
   const p = pane(id);
   if (!p) throw new Error("no pane " + id);
   p.root.remove();
   adhoc.panes = adhoc.panes.filter((x) => x !== p);
-  for (const q of adhoc.panes) if (q.link === id) q.link = null;
+  if (!moving) for (const q of adhoc.panes) if (q.link === id) q.link = null;
   if (adhoc.focused === id) adhoc.focused = adhoc.panes.length ? adhoc.panes[adhoc.panes.length - 1].id : null;
   renderTabs();
 }
@@ -808,9 +823,14 @@ class DocumentPane {
     if (next < 0 || next >= s.items.length) return toast(delta > 0 ? "End of the sequence" : "Start of the sequence");
     s.position = next;
     await this.open(s.items[next], { source: "user" });
-    if (s.from) pane(s.from)?.follow?.(s.items[next]);
+    if (s.from) callPane(s.from, "follow", s.items[next]);
     for (const d of s.items.slice(next + 1, next + 4)) docInfo(parseLoc(d).doc).catch(() => {});
     changed();
+  }
+  // a linked list pane's choice: its sequence, at this item
+  seqOpen(sequence, loc) {
+    this.sequence = sequence;
+    return this.open(loc, { source: "pane" });
   }
   page(delta) {
     if (this.mode === "flow") this.frame.contentWindow.scrollBy(0, delta * this.frame.clientHeight * 0.9);
@@ -842,6 +862,12 @@ class DocumentPane {
     };
     top.forEach((n) => thread(n, 0));
     this.side.replaceChildren(...kids);
+  }
+
+  // everything needed to show this pane again in another window
+  spec() {
+    return { kind: "document", id: this.id, doc: this.info?.doc ?? null, layer: this.layer, mode: this.mode, sequence: this.sequence,
+             marks: this.marks, highlights: this.highlights.filter((h) => !h.temp), selection: this.selection, visible: this.visible };
   }
 
   // what tags and notes act on: the selection, else the document
@@ -937,13 +963,12 @@ class WebPane {
     this.cursor = idx;
     this.selected = items.filter((x) => x.classList.contains("adhoc-selected")).map((x) => x.dataset.locator);
     item.scrollIntoView({ block: "nearest" });
-    if (this.link && pane(this.link)) {
-      const p = pane(this.link);
+    if (paneExists(this.link)) {
       const loc = item.dataset.locator;
       const seq = this.sequence || items.map((x) => x.dataset.locator);
       const pos = seq.indexOf(loc);
-      p.sequence = { items: seq, position: pos >= 0 ? pos : 0, from: this.id };
-      p.open(loc, { source: "pane" }).then(() => this.markVisited());
+      Promise.resolve(callPane(this.link, "seqOpen", { items: seq, position: pos >= 0 ? pos : 0, from: this.id }, loc))
+        .then(() => this.markVisited());
     }
     changed();
   }
@@ -968,13 +993,17 @@ class WebPane {
   }
   targets() { return this.selected.map((s) => parseLoc(s)); }
   renderAnnotations() { fillTags(this.doc()); }
+  spec() {
+    return { kind: this.kind, id: this.id, content: this.content, title: this._title, link: this.link, sequence: this.sequence, form: this.form };
+  }
 }
 
 function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
+  if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, { source: "pane" });
   let target = !forceNew && p.link && pane(p.link);
   if (!target) {
     target = adhoc.panes.find((x) => x.kind === "document" && x !== p && x.id !== adhoc.focused) || null;
-    if (!target || forceNew) target = addPane(new DocumentPane("p" + adhoc.nextId++), true);
+    if (!target || forceNew) target = addPane(new DocumentPane(newPaneId()), true);
   }
   target.open(loc, { source: "pane" });
 }
@@ -1172,8 +1201,9 @@ function onKey(ev) {
   else if ((k === "PageUp" || (k === " " && ev.shiftKey)) && doc) doc.page(-1);
   else if (k === "]" && doc) doc.step(1);
   else if (k === "[" && doc) doc.step(-1);
-  else if (k === "]" && web) { const lp = pane(web.link); if (lp) lp.step(1); else web.move(1); }
-  else if (k === "[" && web) { const lp = pane(web.link); if (lp) lp.step(-1); else web.move(-1); }
+  else if (k === "]" && web) { if (paneExists(web.link)) callPane(web.link, "step", 1); else web.move(1); }
+  else if (k === "[" && web) { if (paneExists(web.link)) callPane(web.link, "step", -1); else web.move(-1); }
+  else if (k === "W" && p) post({ type: "tearoff", pane: p.id });
   else if (k === "m") mark();
   else if (k === "t") openPalette();
   else if (k === "N") newNote();
@@ -1181,7 +1211,7 @@ function onKey(ev) {
   else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) doc.clearSelection();
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · v layer · f mode · Tab pane · Alt-drag region · grid: click, drag or shift-arrows to select cells");
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · v layer · f mode · Tab pane · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -1234,7 +1264,7 @@ function docPaneFor(cmd) {
     const any = adhoc.panes.find((x) => x.kind === "document");
     if (any) return any;
   }
-  return addPane(new DocumentPane("p" + adhoc.nextId++), true);
+  return addPane(new DocumentPane(newPaneId()), true);
 }
 
 const commands = {
@@ -1268,20 +1298,49 @@ const commands = {
       p.load(c.content);
       return { pane: p.id };
     }
-    const p = addPane(new WebPane("p" + adhoc.nextId++, c.kind || "custom", c.content, c.title), true);
+    const p = addPane(new WebPane(newPaneId(), c.kind || "custom", c.content, c.title), true);
     p.sequence = c.sequence || null;
     if (c.preview_new) {
-      const d = addPane(new DocumentPane("p" + adhoc.nextId++), false);
+      const d = addPane(new DocumentPane(newPaneId()), false);
       p.link = d.id;
       if (adhoc.layout === "single") adhoc.layout = "split-v";
     } else if (c.link) {
-      if (pane(c.link)?.kind !== "document") throw new Error("can only link to a document pane");
+      if (paneKind(c.link) !== "document") throw new Error("can only link to a document pane");
       p.link = c.link;
     }
     renderTabs();
     return { pane: p.id, preview: p.link };
   },
   async close(c) { closePane(c.pane); return {}; },
+  // moving a pane to another window: taken out of this one, put into that one
+  async detach(c) {
+    const p = pane(c.pane);
+    if (!p) throw new Error("no pane " + c.pane);
+    const spec = p.spec();
+    closePane(p.id, true);
+    return spec;
+  },
+  async adopt(c) {
+    const s = c.spec;
+    let p;
+    if (s.kind === "document") {
+      p = addPane(new DocumentPane(s.id), true);
+      if (s.doc) {
+        await p.open({ doc: s.doc, layer: s.layer }, { mode: s.mode, quiet: true });
+        Object.assign(p, { sequence: s.sequence, marks: s.marks || [], highlights: s.highlights || [], selection: s.selection });
+        p.drawBoxes();
+        const v = s.visible || {};
+        const at = v.page ? { page: v.page[0] } : v.char ? { char: v.char } : v.rows ? { sheet: v.sheet, cells: "A" + v.rows[0] } : null;
+        if (at) await p.scrollTo({ select: at });
+        p.updateStatus();
+      }
+    } else {
+      p = addPane(new WebPane(s.id, s.kind, s.content, s.title), true);
+      Object.assign(p, { link: s.link, sequence: s.sequence, form: s.form || {} });
+    }
+    renderTabs();
+    return { window: adhoc.window, pane: p.id };
+  },
   async layout(c) {
     if (!["single", "split-v", "split-h", "grid"].includes(c.layout)) throw new Error("layout is single, split-v, split-h or grid");
     adhoc.layout = c.layout; renderTabs(); return {};
@@ -1291,7 +1350,6 @@ const commands = {
     const p = focusedPane();
     return { pane: p?.id ?? null, selection: p ? (p.kind === "document" ? p.selection : p.state().selection) : null, marks: p?.marks || adhoc.listMarks || [] };
   },
-  async history(c) { return { history: adhoc.history.slice(-(c.limit || 50)) }; },
   async "clear-marks"(c) {
     for (const p of adhoc.panes) if (!c.pane || p.id === c.pane) { if (p.marks) { p.marks = []; p.drawBoxes(); } }
     adhoc.listMarks = [];
@@ -1308,10 +1366,19 @@ adhoc.command = async (seq, cmd) => {
   } catch (e) {
     result = { error: String(e.message || e) };
   }
+  // the host learns this window's panes before the result, so the next command finds them
+  post({ type: "state", state: snapshot() });
   post({ type: "result", seq, result });
   changed();
 };
-adhoc.config = (c) => { adhoc.user = c.user; };
+adhoc.config = (c) => { adhoc.user = c.user; adhoc.window = c.window || "w1"; };
+adhoc.elsewhere = (map) => { adhoc.elsewhereMap = map; };
+adhoc.visited = (entry) => {
+  adhoc.history.push(entry);
+  if (adhoc.history.length > 1000) adhoc.history.shift();
+  for (const p of adhoc.panes) p.markVisited?.();
+};
+adhoc.relayed = (id, method, args) => { if (RELAYABLE.has(method)) Promise.resolve(pane(id)?.[method]?.(...args)).then(changed); };
 
 // The annotation log changes from outside (Claude, through its API), so look again now and then.
 setInterval(refreshAnnotations, 2000);

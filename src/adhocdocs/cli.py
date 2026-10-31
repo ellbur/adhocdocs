@@ -709,11 +709,26 @@ a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
 
+Windows: the viewer can have several, each with its own panes (say, a list
+on one screen and documents on another). Pane IDs are unique across them
+(p1 in the first window, w2-p1 in the second), a command naming a pane goes
+to that pane's window, and others go to the window the user last used, or
+to --window. A list pane can be linked to a document pane in another
+window. The user moves a pane to a new window with W; `view window new
+--pane P` does the same.
+
 Services: a pane's <form action="svc:NAME"> is answered immediately by
 `view serve NAME -- cmd …` (run it in the background), without waiting for
 the next prompt. cmd gets {"form", "selection", "pane"} as JSON on stdin and
 prints the pane's new HTML.
 """
+
+
+def where(s):
+    """Which window a new pane goes in (a command naming a pane goes to its window)."""
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--window", help="default: the window the user last used")
+    g.add_argument("--new-window", action="store_true", help="in a new window")
 
 
 @run
@@ -726,6 +741,7 @@ def view(argv=None):
     s.add_argument("--new-pane", action="store_true")
     s.add_argument("--layer", dest="view_", help="layer view: native, ocr, transcript, …")
     s.add_argument("--mode", choices=["page", "flow", "text", "grid"], help="grid: spreadsheets as a table of cells")
+    where(s)
     s = sub.add_parser("highlight", help="mark a place for the user; stays until cleared")
     s.add_argument("loc")
     s.add_argument("--label")
@@ -736,6 +752,7 @@ def view(argv=None):
     s.add_argument("locs", nargs="*", help="locators, a list file (--list), or - for stdin")
     s.add_argument("--list", dest="list_file")
     s.add_argument("--pane")
+    where(s)
     s = sub.add_parser("pane", help="show static HTML (a file or a directory bundle with index.html)")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--new", action="store_true")
@@ -744,14 +761,22 @@ def view(argv=None):
     s.add_argument("--title")
     s.add_argument("--link", metavar="DOC_PANE", help="a document pane that follows the selection")
     s.add_argument("--preview-new", action="store_true", help="make a new linked document pane")
+    where(s)
     s = sub.add_parser("list", help="show a list file, with a linked preview pane")
     s.add_argument("file")
     s.add_argument("--pane", help="replace this list pane's content")
-    s.add_argument("--preview", metavar="DOC_PANE")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
+    where(s)
     s = sub.add_parser("close")
     s.add_argument("pane")
     s = sub.add_parser("layout")
     s.add_argument("layout", choices=["single", "split-v", "split-h", "grid"])
+    s.add_argument("--window", help="default: the window the user last used")
+    s = sub.add_parser("window", help="windows: new (optionally moving a pane into it), move a pane, close")
+    s.add_argument("action", choices=["new", "move", "close"])
+    s.add_argument("--pane", help="new, move: the pane to move")
+    s.add_argument("--window", help="move: the window to move it to; close: the window")
+    s.add_argument("--layout", choices=["single", "split-v", "split-h", "grid"], help="new: its layout")
     sub.add_parser("state", help="windows, panes, what's visible, selections, marks, form values")
     sub.add_parser("selection", help="the focused pane's selection and marks")
     s = sub.add_parser("history")
@@ -800,11 +825,19 @@ def view(argv=None):
     elif a.cmd in ("close",):
         c["pane"] = a.pane
     elif a.cmd == "layout":
-        c["layout"] = a.layout
+        c.update(layout=a.layout, window=a.window)
+    elif a.cmd == "window":
+        if a.action in ("move",) and not (a.pane and a.window):
+            raise ValueError("view window move needs --pane and --window")
+        if a.action == "close" and not a.window:
+            raise ValueError("view window close needs --window")
+        c = {"cmd": "window-" + a.action, "pane": a.pane, "window": a.window, "layout": a.layout}
     elif a.cmd == "history":
         c["limit"] = a.limit
     elif a.cmd in ("clear-highlights", "clear-marks"):
         c["pane"] = a.pane
+    if a.cmd in ("open", "sequence", "pane", "list"):
+        c.update(window=a.window, new_window=a.new_window)
     out(viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False}))
 
 
