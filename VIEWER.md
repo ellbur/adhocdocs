@@ -118,9 +118,15 @@ whether the user, Claude or a pane went there.
   placeholder with its URL, since its presence may be evidence.
 - A marker on literate-page quotes that opens the page image (shading
   low-confidence OCR words exists).
-- The 100 ms target hasn't been measured. Pages render on demand at the
-  pane's width, and the next documents' metadata is prefetched, but page
-  images are not.
+- The 100 ms target is met most of the time, not always. `view state`
+  reports each document pane's `open_ms`: keypress to first page shown.
+  Stepping through 15 corpus PDFs (release build, Xvfb with software
+  rendering) gave a median of 51 ms and a worst case of 204 ms, with 4 of
+  15 over 100 ms. The slow ones are the first document of a sequence and
+  very long documents. Page images come before the text layer over them, a
+  cache holds the last 64 rendered pages, and each document's first page is
+  prefetched before the user moves to it. `ADHOC_VIEWER_DEBUG=1` logs each
+  request's time.
 - Builds and tests have been on Linux (WebKitGTK) only.
 
 ## Decided

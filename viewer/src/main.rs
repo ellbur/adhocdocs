@@ -95,9 +95,10 @@ fn main() {
         std::thread::spawn(move || {
             let mut h = Handler::new(matter, panes);
             for (path, q, responder) in job_rx {
+                let t = std::time::Instant::now();
                 let r = h.handle(&path, &q);
                 if r.status != 200 || std::env::var("ADHOC_VIEWER_DEBUG").is_ok() {
-                    eprintln!("{}", json!({"request": path, "status": r.status,
+                    eprintln!("{}", json!({"request": path, "status": r.status, "ms": t.elapsed().as_secs_f64() * 1000.0,
                         "error": if r.status != 200 { String::from_utf8_lossy(&r.body).to_string() } else { String::new() }}));
                 }
                 responder.respond(http_response(r));
