@@ -72,8 +72,9 @@ def extract_email(data: bytes) -> Extraction:
         if payload is not None:
             children.append(Child(part=str(i), name=part.get_filename(), data=payload))
 
-    meta = {"subject": msg.get("Subject"), "message_id": msg.get("Message-ID"),
-            "in_reply_to": msg.get("In-Reply-To")}
+    meta = {"subject": msg.get("Subject"), "message_id": (msg.get("Message-ID") or "").strip() or None,
+            "in_reply_to": (msg.get("In-Reply-To") or "").strip() or None,
+            "references": re.findall(r"<[^>]+>", msg.get("References") or "")}
     for name in ("from", "to", "cc", "bcc"):
         values = [str(v) for v in msg.get_all(name, [])]
         addrs = _addresses(values)

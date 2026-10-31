@@ -719,9 +719,65 @@ def view(argv=None):
     out(viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False}))
 
 
+# -- analyze ---------------------------------------------------------------------------------
+
+@run
+def analyze(argv=None):
+    from . import analysis
+    p = parser("analyze", analysis.__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("threads", help="email threads of two or more messages, oldest first")
+    s.add_argument("--doc", help="only the thread containing this document")
+    s.add_argument("--by-subject", action="store_true", help="join emails without threading headers by subject")
+    s.add_argument("--list", dest="list_file", help="also write a list file, grouped by thread")
+    s = sub.add_parser("near", help="documents similar to one document")
+    s.add_argument("doc")
+    s.add_argument("--threshold", type=float, default=0.5)
+    s = sub.add_parser("groups", help="clusters of near-duplicate texts")
+    s.add_argument("--threshold", type=float, default=0.8)
+    s = sub.add_parser("redline", help="word-level changes from document A to document B")
+    s.add_argument("a")
+    s.add_argument("b")
+    s.add_argument("--html", help="also write static HTML for a viewer pane (view pane --new FILE)")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+
+    def doc(x):
+        return locators.parse("doc:" + x.removeprefix("doc:"), m.objects)["doc"] if not x.lstrip().startswith("{") \
+            else locators.parse(x, m.objects)["doc"]
+
+    if a.cmd == "threads":
+        ts = analysis.threads(m, a.by_subject)
+        if a.doc:
+            d = "doc:" + doc(a.doc)
+            ts = [t for t in ts if any(d == x["loc"] or d in x["copies"] for x in t["messages"])]
+        for t in ts:
+            out(t)
+        if a.list_file:
+            items = []
+            for t in ts:
+                group = f"{t['subject'] or '(no subject)'} · {t['first'][:10] if t['first'] else ''}"
+                items += [{"loc": x["loc"], "group": group, "fields": {"depth": x["depth"]}} for x in t["messages"]]
+            lists.write(a.list_file, {"type": "list", "v": 1, "title": "Email threads", "made_by": "analyze threads",
+                                      "columns": ["date", "from", "subject", "depth", "tags"]}, items)
+    elif a.cmd == "near":
+        out(analysis.near(m, doc(a.doc), a.threshold))
+    elif a.cmd == "groups":
+        for g in analysis.groups(m, a.threshold):
+            out(g)
+    elif a.cmd == "redline":
+        header, changes = analysis.redline(m, doc(a.a), doc(a.b))
+        out(header)
+        for c in changes:
+            out(c)
+        if a.html:
+            Path(a.html).write_text(analysis.redline_html(m, doc(a.a), doc(a.b)))
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)
