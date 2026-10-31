@@ -1,0 +1,27 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:DFC792E1C71BC41D83FF15E6D533B305
+SEQUENCE:0
+DTSTAMP:20250913T130000Z
+DTSTART:20250916T130000Z
+DTEND:20250916T140000Z
+SUMMARY:Dentist (personal)
+LOCATION:Training room
+ORGANIZER;CN="Gwen Abernathy":mailto:gabernathy@harrowgatefastener.example
+ATTENDEE;CN="Nadia Corbett";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:ncorbett@harrowgatefastener.example
+ATTENDEE;CN="Arthur Pell";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:apell@harrowgatefastener.example
+ATTENDEE;CN="Bonnie Szymanski";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:bszymanski@harrowgatefastener.example
+ATTENDEE;CN="Marisol Vance";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:mvance@harrowgatefastener.example
+ATTENDEE;CN="Raymond Voss";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:rvoss@harrowgatefastener.example
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

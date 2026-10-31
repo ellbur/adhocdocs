@@ -61,7 +61,9 @@ starts. Each `ingest` names the collection the files came from. The
 custodian is optional.
 
 To try it out, make a matter from the sample documents in `corpus/`. It
-holds a fictional supply dispute plus some real public-domain court and
+holds a fictional supply dispute, buried the way real ones are in several
+hundred irrelevant documents (marketing email, calendar invitations, office
+chatter, drafts of unclear origin), plus some real public-domain court and
 government documents:
 
 ```sh

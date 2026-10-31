@@ -5,6 +5,7 @@ import pytest
 from adhocdocs import analysis, locators
 from adhocdocs.ingest import ingest_paths
 from adhocdocs.matter import Matter
+from corpus_files import story
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 
@@ -13,8 +14,8 @@ CORPUS = Path(__file__).parent.parent / "corpus"
 def m(tmp_path_factory):
     m = Matter.create(tmp_path_factory.mktemp("a") / "m")
     for cust in ("muller-z", "okafor-d"):
-        ingest_paths(m, sorted((CORPUS / cust).glob("*.eml")), cust, cust)
-    ingest_paths(m, sorted((CORPUS / "voss-r").glob("memo-*.pdf")) + [CORPUS / "voss-r" / "INV-2026-0347.pdf"], "voss-r", "v")
+        ingest_paths(m, story(cust, "*.eml"), cust, cust)
+    ingest_paths(m, story("voss-r", "memo-*.pdf") + [CORPUS / "voss-r" / "INV-2026-0347.pdf"], "voss-r", "v")
     ingest_paths(m, [CORPUS / "muller-z" / "INV-2026-0347.pdf"], "muller-z", "muller-z")
     return Matter(m.root)
 

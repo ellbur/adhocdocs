@@ -9,6 +9,7 @@ import pytest
 from adhocdocs import lists, view
 from adhocdocs.ingest import ingest_paths
 from adhocdocs.matter import Matter
+from corpus_files import story
 
 CORPUS = Path(__file__).parent.parent / "corpus"
 
@@ -16,7 +17,7 @@ CORPUS = Path(__file__).parent.parent / "corpus"
 @pytest.fixture
 def m(tmp_path):
     m = Matter.create(tmp_path / "m")
-    ingest_paths(m, sorted((CORPUS / "okafor-d").glob("*.eml")), "okafor-d", "c")
+    ingest_paths(m, story("okafor-d", "*.eml"), "okafor-d", "c")
     return Matter(m.root)
 
 
