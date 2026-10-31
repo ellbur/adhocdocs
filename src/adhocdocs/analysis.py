@@ -1,5 +1,5 @@
 """Analysis over the matter: email threads, near-duplicates, redlines, and
-a cast of characters.
+a cast of characters from email headers and names in text.
 
 Threads come from Message-ID, In-Reply-To and References (copies of one
 message from several custodians are one node; a missing parent still links
@@ -7,6 +7,13 @@ its replies). Near-duplicates come from MinHash signatures of each text's
 word 5-shingles, compared by estimated Jaccard similarity. A redline diffs
 two documents' normalized tokens and gives every change as locators into
 both, so it can be quoted, tagged or shown.
+
+People come from email headers and from the names index: names in text
+with evidence that they are a person (a title, an initial, a role, a
+signature, "By:"), joined to known people by surname and given name or
+initial (Tom for Thomas). First names alone ("José") and initials ("TK")
+are not counted; search for those. ``people --person X --list F`` writes
+the documents that name someone, each mention a child row.
 """
 
 import difflib
@@ -288,17 +295,74 @@ def _name_key(name: str) -> str | None:
     return " ".join(words) if len(words) >= 2 else None
 
 
+NICKNAMES = [set(g.split()) for g in """
+    thomas tom tommy|william will bill billy liam|robert rob bob bobby robbie|richard rick dick rich|james jim jimmy
+    jamie|michael mike mick|john jack johnny|joseph joe joey|charles charlie chuck|edward ed eddie ted ned
+    |elizabeth liz beth betty eliza lisa|margaret maggie meg peggy|katherine kate katie kathy cathy|patricia pat
+    patty trish|jennifer jen jenny|rebecca becky|susan sue suzy|deborah deb debbie|christopher chris|christine
+    chris tina|daniel dan danny|anthony tony|andrew andy drew|benjamin ben|matthew matt|nicholas nick
+    |alexander alex|alexandra alex|samuel sam|samantha sam|stephen steve|steven steve|timothy tim|gregory greg
+    |jonathan jon|nathaniel nate nat|raymond ray|ronald ron|donald don|douglas doug|gerald gerry jerry
+    |lawrence larry|leonard len lenny|kenneth ken|frederick fred|francis frank|henry hank harry|harold harry
+    |david dave|peter pete|philip phil|zachary zach|joshua josh|jacob jake|abigail abby|victoria vicky tori
+""".replace("\n", " ").split("|")]
+
+
+def same_given(a: str, b: str) -> bool:
+    """Whether two folded given names can be the same person's: equal, one a
+    prefix of the other (Dan, Daniel), or nicknames (Tom, Thomas)."""
+    if a == b or (len(min(a, b, key=len)) >= 3 and (a.startswith(b) or b.startswith(a))):
+        return True
+    return any(a in g and b in g for g in NICKNAMES)
+
+
+def _parts(display: str):
+    """(given, surname) folded, from a display name, or None."""
+    from .names import key
+    if not display or "@" in display:
+        return None
+    if "," in display:
+        last, _, first = display.partition(",")
+        display = f"{first} {last}"
+    words = [key(w).strip(".") for w in display.split() if w.strip(".")]
+    return (words[0], words[-1]) if len(words) >= 2 else None
+
+
+def _display(form: str) -> str:
+    """A mention as a name: without its title, and not in capitals."""
+    from .names import TITLES
+    words = form.split()
+    while len(words) > 2 and words[0].rstrip(".").lower() in TITLES:
+        words.pop(0)
+    if len(words) == 2 and words[0].rstrip(".").lower() in TITLES and words[0].isupper():
+        words[0] = words[0].capitalize()                 # MR. KETTERING -> Mr. Kettering; Mr. X keeps its title
+    return " ".join("-".join(p.capitalize() for p in w.split("-")) if w.isupper() and len(w.rstrip(".")) > 1 else w
+                    for w in words)
+
+
 def people(m: Matter, mentions=False) -> list[dict]:
-    """A cast of characters from email headers. Each address is a person;
-    addresses whose display names fold to the same first and last name are
-    merged. With ``mentions``, also the number of documents whose text names
-    the person (by their most common display name)."""
+    """A cast of characters, from email headers and from names in document
+    text (:mod:`adhocdocs.names`).
+
+    From headers, each address is a person, and addresses whose display
+    names fold to the same first and last name are merged. A mention in
+    text joins a known person when its surname matches and its given name
+    (or initial, or a nickname: Tom for Thomas) fits only one of them; a
+    surname alone ("Mr. Kettering") joins the only person with it. Mentions
+    with evidence that fit no one become new people ``source: text``;
+    mentions that are only name-shaped ("Atlantic Gasket") never do.
+
+    Each person has ``mentioned_in`` (documents whose text names them) and
+    ``roles`` found beside their name. With ``mentions``, also every
+    mention as a locator, with its basis."""
+    from . import locators
     rows = _ready(m, "fields").rows()
+    state = m.state
     meta = {}
-    for d in m.state.live_documents():
+    for d in state.live_documents():
         r = rows.get(d)
         if r and r.get("kind") == "email":
-            meta[d] = m.objects.get_object(m.state.metadata[d])
+            meta[d] = m.objects.get_object(state.metadata[d])
     u = _Union()
     names = defaultdict(lambda: defaultdict(int))     # address -> display name -> count
     stats = defaultdict(lambda: {"sent": 0, "received": 0, "dates": []})
@@ -333,23 +397,104 @@ def people(m: Matter, mentions=False) -> list[dict]:
             for n, c in names[a].items():
                 variants[n] += c
         dates = sorted(x for a in addrs for x in stats[a]["dates"])
-        person = {
+        out.append({
             "name": max(variants, key=variants.get) if variants else addrs[0],
+            "source": ["email"],
             "names": sorted(variants, key=lambda n: -variants[n]),
             "addresses": sorted(addrs),
             "domains": sorted({a.rsplit("@", 1)[-1] for a in addrs}),
             "sent": sum(stats[a]["sent"] for a in addrs),
             "received": sum(stats[a]["received"] for a in addrs),
             "first": dates[0] if dates else None, "last": dates[-1] if dates else None,
-        }
-        out.append(person)
-    if mentions:
-        from .search import Options, Searcher
-        s = Searcher(m, Options())
-        for p in out:
-            if variants := [n for n in p["names"] if _name_key(n)]:
-                q = " OR ".join(f'"{n}"' for n in variants)
-                _, items = s.keyword(q)
-                p["mentioned_in"] = len(items)
-    out.sort(key=lambda p: -(p["sent"] + p["received"]))
+        })
+
+    # -- names in text ---------------------------------------------------------------
+    docs_of = defaultdict(list)                       # primary text -> live documents
+    layer_of = {}
+    for d in state.live_documents():
+        layer = state.primary_layer(state.documents[d])
+        if layer:
+            docs_of[layer.text].append(d)
+            layer_of[layer.text] = layer.id
+    found = _ready(m, "names").mentions(set(docs_of))
+    people_ = [{"given": set(), "initials": set(), "surname": None, "row": p} for p in out]
+    by_surname = defaultdict(list)
+    for p in people_:
+        for n in p["row"]["names"]:
+            parts = _parts(n)
+            if parts:
+                p["given"].add(parts[0])
+                p["initials"].add(parts[0][0])
+                p["surname"] = parts[1]
+        if p["surname"]:
+            by_surname[p["surname"]].append(p)
+
+    def match(x):
+        cands = by_surname.get(x["surname"], [])
+        if x["given"]:
+            c = [p for p in cands if any(same_given(x["given"], g) for g in p["given"])]
+            if not c:
+                c = [p for p in cands if not p["given"] and x["initial"] in p["initials"]]
+        elif x["initial"]:
+            c = [p for p in cands if x["initial"] in p["initials"]]
+        else:
+            c = cands
+        return c[0] if len(c) == 1 else None
+
+    def strength(x):
+        return (x["basis"] == ["name"], not x["given"], not x["initial"])
+
+    hits = defaultdict(list)                          # id(person) -> mentions
+    for x in sorted(found, key=strength):
+        p = match(x)
+        if p is None:
+            if x["basis"] == ["name"]:
+                continue
+            p = {"given": set(), "initials": set(), "surname": x["surname"], "row": None}
+            people_.append(p)
+            by_surname[x["surname"]].append(p)
+        if x["given"]:
+            p["given"].add(x["given"])
+        if x["initial"]:
+            p["initials"].add(x["initial"])
+        hits[id(p)].append(x)
+
+    for p in people_:
+        xs = hits.get(id(p), [])
+        if p["row"] is None:
+            forms = defaultdict(int)
+            for x in xs:
+                forms[(bool(x["given"]), bool(x["initial"]), _display(x["form"]))] += 1
+            best = max(forms, key=lambda k: (k[0], k[1], forms[k]))
+            dates = sorted(d for x in xs for doc in docs_of[x["text_hash"]] if (d := (rows.get(doc) or {}).get("date")))
+            p["row"] = {"name": best[2], "source": ["text"], "names": [], "addresses": [], "domains": [],
+                        "sent": 0, "received": 0,
+                        "first": dates[0] if dates else None, "last": dates[-1] if dates else None}
+            basis = defaultdict(int)
+            for x in xs:
+                for b in x["basis"]:
+                    basis[b] += 1
+            p["row"]["basis"] = dict(sorted(basis.items(), key=lambda kv: -kv[1]))
+            out.append(p["row"])
+        elif xs:
+            p["row"]["source"] = ["email", "text"]
+        row = p["row"]
+        written = defaultdict(int)
+        roles = defaultdict(int)
+        for x in xs:
+            written[" ".join(x["form"].split())] += 1
+            if x["role"]:
+                roles[x["role"]] += 1
+        row["written_as"] = sorted((w for w in written if w not in row["names"]), key=lambda w: -written[w])
+        row["roles"] = sorted(roles, key=lambda r: -roles[r])
+        row["mentioned_in"] = len({doc for x in xs for doc in docs_of[x["text_hash"]]})
+        if mentions:
+            texts = {}
+            row["mentions"] = []
+            for x in xs:
+                t = texts.get(x["text_hash"]) or texts.setdefault(x["text_hash"], m.objects.get_text(x["text_hash"]))
+                for doc in docs_of[x["text_hash"]]:
+                    row["mentions"].append({"loc": locators.char_locator(doc, layer_of[x["text_hash"]], t, x["start"], x["end"]),
+                                            "basis": x["basis"], **({"role": x["role"]} if x["role"] else {})})
+    out.sort(key=lambda p: (-(p["sent"] + p["received"]), -p["mentioned_in"], p["name"]))
     return out

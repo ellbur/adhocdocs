@@ -143,6 +143,7 @@ to try on the sample matter:
 - *"Reconstruct the email threads about the past-due invoice. Are any messages missing?"*
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
 - *"Who are the people in this case, and how do they relate to each other?"*
+- *"Who is José Ibáñez? Show me every document that mentions him."*
 
 **Writing**
 
@@ -207,7 +208,8 @@ uv run list ls                          # the workspace's lists and sets
 uv run text "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run analyze threads
 uv run analyze groups                   # near-duplicates and versions
-uv run analyze people
+uv run analyze people                   # from email headers and names in the documents
+uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
 uv run page docs memo.md --list memo.list.jsonl            # the documents memo.md cites

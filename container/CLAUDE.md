@@ -25,7 +25,7 @@ has `--help` with the details. Read the help before first using a tool.
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags and notes; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
-| `analyze` | email threads, near-duplicates and versions, redlines, people |
+| `analyze` | email threads, near-duplicates and versions, redlines, people (from headers and text, with roles and mentions) |
 | `produce` | Bates-stamped productions, withholding, redaction, privilege log; `produce exhibits` for exhibit stickers and lists |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |

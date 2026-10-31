@@ -81,12 +81,17 @@ details).
 - **Near-duplicate and version detection** (MinHash, with similarity and
   containment).
 - **A redline** of two documents as locators, or as HTML for a viewer pane.
-- **A cast of characters** from email headers. Addresses whose display
-  names fold to the same name become one person, with variants, counts,
-  dates and, optionally, documents that mention them.
+- **A cast of characters** from email headers and from names in document
+  text. Addresses whose display names fold to the same name become one
+  person. Names in text ("T. Kettering", "Mr. Kettering", "Tom Kettering")
+  join a known person, and names with evidence that they are a person (a
+  title, an initial, a role beside them, a signature, "By:") that fit no
+  one become people of their own, with the roles found beside them and
+  every mention as a locator ([`names.py`](src/adhocdocs/names.py) has the
+  rules). Rules, not a model: each mention says why it was taken.
 
-*Proposed:* people found in document text, not only email headers, and
-organizations.
+*Proposed:* organizations; first names alone ("José") and initials ("TK")
+joined to the person they stand for.
 
 ## Review and output
 

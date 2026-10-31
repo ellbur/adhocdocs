@@ -1053,8 +1053,11 @@ def analyze(argv=None):
     s.add_argument("--threshold", type=float, default=0.5)
     s = sub.add_parser("groups", help="clusters of near-duplicate texts")
     s.add_argument("--threshold", type=float, default=0.8)
-    s = sub.add_parser("people", help="a cast of characters from email headers")
-    s.add_argument("--mentions", action="store_true", help="also count the documents that name each person")
+    s = sub.add_parser("people", help="a cast of characters from email headers and names in document text")
+    s.add_argument("--mentions", action="store_true", help="also every mention of each person, as locators")
+    s.add_argument("--person", help="only people whose name or a way they're written contains this")
+    s.add_argument("--list", dest="list_file", help="with --person: a list of the documents that name them, "
+                                                    "each mention as a child")
     s = sub.add_parser("redline", help="word-level changes from document A to document B")
     s.add_argument("a")
     s.add_argument("b")
@@ -1087,8 +1090,33 @@ def analyze(argv=None):
         for g in analysis.groups(m, a.threshold):
             out(g)
     elif a.cmd == "people":
-        for p_ in analysis.people(m, a.mentions):
-            out(p_)
+        if a.list_file and not a.person:
+            raise ValueError("--list needs --person")
+        from .names import key
+        found = analysis.people(m, a.mentions or bool(a.list_file))
+        if a.person:
+            want = key(a.person)
+            found = [p_ for p_ in found if any(want in key(n) for n in [p_["name"], *p_["names"], *p_["written_as"]])]
+        if a.list_file:
+            from .index import open_index
+            rows = open_index(m, "fields").rows()
+            by_doc = {}
+            for p_ in found:
+                for x in p_["mentions"]:
+                    by_doc.setdefault(x["loc"]["doc"], []).append({"loc": x["loc"], "fields": {
+                        "person": p_["name"], "basis": ", ".join(x["basis"]), **({"role": x["role"]} if x.get("role") else {})}})
+            docs = sorted(by_doc, key=lambda d: ((rows.get(d) or {}).get("date") or "9999", d))
+            items = [{"loc": "doc:" + d, "children": by_doc[d]} for d in docs]
+            lists.write(a.list_file, {"type": "list", "v": 1, "title": "Mentions of " + ", ".join(p_["name"] for p_ in found),
+                                      "columns": ["date", "name", "custodian", "person", "role", "tags"],
+                                      "made_by": "analyze people", "query": a.person}, items)
+            out({"written": a.list_file, "people": [p_["name"] for p_ in found], "documents": len(items),
+                 "mentions": sum(len(v) for v in by_doc.values())})
+        else:
+            for p_ in found:
+                if not a.mentions:
+                    p_.pop("mentions", None)
+                out(p_)
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))
         out(header)

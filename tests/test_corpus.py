@@ -182,3 +182,26 @@ def test_reocr_into_the_workspace(tmp_path):
     assert not (m.store_dir / "objects").joinpath("x").exists()          # nothing written to the store
     found = lambda layers: search(m, '"united states district court"', layers=layers)[1]
     assert found("native") == [] and len(found("ocr")) == 1
+
+
+def test_people_in_text(matter):
+    """The cast of characters reaches people named only in documents, and
+    joins the ways a known person is written (SOURCES.md has the story)."""
+    from adhocdocs import analysis
+    people = {p["name"]: p for p in analysis.people(matter)}
+    jose = people["José Ibáñez"]                         # never in an email header
+    assert jose["source"] == ["text"] and jose["roles"][0] == "dock associate"
+    assert {"J. Ibáñez", "Mr. Ibáñez", "Jose Ibanez"} <= set(jose["written_as"])
+    assert people["Linnea Fairbrother"]["roles"] == ["registered professional reporter"]
+    assert people["D. Pruitt"]["roles"] == ["driver"] and people["R. Ames"]["roles"] == ["driver"]
+    tom = people["Thomas Kettering"]
+    assert tom["source"] == ["email", "text"] and "receiving supervisor" in tom["roles"]
+    assert {"Tom Kettering", "T. Kettering", "Mr. Kettering", "THOMAS KETTERING"} <= set(tom["written_as"])
+    assert {"Ms. Stroud", "E. Stroud"} <= set(people["Evelyn Stroud"]["written_as"])
+    assert "controller" in people["Raymond Voss"]["roles"]
+    for wrong in ("Atlantic Gasket Works", "Harrowgate Fastener", "Bellwether Procurement", "F. Supp", "S. Customs",
+                  "I. Background"):
+        assert wrong not in people
+    # every mention is a locator that checks out
+    for x in next(p for p in analysis.people(matter, mentions=True) if p["name"] == "José Ibáñez")["mentions"]:
+        assert locators.resolve(matter, x["loc"])["status"] == "exact"
