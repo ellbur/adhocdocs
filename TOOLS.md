@@ -73,9 +73,12 @@ details).
 - **Near-duplicate and version detection** (MinHash, with similarity and
   containment).
 - **A redline** of two documents as locators, or as HTML for a viewer pane.
+- **A cast of characters** from email headers. Addresses whose display
+  names fold to the same name become one person, with variants, counts,
+  dates and, optionally, documents that mention them.
 
-*Proposed:* an entity directory (a cast of characters, with name variants
-and addresses resolved to one person).
+*Proposed:* people found in document text, not only email headers, and
+organizations.
 
 ## Review and output
 

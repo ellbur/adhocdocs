@@ -68,3 +68,23 @@ def test_redline(m):
     # line breaks and hyphenation are not changes
     _, same = analysis.redline(m, v1, v1)
     assert same == []
+
+
+def test_people_merges_addresses_by_name(tmp_path):
+    from adhocdocs.ingest import ingest_bytes
+    m2 = Matter.create(tmp_path / "p")
+    mails = [
+        "From: Zoë Müller <zoe@work.example>\nTo: Dana Okafor <dana@vendor.example>\nDate: Mon, 09 Mar 2026 10:00:00 -0400\nSubject: a\n\nZoe Muller here.\n",
+        "From: \"Muller, Zoe\" <zmuller@home.example>\nTo: Dana Okafor <dana@vendor.example>\nDate: Tue, 10 Mar 2026 10:00:00 -0400\nSubject: b\n\nhi\n",
+        "From: Dana Okafor <dana@vendor.example>\nTo: Info <info@vendor.example>\nDate: Wed, 11 Mar 2026 10:00:00 -0400\nSubject: c\n\nhi\n",
+    ]
+    for i, t in enumerate(mails):
+        ingest_bytes(m2, t.encode(), f"{i}.eml", {"source": {"collection": "c", "path": f"{i}.eml"}})
+    ps = {p["name"]: p for p in analysis.people(Matter(m2.root), mentions=True)}
+    zoe = ps["Zoë Müller"]
+    assert zoe["addresses"] == ["zmuller@home.example", "zoe@work.example"]
+    assert set(zoe["names"]) == {"Zoë Müller", "Muller, Zoe"} and zoe["sent"] == 2
+    assert zoe["first"].startswith("2026-03-09") and zoe["last"].startswith("2026-03-10")
+    assert zoe["mentioned_in"] >= 2                     # its own header lines and "Zoe Muller here"
+    assert ps["Dana Okafor"]["sent"] == 1 and ps["Dana Okafor"]["received"] == 2
+    assert ps["Info"]["addresses"] == ["info@vendor.example"]     # one-word names never merge

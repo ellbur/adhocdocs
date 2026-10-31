@@ -735,6 +735,8 @@ def analyze(argv=None):
     s.add_argument("--threshold", type=float, default=0.5)
     s = sub.add_parser("groups", help="clusters of near-duplicate texts")
     s.add_argument("--threshold", type=float, default=0.8)
+    s = sub.add_parser("people", help="a cast of characters from email headers")
+    s.add_argument("--mentions", action="store_true", help="also count the documents that name each person")
     s = sub.add_parser("redline", help="word-level changes from document A to document B")
     s.add_argument("a")
     s.add_argument("b")
@@ -766,6 +768,9 @@ def analyze(argv=None):
     elif a.cmd == "groups":
         for g in analysis.groups(m, a.threshold):
             out(g)
+    elif a.cmd == "people":
+        for p_ in analysis.people(m, a.mentions):
+            out(p_)
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))
         out(header)
