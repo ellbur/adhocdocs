@@ -799,10 +799,13 @@ def produce(argv=None):
     p.add_argument("--digits", type=int, default=6)
     p.add_argument("--legend", help='e.g. "CONFIDENTIAL"')
     p.add_argument("--no-families", action="store_true", help="don't add each document's attachments after it")
+    p.add_argument("--withhold", action="append", help="tag that withholds a document (default: privileged)")
+    p.add_argument("--redact", default="redact", help="tags starting with this redact what they're on (default: redact)")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
     try:
-        out(prod.produce(m, Path(a.list_file), a.name, a.prefix, a.start, a.digits, a.legend, not a.no_families))
+        out(prod.produce(m, Path(a.list_file), a.name, a.prefix, a.start, a.digits, a.legend, not a.no_families,
+                         tuple(a.withhold or ["privileged"]), a.redact))
     except prod.ProductionError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)

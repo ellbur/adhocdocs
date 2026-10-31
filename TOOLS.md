@@ -87,7 +87,11 @@ organizations.
   and Opticon load files ([`produce.py`](src/adhocdocs/produce.py)).
   Families stay together. `bates:` locators resolve through production
   records, and pages cite produced documents by Bates number.
+- **Withholding, redaction and privilege logs.** *Built*, from tags. A
+  document tagged `privileged` becomes a slip sheet. Ranges or regions
+  tagged `redact…` are redacted, with the text beneath removed. Both go in
+  the production's privilege log, with the basis taken from tag
+  descriptions and the user's notes.
 - **Exports of pages** with the provenance of every quotation. *Built*:
   [PAGES.md](PAGES.md).
-- *Proposed:* redaction (redactions are derived documents), privilege logs,
-  exhibit stamping, and native and TIFF productions.
+- *Proposed:* exhibit stamping, and native and TIFF productions.
