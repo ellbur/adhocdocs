@@ -132,5 +132,6 @@ because Claude never typed it.
   ([TEXTLAYERS.md](TEXTLAYERS.md)), pages apply a small fixed set of display
   rules and mark every other change ([PAGES.md](PAGES.md)), and
   low-confidence OCR is marked so it can be compared with the page image.
-- **Unbacked quotes in pages.** *Proposed:* a lint warning.
+- **Unbacked quotes in pages.** *Answered:* a lint warning
+  ([PAGES.md](PAGES.md)).
 - **Seamless containers.** *Answered* in [CONTAINER.md](CONTAINER.md).

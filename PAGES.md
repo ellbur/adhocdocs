@@ -1,6 +1,9 @@
 # Literate Pages
 
-*Status: designed, not built.*
+*Status: built, except the viewer's `page` pane:
+[`literate.py`](src/adhocdocs/literate.py) has the format (directives,
+`refs` block, alterations), [`pages.py`](src/adhocdocs/pages.py) rendering,
+citations and export, and `page --help` the usage.*
 
 A **page** is written work product (a memo, a chronology, a draft brief
 section) that quotes and cites documents. Following Principle 5, quotations
@@ -16,105 +19,67 @@ through to its source.
 ## Goals
 
 1. **Plain source:** a Markdown file, edited like any file, versioned with git.
-2. **Readable source:** references appear by short names; locators sit at
-   the bottom.
+2. **Readable source:** references appear by short names; locators sit in a
+   `refs` block at the bottom.
 3. **No typed quotations:** there is no syntax for supplying a quotation's
    text. Elisions and alterations are data, and the renderer produces their
    marks.
-4. **Fails loudly:** a broken reference never renders as text, and export
-   refuses while any are broken.
+4. **Fails loudly:** a broken reference renders as a red placeholder, never
+   as text, and export refuses while any are broken.
 
-## Format
+## How it works
 
-Optional YAML front matter, a Markdown body with directives, and a fenced
-`refs` block at the end with one JSON locator per line plus an `id`:
+- **References come from the store.** `page ref add page.md <id>
+  <locator>...` takes a search hit's `loc` (or several, for an elided
+  quotation) and writes the layer and quote fingerprint. A hand-written
+  fingerprint that doesn't match makes the reference broken; it can't
+  change the text.
+- **Every change to the words is marked** (`[T]`, `[the vendor]`, `[sic]`,
+  `…`, emphasis noted in the citation), so a quotation reads back into its
+  source by removing the marks. A line-end hyphen is joined only by an
+  explicit, recorded `join`. Alterations are positioned by layer offsets,
+  and they move with their part when a reference is re-anchored.
+- **Display rules are the only unrecorded changes:** whitespace runs become
+  one space (except `layout=lines`, the default for transcript block
+  quotes), and double quotes inside an inline quotation become single.
+- **Rendering for the viewer:** each run of document text is a `data-text`
+  span naming its exact layer range, which the viewer fills from the store.
+  The renderer's own copy sits inside, so the HTML also reads in a browser.
+  Marks are separate spans. Quotations link (`loc:`) to their source.
+  Re-anchored and low-confidence-OCR quotations get classes for markers.
+- **Citations are generated** from the locator, the document's **cite-as**
+  name and the page's `cite-style`. Cite-as names live in
+  `workspace/cite-as.jsonl`, outside document identity. Without one, a name
+  is made from metadata: "Kettering Dep." from a deposition title, "Email
+  from A to B" from headers, else the title or file name. The default style
+  gives "Kettering Dep. 6:12–14", "Warehouse Log at 2" and "Email from …
+  (Mar. 9, 2026)". A page can name a Python file with its own `cite(info)`.
+  Inline citations follow the quotation in parentheses; `cite=footnote`
+  and `cite=none` change that.
+- **Checking** (`page check`) resolves every reference and flags Markdown
+  blockquotes, quoted prose of five or more words (a possible unbacked
+  quotation, a warning only), and missing, unused and duplicate IDs. Claude's
+  notes get the same check. `page refs update` rewrites re-anchored
+  references.
+- **Export** (`page export --format html|docx|pdf`) refuses while anything
+  is broken, and while anything is re-anchored unless told otherwise. It
+  writes quotations as literal text, plus `<output>.provenance.json` with
+  each quotation's locators, rendered text, alterations, status and
+  citation. It records an `export` event with both hashes in the workspace
+  log.
 
-~~~~markdown
----
-title: Chronology of the March shipment
-cite-style: default
----
+## Not built yet
 
-On March 9, Müller wrote that :q{#muller-not-received}. The carrier's
-receipt shows delivery :cite{#pod}.
+- The viewer's `page` pane, and clicking a low-confidence marker to see the
+  page image.
+- Bates citations, which wait for production records.
+- A tool that suggests `join`s for scanned text.
 
-::q{#kettering-dep}
+## Decided
 
-```refs
-{"id": "muller-not-received", "doc": "sha256:3f9a…", "layer": "sha256:8b21…", "select": {"char": [1200, 1231]}, "quote": {"exact": "the shipment was never received", "prefix": "…", "suffix": "…"}}
-{"id": "pod", "doc": "sha256:77c0…", "select": {"page": 1}}
-{"id": "kettering-dep", "doc": "sha256:e19b…", "layer": "sha256:0a4d…", "parts": [{"select": {"char": [5120, 5388]}, "quote": {…}}, {"select": {"char": [5610, 5702]}, "quote": {…}}]}
-```
-~~~~
-
-Directives use the CommonMark generic directives proposal (supported by
-`remark-directive`):
-
-| Directive | Renders as |
-|---|---|
-| `:q{#id}` | inline “quotation” plus citation |
-| `::q{#id}` (own line) | block quotation plus citation |
-| `:cite{#id}` | citation only |
-| `[text](ref:id)` | link that opens the viewer there |
-
-Options: `cite=none|footnote`, `layout=lines` (keep line breaks; the default
-for transcripts), `signal="see"`.
-
-- References are usually written by tools (`page ref add page.md <id>
-  <locator>`, or straight from a search hit's `loc`), which take the quote
-  from the layer. A hand-written fingerprint that doesn't match makes the
-  reference broken; it can't change the text.
-- **Elisions** use `parts`: ranges in one layer, in order, not overlapping,
-  joined with " … ".
-- Only quoted references need `layer` and `quote`.
-
-## Alterations
-
-Positions are layer offsets, so they can be checked and move with the
-reference if it is re-anchored. Every change to the words is marked, so the
-quotation reads back into its source by removing the brackets.
-
-| Alteration | JSON | Renders as |
-|---|---|---|
-| replace | `{"replace": [1200, 1201], "with": "T"}` | `[T]` |
-| insert | `{"insert": 1215, "text": "the vendor"}` | `[the vendor]` |
-| sic | `{"sic": 1222}` | `[sic]` after the offset |
-| emphasis | `{"emphasis": [1209, 1214]}` | italics, "(emphasis added)" |
-| lead / trail | `{"lead": "…"}` / `{"trail": "…"}` | ellipsis at start or end |
-| join | `{"join": 1240}` | a line-end hyphen removed (unbracketed by convention, but recorded and shown in verification) |
-
-The renderer's only unrecorded changes are display rules: line breaks and
-whitespace runs become one space (unless `layout=lines`), and double quotes
-inside an inline quotation become single quotes.
-
-## Citations
-
-Generated, never typed, from the locator (pages, page:line, Bates), the
-document's **cite-as** record (a short name or exhibit number, attached from
-outside like tags), and the page's `cite-style`, a small swappable formatter.
-For example, transcript `pl=14:3,15:7` gives "Jones Dep. 14:3–15:7"; a
-produced document gives "ABC000124–25".
-
-## Tools
-
-- `page render` produces static HTML for a `page` pane. Quotations are
-  `data-text` elements the viewer fills in, styled apart from prose and
-  clickable. Re-anchored references get a marker, broken ones a red
-  placeholder, and low-confidence OCR a marker that shows the page image.
-  There are no editing controls.
-- `page check` resolves every reference and lints. It flags Markdown
-  blockquotes, quotation marks around more than a few words of prose
-  (possible unbacked quotes, a warning only), and unused or missing IDs.
-  `page refs update` rewrites re-anchored references.
-- `page export --format docx|pdf|html` refuses on broken references, writes
-  quotations as literal text, and writes `<name>.provenance.json` with each
-  quotation's reference, locator, rendered text, alterations and status.
-
-## Decisions to confirm
-
-- A single file with a trailing `refs` block, not a separate refs file.
-- Directive syntax, rather than a custom `{{q id}}`.
-- Hyphen joins as explicit alterations. Safer, but more work for scanned
-  documents; a tool could suggest them. (Search already joins them, in
+- A single file with a trailing `refs` block.
+- Directive syntax (CommonMark generic directives proposal).
+- Hyphen joins as explicit alterations. (Search joins them on its own, in
   [`textnorm.py`](src/adhocdocs/textnorm.py).)
 - The unbacked-quote lint as a warning only.
+- Cite-as names as a workspace file, and cite styles as Python files.

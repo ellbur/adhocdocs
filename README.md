@@ -15,6 +15,8 @@ uv run search '"never received" w/10 pallet'
 uv run search 'who signed for the delivery' --index hybrid
 uv run search grep 'PN 44-B/7'
 uv run idx status
+uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
+uv run page export memo.md --format docx -o memo.docx   # memo.md quotes with :q{#nr}
 uv run adhoc ann-api &   # the annotation API; then e.g. ann define-tag hot, ann tag hot <doc>
 uv run pytest            # ADHOC_TEST_SEMANTIC=1 to include semantic search
 ```

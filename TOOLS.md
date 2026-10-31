@@ -51,10 +51,12 @@ them.
 
 ## Writing
 
-- **Literate pages.** *Designed*: [PAGES.md](PAGES.md).
+- **Literate pages.** *Built* (`page`: check, render, export to HTML,
+  .docx and PDF), except the viewer pane: [PAGES.md](PAGES.md).
 - **Quote checking.** *Built*: `text --json <locator>` resolves a locator
   and reports exact, re-anchored or broken, and `ann check` checks the
-  references and quotations in a note. Pages will reuse the same checker.
+  references and quotations in a note, with the same checker `page check`
+  uses.
 
 ## Analysis, review and output
 
