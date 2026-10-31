@@ -11,9 +11,9 @@ design doc), or **proposed**.
   shared way to name a document or a place in one; most of the "plain data"
   of Principle 4.
 - **Ingestion and text extraction.** *Built* for PDF (with OCR), images,
-  .eml with attachments, .docx, CSV, HTML and text: `adhoc ingest`,
-  [TEXTLAYERS.md](TEXTLAYERS.md). Originals are never changed; text is a
-  derived layer. *Proposed:* archives (zip, PST/mbox), `.msg`, `.xlsx`.
+  .eml with attachments, .docx, .xlsx, CSV, HTML, text, and zip and mbox
+  containers: `adhoc ingest`, [TEXTLAYERS.md](TEXTLAYERS.md). Originals are
+  never changed; text is a derived layer. *Proposed:* PST and `.msg`.
 - **Metadata extraction.** *Built* for email headers and file properties.
   *Proposed:* richer fields, cast of characters.
 

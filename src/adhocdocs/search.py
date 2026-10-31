@@ -226,7 +226,7 @@ class Searcher:
             if not ok:
                 continue
             score = max((scores.get(l.text, 0.0) for l, _ in hits), default=0.0)
-            items.append(self.item(doc, round(score, 3), [self.hit(doc, l, s, e, toks) for l, sp in hits for s, e, toks in dedupe(sp)]))
+            items.append(self.item(doc, float(f"{score:.4g}"), [self.hit(doc, l, s, e, toks) for l, sp in hits for s, e, toks in dedupe(sp)]))
         items.sort(key=lambda it: (-it["score"], it["doc"].get("date") or ""))
         header = self.header(q, node, "keyword", kw, exhaustive=True, coverage=self.coverage(kw))
         return header, items
