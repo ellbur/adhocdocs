@@ -144,3 +144,20 @@ def test_custom_cite_style(m, tmp_path):
     (tmp_path / "style.py").write_text("def cite(info):\n    return 'CUSTOM ' + info['kind']\n")
     p = write_page(tmp_path, "---\ncite-style: style.py\n---\n:q{#nr}", [{"id": "nr", **loc}])
     assert "CUSTOM email" in pages.render(pages.Page(m, p))[0]
+
+
+def test_docx_export_keeps_tables(m, tmp_path):
+    import docx
+    loc, _, _ = loc_of(m, EMAIL, "the shipment was never received")
+    p = write_page(tmp_path, "| Date | Evidence |\n|---|---|\n| 9 Mar | :q{#nr} |", [{"id": "nr", **loc}])
+    pages.export(pages.Page(m, p), "docx", tmp_path / "out.docx")
+    table = docx.Document(str(tmp_path / "out.docx")).tables[0]
+    assert table.cell(0, 0).text == "Date" and table.cell(0, 0).paragraphs[0].runs[0].bold
+    assert "the shipment was never received" in table.cell(1, 1).text
+
+
+def test_docx_export_refuses_to_drop_a_quotation(m, tmp_path):
+    loc, _, _ = loc_of(m, EMAIL, "the shipment was never received")
+    p = write_page(tmp_path, "See [the email](ref:nr).\n\n```\n:q{#nr}\n```", [{"id": "nr", **loc}])
+    with pytest.raises(ValueError, match="can't place reference"):
+        pages.export(pages.Page(m, p), "docx", tmp_path / "out.docx")

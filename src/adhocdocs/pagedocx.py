@@ -34,6 +34,7 @@ class Writer:
         self.doc = docx.Document()
         self.source, self.fills = prepare(page)
         self.footnotes = []
+        self.written = set()
 
     def quote_runs(self, para, d, r, block, styles=()):
         for p in literate.pieces(r, layout=layout_of(d, r, self.page), inline=not block, styles=styles):
@@ -71,11 +72,33 @@ class Writer:
             for j, cell in enumerate(row):
                 t.cell(i, j).text = cell
 
+    def markdown_table(self, tokens, i):
+        """A Markdown table, header row bold. Returns the index of table_close."""
+        rows = []
+        while tokens[i].type != "table_close":
+            t = tokens[i]
+            if t.type == "tr_open":
+                rows.append([])
+            elif t.type == "inline":
+                rows[-1].append((tokens[i - 1].type == "th_open", t.children))
+            i += 1
+        table = self.doc.add_table(rows=len(rows), cols=max(len(r) for r in rows))
+        table.style = "Table Grid"
+        for ri, row in enumerate(rows):
+            for ci, (head, children) in enumerate(row):
+                para = table.cell(ri, ci).paragraphs[0]
+                self.inline(para, children)
+                if head:
+                    for run in para.runs:
+                        run.bold = True
+        return i
+
     def cite_runs(self, para, html_cite):
         for text, italic in _strip_tags(html_cite):
             para.add_run(text).italic = italic or None
 
     def fill(self, para, token, style):
+        self.written.add(token)
         kind, d, r = self.fills[token]
         if r.status == "broken":
             raise ValueError(f"broken reference {d.id}")
@@ -173,6 +196,8 @@ class Writer:
                     self.inline(p, inl.children)
                 i += 3
                 continue
+            elif t.type == "table_open":
+                i = self.markdown_table(tokens, i)
             elif t.type == "footnote_block_open":
                 self.doc.add_paragraph("Notes")
             elif t.type == "footnote_open":
@@ -182,6 +207,10 @@ class Writer:
                 while tokens[i].type != "footnote_close":
                     i += 1
             i += 1
+        missing = [d.id for k, (kind, d, _) in self.fills.items() if kind != "link" and k not in self.written]
+        if missing:  # never drop a quotation silently: Markdown this writer doesn't handle
+            raise ValueError(f"the Word export can't place reference(s) {', '.join(missing)}; "
+                             "move them out of unsupported Markdown, or export html or pdf")
         if self.footnotes:
             self.doc.add_paragraph("Citations")
             for n, c in enumerate(self.footnotes, 1):
