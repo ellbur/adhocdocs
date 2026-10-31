@@ -705,7 +705,9 @@ this only talks to it. Locators are string or JSON; hash prefixes work.
 Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
 Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
 the duplicates), N note, tag hotkeys, v layer, f mode, Tab pane, Alt-drag
-a region on a page, ? help.
+a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
+Shift+arrows select cells, and row and column headers select whole rows
+and columns. The selection is a `sheet=…&cells=B2:D10` locator.
 
 Services: a pane's <form action="svc:NAME"> is answered immediately by
 `view serve NAME -- cmd …` (run it in the background), without waiting for
@@ -723,7 +725,7 @@ def view(argv=None):
     s.add_argument("--pane")
     s.add_argument("--new-pane", action="store_true")
     s.add_argument("--layer", dest="view_", help="layer view: native, ocr, transcript, …")
-    s.add_argument("--mode", choices=["page", "flow", "text"])
+    s.add_argument("--mode", choices=["page", "flow", "text", "grid"], help="grid: spreadsheets as a table of cells")
     s = sub.add_parser("highlight", help="mark a place for the user; stays until cleared")
     s.add_argument("loc")
     s.add_argument("--label")

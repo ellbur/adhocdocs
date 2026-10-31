@@ -56,7 +56,11 @@ text is now at the old offsets.
   segments), `#label=iv` (printed page labels), and `bates:ABC000123[-…]`
   (through production records; a range spanning documents resolves to a
   list).
-- `cells=` and `xywh=` selectors parse, but nothing resolves them yet.
+- `sheet=…&cells=B2:D10` resolves to the rectangle's text (tab-separated,
+  one row per line), and its quote is that text; the viewer selects cells
+  this way. A quoted page reference can't use cells yet: it needs a char
+  range.
+- `xywh=` selectors parse, but nothing resolves them yet.
 
 ## Decisions to confirm
 

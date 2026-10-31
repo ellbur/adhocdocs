@@ -53,7 +53,8 @@ passes, a .docx with tracked changes accepted and with them shown.
 - Zip members and mbox messages are child documents (`part` is the member
   path or message number), so families, custodians and duplicates work as
   for attachments. The container's own layer is empty: extracted, no text.
-- Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet;
+- Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet,
+  and `sheet=…&cells=B2:D10` a rectangle of cells;
   cells hold the values Excel last calculated, not formulas.
 - A PDF whose pages are mostly lines numbered 1–25 is a transcript. Its
   layer gets `line` segments, and ingestion adds a derived `transcript` view
