@@ -21,7 +21,7 @@ has `--help` with the details. Read the help before first using a tool.
 |---|---|
 | `search` | keyword (exhaustive: Boolean, phrases, `w/5`, `/s`, fields, tags), `--index semantic` or `hybrid` for plain-English questions, `search grep` for exact strings |
 | `text`, `layers` | the text at a locator (checked), a document's text layers |
-| `list` | list files (`*.list.jsonl`): sort, group, filter |
+| `list` | list files (`*.list.jsonl`): sort, group, filter; key sets (`condense`, `set`, `cover`, `uncover`) |
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags and notes; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
@@ -55,3 +55,13 @@ has `--help` with the details. Read the help before first using a tool.
 7. **Everything here is recorded** in an audit log on the host. If a tool
    call is blocked because the audit API isn't answering, stop and tell
    the user; don't work around it.
+
+## Explaining a point with a few documents
+
+Asked for the documents about something, the user rarely wants all of
+them: most repeat the others. Unless they ask for everything, make a key
+set (`list --help`): search broadly with `--list`, `list condense` the
+results, then `list cover` what only restates another, `list set` a `why`
+on each document left, and `view list` it. Tell the user how many
+candidates it accounts for. Nothing is dropped, and condensing again with
+new searches keeps your judgments. Don't tag the set unless asked.

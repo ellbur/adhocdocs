@@ -55,6 +55,10 @@ them.
   hotkeys, a tag palette and notes in the viewer for the user:
   [ANNOTATIONS.md](ANNOTATIONS.md).
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
+- **Key sets.** *Built*: the few documents that explain a point, with
+  duplicates, quoted emails, near-duplicates and restatements folded under
+  them (`list condense`, `cover`, `set`, `uncover`):
+  [LISTS.md](LISTS.md#key-sets).
 
 ## Writing
 
