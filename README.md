@@ -265,6 +265,7 @@ data system-wide, put `eng.traineddata` in
 - [VIEWER.md](VIEWER.md): the document viewer
 - [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
 - [WINDOWS.md](WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
+- [SYNC.md](SYNC.md): syncing a matter across installations, peer to peer or through a hub (designed, not built)
 
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.
