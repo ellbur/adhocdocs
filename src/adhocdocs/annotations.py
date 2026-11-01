@@ -30,12 +30,12 @@ the only write path from the container, writes as ``claude``. The rules in
 :meth:`Annotations.check` keep Claude from changing the user's work.
 """
 
-import fcntl
 import json
 from contextlib import contextmanager
 
 from . import literate, locators
 from .matter import Matter, new_event_id, now
+from .portable import locked
 
 CLAUDE = "claude"
 
@@ -289,8 +289,7 @@ OPS = {
 def _locked(m: Matter):
     path = m.annotation_log.path.parent / ".lock"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+    with open(path, "w", encoding="utf-8", newline="\n") as f, locked(f):
         yield
 
 

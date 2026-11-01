@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 CORPUS = ROOT / "corpus"
-NOISE = {CORPUS / l for l in (ROOT / "tools" / "corpus" / "noise-files.txt").read_text().splitlines()
+NOISE = {CORPUS / l for l in (ROOT / "tools" / "corpus" / "noise-files.txt").read_text(encoding="utf-8").splitlines()
          if l.strip() and not l.startswith("#")}
 
 

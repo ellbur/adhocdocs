@@ -314,7 +314,7 @@ def idx(argv=None):
         d.mkdir(parents=True, exist_ok=False)
         (d / "manifest.json").write_text(json.dumps(
             {"type": "index", "v": 1, "name": a.name, "kind": a.kind, "settings": json.loads(a.settings),
-             "cursor": {"store": None, "workspace": None}, "updater": a.updater}, indent=2) + "\n")
+             "cursor": {"store": None, "workspace": None}, "updater": a.updater}, indent=2) + "\n", encoding="utf-8", newline="\n")
         out({"created": str(d)})
         return
     names = getattr(a, "names", None) or all_names(m)
@@ -1002,7 +1002,7 @@ def page(argv=None):
         elif a.cmd == "render":
             html_doc, results = pages.render(pages.Page(m, a.file))
             if a.out:
-                Path(a.out).write_text(html_doc)
+                Path(a.out).write_text(html_doc, encoding="utf-8", newline="\n")
                 out({"written": a.out, "problems": len([r for r in results if "lint" in r or r.get("status") != "exact"])})
             else:
                 sys.stdout.write(html_doc)
@@ -1315,7 +1315,7 @@ def analyze(argv=None):
         for c in changes:
             out(c)
         if a.html:
-            Path(a.html).write_text(analysis.redline_html(m, doc(a.a), doc(a.b)))
+            Path(a.html).write_text(analysis.redline_html(m, doc(a.a), doc(a.b)), encoding="utf-8", newline="\n")
 
 
 # -- produce ---------------------------------------------------------------------------------

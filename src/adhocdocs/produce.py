@@ -255,7 +255,7 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
               "begin": records[0]["begin"] if records else None, "end": records[-1]["end"] if records else None,
               "documents": len(records), "pages": n - start, "legend": legend, "list": str(list_file),
               "date": date.today().isoformat()}
-    (out / "production.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]))
+    (out / "production.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]), encoding="utf-8", newline="\n")
     _load_files(out, name, records, fields)
     _privilege_log(m, out, records, fields, ann)
     check = _privilege_check(out, records, fields, ann, flags)
@@ -344,11 +344,11 @@ def _privilege_log(m, out: Path, records: list, fields: dict, ann):
                      "type": f.get("kind") or "", "description": f.get("subject") or f.get("title") or f.get("name") or "",
                      "treatment": "withheld" if r.get("withheld") else "redacted",
                      "privilege": ", ".join(t.removeprefix("redact").strip("-:_ ") or t for t in tags), "basis": basis})
-    with open(out / "privlog.csv", "w", newline="") as fh:
+    with open(out / "privlog.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=PRIVLOG_FIELDS)
         w.writeheader()
         w.writerows(rows)
-    (out / "privlog.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (out / "privlog.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
 
 
 # -- resolving Bates numbers -----------------------------------------------------------------------
@@ -384,11 +384,11 @@ def _privilege_check(out: Path, records: list, fields: dict, ann, flags: list) -
                      "description": f.get("subject") or f.get("title") or f.get("name") or "",
                      "flagged": f"passage: {passage}" if passage else ("passage" if t.get("select") else "document"),
                      "flagged_by": app["by"], "basis": "; ".join(notes), "status": status})
-    with open(out / "privilege-check.csv", "w", newline="") as fh:
+    with open(out / "privilege-check.csv", "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=PRIVCHECK_FIELDS)
         w.writeheader()
         w.writerows(rows)
-    (out / "privilege-check.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (out / "privilege-check.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
     return {"flags": len(rows), "open": len({r["bates"] for r in rows if r["status"].startswith("open")}),
             "file": "privilege-check.csv"}
 
@@ -396,7 +396,7 @@ def _privilege_check(out: Path, records: list, fields: dict, ann, flags: list) -
 def _productions(m: Matter) -> list[dict]:
     out = []
     for f in sorted((m.workspace / "productions").glob("*/production.jsonl")):
-        rows = [json.loads(line) for line in f.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
         if not rows or not rows[0].get("begin"):
             continue
         head = rows[0]

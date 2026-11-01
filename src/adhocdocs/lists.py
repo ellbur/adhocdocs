@@ -14,7 +14,7 @@ DEFAULT_COLUMNS = ["date", "name", "kind", "custodian", "tags"]
 
 
 def read(path) -> tuple[dict, list[dict]]:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f if line.strip()]
     if not rows or rows[0].get("type") != "list":
         raise ValueError(f"{path} is not a list file")
@@ -22,7 +22,7 @@ def read(path) -> tuple[dict, list[dict]]:
 
 
 def write(path, header: dict, items: list[dict]):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         for row in [header, *items]:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 

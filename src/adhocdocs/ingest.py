@@ -110,7 +110,7 @@ def load_manifest(path) -> list[dict]:
     import tomllib
     path = Path(path)
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except OSError as e:
         raise ValueError(f"cannot read manifest {path}: {e.strerror}")
     except tomllib.TOMLDecodeError as e:

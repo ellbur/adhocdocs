@@ -56,7 +56,7 @@ def short(label: str) -> str:
 def _sets(m: Matter) -> list[dict]:
     out = []
     for f in sorted((m.workspace / "exhibits").glob("*/exhibits.jsonl")):
-        rows = [json.loads(line) for line in f.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
         if rows:
             out.append({**rows[0], "records": rows[1:]})
     return out
@@ -180,7 +180,7 @@ def _exhibits(m, out, list_file, name, prefix, start, witness, when, originals) 
     header = {"type": "exhibits", "v": 1, "name": name, "prefix": prefix, "witness": witness, "date": when,
               "first": records[0]["label"] if records else None, "last": records[-1]["label"] if records else None,
               "exhibits": len(records), "list": str(list_file), "made": Date.today().isoformat()}
-    (out / "exhibits.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]))
+    (out / "exhibits.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]), encoding="utf-8", newline="\n")
     _exhibit_list(out, header, records)
     ev = m.logs["workspace"].append(op="export", kind="exhibits", name=name, first=header["first"], last=header["last"],
                                     record="sha256:" + hashlib.sha256((out / "exhibits.jsonl").read_bytes()).hexdigest())
@@ -197,7 +197,7 @@ def _bates_range(b) -> str:
 def _exhibit_list(out: Path, header: dict, records: list):
     cols = ("Exhibit", "Date", "Description", "Bates", "Pages")
     rows = [(r["label"], r["date"] or "", r["description"] or "", _bates_range(r["bates"]), str(r["pages"])) for r in records]
-    with open(out / "exhibit-list.csv", "w", newline="") as f:
+    with open(out / "exhibit-list.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(cols)
         w.writerows(rows)

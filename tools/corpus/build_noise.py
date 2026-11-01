@@ -1314,7 +1314,7 @@ PLAN = dict(drafts=56, marketing=26, calendar=16, ics=3, chatter=14, other=10, n
 def clear_previous():
     if not LISTING.exists():
         return
-    for line in LISTING.read_text().splitlines():
+    for line in LISTING.read_text(encoding="utf-8").splitlines():
         if line.strip() and not line.startswith("#"):
             (CORPUS / line).unlink(missing_ok=True)
 
@@ -1332,7 +1332,7 @@ def main():
         html_pages(cust, c, PLAN["html"])
     names = sorted(str(p.relative_to(CORPUS)) for p in written)
     LISTING.write_text("# Written by build_noise.py: the corpus's irrelevant documents. Do not edit.\n"
-                       + "\n".join(names) + "\n")
+                       + "\n".join(names) + "\n", encoding="utf-8", newline="\n")
     size = sum(p.stat().st_size for p in written)
     print(f"{len(written)} noise files, {size / 1e6:.1f} MB")
     for cust in CUSTODIANS:

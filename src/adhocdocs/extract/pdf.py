@@ -14,6 +14,7 @@ from pathlib import Path
 import pymupdf
 
 from . import Extraction, Layer, TextBuilder
+from ..portable import tesseract
 
 OCR_DPI = 300
 # A page with fewer native characters than this, and an image on it, is OCRed.
@@ -65,7 +66,7 @@ def tessdata() -> list[str]:
 
 def ocr_png(png: bytes, psm: int = 3) -> list:
     """Words from tesseract, grouped into lines: (word, box, conf)."""
-    r = subprocess.run(["tesseract", "stdin", "stdout", *tessdata(), "-l", "eng", "--psm", str(psm), "-c", "tessedit_create_tsv=1"],
+    r = subprocess.run([tesseract(), "stdin", "stdout", *tessdata(), "-l", "eng", "--psm", str(psm), "-c", "tessedit_create_tsv=1"],
                        input=png, capture_output=True)
     if r.returncode:
         raise RuntimeError("tesseract failed: " + r.stderr.decode().strip().splitlines()[0])

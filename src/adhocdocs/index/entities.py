@@ -54,7 +54,7 @@ class EntitiesIndex(TextIndex):
                              for d in found])
         self.texts_dir.mkdir(parents=True, exist_ok=True)
         tmp = self._sidecar(text_hash).with_suffix(".tmp")
-        tmp.write_text(json.dumps({"text": text_hash, "detections": found}, ensure_ascii=False))
+        tmp.write_text(json.dumps({"text": text_hash, "detections": found}, ensure_ascii=False), encoding="utf-8", newline="\n")
         tmp.replace(self._sidecar(text_hash))
 
     def remove_text(self, text_hash):
@@ -113,7 +113,7 @@ class EntitiesIndex(TextIndex):
     def write_candidates(self):
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / "candidates.tmp"
-        tmp.write_text(json.dumps({"candidates": self.candidates()}, ensure_ascii=False))
+        tmp.write_text(json.dumps({"candidates": self.candidates()}, ensure_ascii=False), encoding="utf-8", newline="\n")
         tmp.replace(self.dir / "candidates.json")
 
     def verify(self, repair=False) -> dict:

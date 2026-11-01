@@ -6,7 +6,6 @@ import http.client
 import json
 import os
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from adhocdocs import audit, container, proxy
+from adhocdocs import audit, container, endpoint, proxy
 from adhocdocs.matter import Matter
 
 HOOK = Path(__file__).parent.parent / "container" / "audit-hook"
@@ -34,14 +33,14 @@ def test_chain_finds_edits_and_removals(tmp_path):
     for i in range(5):
         log.append(session="s", kind="note", n=i)
     assert log.verify()["ok"] and log.verify()["events"] == 5
-    lines = log.path.read_text().splitlines()
+    lines = log.path.read_text(encoding="utf-8").splitlines()
 
-    log.path.write_text("\n".join(lines[:2] + lines[3:]) + "\n")              # remove one
+    log.path.write_text("\n".join(lines[:2] + lines[3:]) + "\n", encoding="utf-8", newline="\n")              # remove one
     assert [p["line"] for p in log.verify()["problems"]] == [3]
     edited = lines[1].replace('"n": 1', '"n": 9')
-    log.path.write_text("\n".join([lines[0], edited, *lines[2:]]) + "\n")      # edit one
+    log.path.write_text("\n".join([lines[0], edited, *lines[2:]]) + "\n", encoding="utf-8", newline="\n")      # edit one
     assert [p["line"] for p in log.verify()["problems"]] == [3]
-    log.path.write_text("\n".join(lines) + "\n")
+    log.path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     assert log.verify()["ok"]
 
 
@@ -62,7 +61,7 @@ def test_hook_records(tmp_path):
 
     # a stored result changed afterwards
     p = log.objects / ev["result_sha256"][:2] / ev["result_sha256"][2:]
-    p.write_text("something else")
+    p.write_text("something else", encoding="utf-8", newline="\n")
     assert log.verify()["problems"][0]["problem"] == "stored result altered"
 
 
@@ -72,7 +71,7 @@ def _serve(tmp_path):
     threading.Thread(target=audit.serve, args=(m, sock, "ses_1"), daemon=True).start()
     for _ in range(100):                     # the file appears just before the server listens
         try:
-            socket.socket(socket.AF_UNIX).connect(str(sock))
+            endpoint.connect(sock).close()
             break
         except OSError:
             time.sleep(0.05)
@@ -81,8 +80,7 @@ def _serve(tmp_path):
 
 def _post(sock, payload):
     conn = http.client.HTTPConnection("localhost")
-    conn.sock = socket.socket(socket.AF_UNIX)
-    conn.sock.connect(str(sock))
+    conn.sock = endpoint.connect(sock)
     conn.request("POST", "/hook", json.dumps(payload), {"Content-Type": "application/json"})
     r = conn.getresponse()
     return r.status, json.loads(r.read())
@@ -101,7 +99,8 @@ def test_api_and_cli(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("curl"), reason="needs curl")
-def test_hook_script(tmp_path):
+def test_hook_script(tmp_path, monkeypatch):
+    monkeypatch.setenv("ADHOC_TRANSPORT", "unix")      # the hook runs in the (Linux) session
     m, sock = _serve(tmp_path)
     env = {**os.environ, "ADHOC_AUDIT_SOCKET": str(sock)}
     run = lambda payload, e=env: subprocess.run([str(HOOK)], input=json.dumps(payload), text=True,
@@ -159,7 +158,7 @@ def test_session_has_audit_socket_but_not_the_log(tmp_path):
 
 def test_managed_settings_hook_every_event():
     root = Path(__file__).parent.parent / "container"
-    settings = json.loads((root / "managed-settings.json").read_text())
+    settings = json.loads((root / "managed-settings.json").read_text(encoding="utf-8"))
     hooks = settings["hooks"]
     for event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "SessionStart", "SessionEnd"):
         [group] = hooks[event]

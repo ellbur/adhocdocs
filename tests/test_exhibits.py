@@ -50,7 +50,7 @@ def test_exhibits(m, tmp_path):
     assert pymupdf.open(out / "PDF" / "Exhibit_2.pdf").page_count == 1
     assert "HFS000001" in pymupdf.open(out / "PDF" / "Exhibit_3.pdf")[0].get_text()      # the produced copy
 
-    rows = list(csv.DictReader(open(out / "exhibit-list.csv")))
+    rows = list(csv.DictReader(open(out / "exhibit-list.csv", encoding="utf-8")))
     assert [r["Exhibit"] for r in rows] == ["Exhibit 1", "Exhibit 2", "Exhibit 3", "Exhibit 4"]
     assert rows[1]["Description"] == "Signature page" and rows[2]["Bates"] == "HFS000001" and rows[0]["Date"] == "2026-03-25"
     assert docx.Document(str(out / "exhibit-list.docx")).tables[0].cell(3, 0).text == "Exhibit 3"
@@ -83,11 +83,11 @@ def test_exhibits(m, tmp_path):
     p = tmp_path / "page.md"
     p.write_text("---\ncite-exhibits: dep-a\n---\n:q{#sig}\n\n" + literate.format_refs([
         {"id": "sig", "doc": letter, "layer": m.state.primary_layer(m.state.documents[letter]).id,
-         "select": {"char": [s, s + 16]}, "quote": {"exact": text[s:s + 16]}}]))
+         "select": {"char": [s, s + 16]}, "quote": {"exact": text[s:s + 16]}}]), encoding="utf-8", newline="\n")
     html_doc, _ = pages.render(pages.Page(m, p))
     assert "<cite data-ref=\"sig\">Ex. 1 at 1</cite>" in html_doc      # the letter's first page is Exhibit 1's first
     pages.add_ref(m, p, "whole", ["exh:4"])
-    assert literate.split(p.read_text())[1][-1]["doc"] == msa
+    assert literate.split(p.read_text(encoding="utf-8"))[1][-1]["doc"] == msa
 
 
 def test_withheld_documents_are_not_exhibits(m, tmp_path):
