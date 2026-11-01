@@ -38,7 +38,9 @@ entropy (near 8 bits a byte: compressed or encrypted), how much looks like
 text, and whether text is JSON, JSON Lines or XML. `raw strings` finds runs
 of ASCII, UTF-8 and UTF-16 text, each with its byte locator, and `raw hex`
 dumps a range. Ingest records the signature in the document's metadata
-(`signature`). `search 'kind:other'` lists every file nothing reads, and
+(`signature`), and the fields index holds it, so `search all --where
+'signature:sqlite'` finds files whose first bytes match part of that
+signature's name. `search 'kind:other'` lists every file nothing reads, and
 `kind:json`, `kind:ndjson` and `kind:xml` the structured ones.
 
 ### Values in structured data
@@ -179,8 +181,6 @@ Read as records, the largest payment went to :interp{#top-party}.
 - A hex mode in the viewer's document pane. Byte locators open the
   document, but the viewer doesn't scroll to or highlight the bytes. For
   now, Claude shows bytes with `raw hex`, in pages, or in a pane it builds.
-- A `signature:` search field (the signature is in metadata, not yet in
-  the fields index).
 - Built-in readers for common structured binaries (SQLite, Parquet, EVTX).
   Claude can decode them itself with an interpretation. Formats used often
   enough to deserve an official reader become extractors, with real layers.

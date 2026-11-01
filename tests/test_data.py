@@ -92,6 +92,36 @@ def test_binary_metadata_records_signatures(tmp_path):
     assert meta(m, "x.db")["signature"] == ["SQLite database"]
 
 
+def test_signature_search_field(tmp_path):
+    import json as _json
+    from adhocdocs.index import open_index
+    from adhocdocs.search import Options, Searcher
+    (tmp_path / "f").mkdir()
+    (tmp_path / "f" / "x.db").write_bytes(b"SQLite format 3\x00" + bytes(200))
+    (tmp_path / "f" / "y.gz").write_bytes(b"\x1f\x8b" + bytes(200))
+    (tmp_path / "f" / "z.txt").write_text("sqlite is mentioned here")
+    m = Matter.create(tmp_path / "m")
+    ingest_paths(m, [tmp_path / "f"], None, "c")
+    m = Matter(m.root)
+
+    def names(where):
+        s = Searcher(Matter(m.root), Options(where=where))
+        _, items = s.finish(*s.all())
+        return sorted(m.objects.get_object(m.state.metadata[i["loc"][4:]])["name"] for i in items)
+
+    assert names("signature:sqlite") == ["x.db"]                      # part of "SQLite database", any case
+    assert names("signature:gzip OR signature:sqlite") == ["x.db", "y.gz"]
+    assert names("kind:other -signature:gzip") == ["x.db"]
+    assert names("signature:pdf") == []
+    # a fields index from before signatures were in it is rebuilt, not refused
+    idx = open_index(m, "fields")
+    man = idx.manifest()
+    man["settings"] = {"schema": 2}
+    idx.manifest_path.write_text(_json.dumps(man))
+    assert names("signature:sqlite") == ["x.db"]
+    assert open_index(m, "fields").manifest()["settings"] == {"schema": 3}
+
+
 # -- bytes ----------------------------------------------------------------------------------
 
 def test_byte_locators(m):
