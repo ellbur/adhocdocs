@@ -1553,7 +1553,8 @@ def produce(argv=None):
     p.add_argument("list_file", help="the documents to produce, in order")
     p.add_argument("--name", required=True, help="e.g. vol001")
     p.add_argument("--prefix", required=True, help="Bates prefix, e.g. HFS")
-    p.add_argument("--start", type=int, default=1)
+    p.add_argument("--start", type=int, help="first number (default: the next not reserved in this matter, "
+                                             "on any installation)")
     p.add_argument("--digits", type=int, default=6)
     p.add_argument("--legend", help='e.g. "CONFIDENTIAL"')
     p.add_argument("--no-families", action="store_true", help="don't add each document's attachments after it")
@@ -1576,7 +1577,8 @@ def produce_exhibits(argv):
     p.add_argument("list_file", help="the exhibits, in order: one per item")
     p.add_argument("--name", required=True, help="the set, e.g. kettering-dep")
     p.add_argument("--prefix", default="Exhibit ", help='label before the number: "Exhibit " (default), "DX-", "PX "')
-    p.add_argument("--start", type=int, help="first number (default: after the last used with this prefix)")
+    p.add_argument("--start", type=int, help="first number (default: the next not reserved in this matter, "
+                                             "on any installation)")
     p.add_argument("--witness", help="on the sticker, e.g. Kettering")
     p.add_argument("--date", help="on the sticker, e.g. 2026-04-28")
     p.add_argument("--originals", action="store_true", help="use originals even for documents that were produced")

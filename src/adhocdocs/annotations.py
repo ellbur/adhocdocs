@@ -20,6 +20,10 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 ``edit-entity``    ``entity`` and the fields that change; ``add_aliases``,
                    ``remove_aliases``
 ``delete-entity``  ``entity``
+``reserve-numbers`` ``series`` (``bates:<prefix>`` or ``exhibit:<prefix>``), ``first``,
+                   ``last``, optional ``name`` (the production or set): a range taken
+                   before it's used, so two installations don't number the same
+``release-numbers`` ``reservation`` (the reserve event's ID): given back unused
 =================  =========================================================
 
 Entities are the entity layer's known entities (ENTITIES.md). Each field
@@ -86,6 +90,7 @@ class Annotations:
         self.replaced: dict[str, list] = {}      # event ID -> the events it replays as
         self.last_id: str | None = None
         self.hotkeys: dict[str, str] = {}        # tag -> key, this installation's own (hotkeys())
+        self.reservations: dict[str, dict] = {}  # reserve event ID -> number range (adhocdocs.numbers)
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
@@ -172,6 +177,13 @@ class Annotations:
                 self._conflict(ev, "group-replaced", f"{ev['tag']!r} replaced {', '.join(o['tag'] for o in others)}, "
                                                      "tagged concurrently on another installation")
                 return [{**ev, "op": "untag", "tag": o["tag"], "target": o["target"], "id": ev["id"]} for o in others] + [ev]
+        if op == "reserve-numbers":
+            try:
+                self.check(ev, replaying=True)
+            except Refused as e:
+                # reserved on two installations at once: the earlier stands
+                self._conflict(ev, "numbers-overlap", str(e))
+                return []
         if op == "reply" and ev.get("parent") not in self.notes and ev.get("target"):
             self._conflict(ev, "parent-deleted", f"replied to note {ev['parent']}, which was deleted; kept as a note")
             return [ev]
@@ -261,6 +273,22 @@ class Annotations:
                     e["requested_by"] = ev["requested_by"]
         elif op == "delete-entity":
             self.entities.pop(ev["entity"], None)
+        elif op == "reserve-numbers":
+            self.reservations[ev["id"]] = {"reservation": ev["id"], "series": ev["series"], "first": ev["first"],
+                                           "last": ev["last"], "name": ev.get("name"), "by": ev["author"],
+                                           "at": ev["at"], "origin": ev.get("origin")}
+        elif op == "release-numbers":
+            r = self.reservations.get(ev["reservation"])
+            if r:
+                r["released"] = ev["at"]
+
+    def ranges(self, series: str) -> list[dict]:
+        """The reservations in a series that stand (not released)."""
+        return sorted((r for r in self.reservations.values() if r["series"] == series and not r.get("released")),
+                      key=lambda r: r["first"])
+
+    def next_number(self, series: str) -> int:
+        return max((r["last"] for r in self.ranges(series)), default=0) + 1
 
     def entity_named(self, name: str, kind: str | None) -> dict | None:
         from .entities import fold_text
@@ -312,6 +340,24 @@ class Annotations:
                 raise Refused(f"no note {ev['note']}")
             if author == CLAUDE and is_user(n["by"]):
                 raise Refused(f"note {ev['note']} was written by {n['by']}; Claude can't change it")
+        if op == "reserve-numbers":
+            f, l = ev.get("first"), ev.get("last")
+            if not isinstance(ev.get("series"), str) or not ev["series"].startswith(("bates:", "exhibit:")):
+                raise Refused("a series is bates:<prefix> or exhibit:<prefix>")
+            if not (isinstance(f, int) and isinstance(l, int) and 1 <= f <= l):
+                raise Refused(f"not a range of numbers: {f!r} to {l!r}")
+            clash = next((r for r in self.ranges(ev["series"]) if r["first"] <= l and f <= r["last"]), None)
+            if clash:
+                raise Refused(f"{ev['series'].split(':', 1)[1]} {clash['first']}–{clash['last']} "
+                              f"{'is' if clash['first'] == clash['last'] else 'are'} reserved already"
+                              + (f" (for {clash['name']}, by {clash['by']})" if clash.get("name") else f" (by {clash['by']})")
+                              + f"; the next free number is {self.next_number(ev['series'])}")
+        elif op == "release-numbers":
+            r = self.reservations.get(ev.get("reservation"))
+            if r is None or r.get("released"):
+                raise Refused(f"no reservation {ev.get('reservation')} to release")
+            if author == CLAUDE and is_user(r["by"]):
+                raise Refused(f"that reservation is {r['by']}'s; Claude can't release it")
         if op in ("define-entity", "edit-entity") and ev.get("date") is not None and not ENTITY_DATE.fullmatch(str(ev["date"])):
             raise Refused(f"an entity's date is YYYY-MM-DD, YYYY-MM or YYYY, not {ev['date']!r}")
         if op == "define-entity":
@@ -410,6 +456,8 @@ OPS = {
     "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see", "date")),
     "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "date", "add_aliases", "remove_aliases")),
     "delete-entity": (("entity",), ()),
+    "reserve-numbers": (("series", "first", "last"), ("name",)),
+    "release-numbers": (("reservation",), ()),
 }
 
 

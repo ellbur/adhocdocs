@@ -289,6 +289,30 @@ memory: a request signed in the five minutes before a restart could be
 replayed once after it, by someone who had it (which, inside TLS, means
 the member who sent it).
 
+### Bates and exhibit numbers
+
+Bates numbers and exhibit numbers must not repeat across installations
+([`numbers.py`](src/adhocdocs/numbers.py)). So a production takes the range
+it needs before stamping it: it makes the pages, reserves exactly that many
+numbers (a `reserve-numbers` event in the annotation feed, which syncs),
+then stamps them. Exhibit sets do the same. Without `--start`, a
+production or set begins at the next number not reserved on any
+installation the matter has heard from. A failed production gives its
+numbers back.
+
+- **With a hub**, reserving syncs with it first, to hear of others'
+  reservations, and after, to check no one took the same numbers in the
+  meantime, so a clash needs two people reserving at the same moment.
+- **Without one**, two installations that produce before syncing can
+  reserve the same numbers. Replay keeps the earlier reservation, and
+  `adhoc sync conflicts` reports the later (`numbers-overlap`): that
+  production needs redoing with new numbers.
+- Productions and sets made before reservations existed are reserved the
+  next time their series is used, so the other installations learn of
+  them.
+- In a session, Claude reserves through the annotation API, which syncs
+  with the hub on the host.
+
 ### Isolation (Principle 2)
 
 Syncing decides who has the matter's documents, so it is an isolation
@@ -395,12 +419,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 
 ## Open questions
 
-- **Matter-wide numbers.** Bates numbers and exhibit numbers must not
-  repeat across installations. Two people producing at once could assign the
-  same range. Productions and exhibit sets would be published work, and a
-  number range reserved by an event. With a hub, reservations go through it;
-  without one, two concurrent reservations of the same range would be a
-  conflict that blocks the later production until resolved.
 - **Clawback and destruction.** Append-only logs and replicated objects
   make deletion hard, but the law sometimes requires it: clawing back a
   privileged document produced by mistake, or destroying documents under a
@@ -431,3 +449,5 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
   product, membership. Not synced: the workspace, indexes, `claude-home/`.
 - Work product made in the workspace syncs only when published, explicitly.
 - Keyboard shortcuts (tag hotkeys) aren't synced.
+- Bates and exhibit numbers are reserved, and the reservation synced, before
+  a production or exhibit set uses them.

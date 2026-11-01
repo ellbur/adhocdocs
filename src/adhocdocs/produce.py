@@ -42,6 +42,7 @@ from pathlib import Path
 import pymupdf
 
 from . import lists, locators
+from .annotations import Refused
 from .matter import Matter
 
 LETTER = pymupdf.paper_rect("letter")
@@ -179,20 +180,44 @@ def stamp(page: pymupdf.Page, number: str, legend: str | None):
         page.insert_textbox(lbox, legend, fontsize=10, fontname="helv")
 
 
-def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, digits: int = 6,
+def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int | None = None, digits: int = 6,
             legend: str | None = None, families=True, withhold=("privileged",), redact="redact") -> dict:
     """Produce the documents of a list, in its order; with ``families``,
     each document's attachments follow it, as is usual. Documents tagged
     with a ``withhold`` tag become a slip sheet; ranges and regions tagged
     with a tag starting ``redact`` are redacted. Both go in the privilege
-    log."""
+    log.
+
+    Bates numbers are reserved before they're stamped (adhocdocs.numbers),
+    so no other installation of the matter uses them: the pages are made
+    first, then exactly that many numbers are reserved, from ``start`` or
+    the next free one, then stamped."""
     out = m.workspace / "productions" / name
     if out.exists():
         raise ProductionError(f"production {name} exists; choose another name")
-    used = [p["end_n"] for p in _productions(m) if p["prefix"] == prefix]
-    if used and start <= max(used):
-        raise ProductionError(f"{prefix} numbers up to {bates(prefix, max(used), digits)} are already used; "
-                              f"start at {max(used) + 1}")
+    from . import numbers
+    held = []
+
+    def reserve(count, local):
+        r = numbers.reserve_here(m, numbers.bates_series(prefix), count, start, name, local)
+        held.append(r["reservation"])
+        return r
+    try:
+        return _produce(m, out, list_file, name, prefix, start, digits, legend, families, withhold, redact, reserve)
+    except BaseException as e:
+        import shutil
+        shutil.rmtree(out, ignore_errors=True)       # all or nothing
+        for r in held:                               # and the numbers go back
+            try:
+                numbers.release_here(m, r)
+            except Exception:
+                pass
+        if isinstance(e, Refused):
+            raise ProductionError(str(e)) from None
+        raise
+
+
+def _produce(m, out, list_file, name, prefix, start, digits, legend, families, withhold, redact, reserve) -> dict:
     _, items = lists.read(list_file)
     state = m.state
     listed = [state.follow(locators.parse(it["loc"], m.objects)["doc"]) for it in items]
@@ -222,14 +247,25 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
             ranged.setdefault(t["doc"], []).append(app)
     (out / "PDF").mkdir(parents=True)
     fields = _fields(m)
-    n = start
-    records = []
-    for doc in order:
+    # the pages first, unstamped, to know how many numbers to reserve
+    made = []
+    for i, doc in enumerate(order):
         if doc in whole:
             desc = (ann.definitions.get(whole[doc]) or {}).get("description")
             pdf, page_map = slip_sheet(f"{whole[doc].title()}" + (f": {desc}" if desc else "")), None
         else:
             pdf, page_map = pages_for(m, doc, ranged.get(doc, ()))
+        tmp = out / "PDF" / f".unstamped-{i}.pdf"
+        pdf.save(tmp, garbage=3, deflate=True)
+        made.append((doc, tmp, pdf.page_count, page_map))
+    total = sum(c for _, _, c, _ in made)
+    local = [(p["begin_n"], p["end_n"], p["name"]) for p in _productions(m) if p["prefix"] == prefix]
+    r = reserve(total, local) if total else {"first": start or 1, "reservation": None}
+    start = r["first"]
+    n = start
+    records = []
+    for doc, tmp, _, page_map in made:
+        pdf = pymupdf.open(tmp)
         begin = bates(prefix, n, digits)
         for page in pdf:
             stamp(page, bates(prefix, n, digits), legend)
@@ -237,7 +273,10 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
         end = bates(prefix, n - 1, digits)
         path = out / "PDF" / f"{begin}.pdf"
         pdf.save(path, garbage=3, deflate=True)
-        rec = {"doc": doc, "begin": begin, "end": end, "pages": pdf.page_count, "file": f"PDF/{begin}.pdf",
+        pages = pdf.page_count
+        pdf.close()
+        tmp.unlink()
+        rec = {"doc": doc, "begin": begin, "end": end, "pages": pages, "file": f"PDF/{begin}.pdf",
                "sha256": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), "page_map": page_map,
                "parent": _parent(state, doc)}
         if doc in whole:
@@ -252,6 +291,7 @@ def produce(m: Matter, list_file: Path, name: str, prefix: str, start: int = 1, 
         fam = [x for x in records if x["doc"] == top or _is_descendant(state, x["doc"], top)]
         r["begattach"], r["endattach"] = fam[0]["begin"], fam[-1]["end"]
     header = {"type": "production", "v": 1, "name": name, "prefix": prefix, "digits": digits,
+              "reservation": r.get("reservation"),
               "begin": records[0]["begin"] if records else None, "end": records[-1]["end"] if records else None,
               "documents": len(records), "pages": n - start, "legend": legend, "list": str(list_file),
               "date": date.today().isoformat()}
