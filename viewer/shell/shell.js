@@ -71,7 +71,7 @@ const short = (h) => (h || "").replace("sha256:", "").slice(0, 10);
 
 // -- data from the viewer -------------------------------------------------------------
 
-const cache = { docs: {}, text: {}, geometry: {}, segments: {}, detected: {}, folded: {} };
+const cache = { docs: {}, text: {}, geometry: {}, segments: {}, detected: {}, dates: {}, folded: {} };
 async function getJSON(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
@@ -87,6 +87,12 @@ async function segments(id) { return cache.segments[id] ??= getJSON(`/api/layer/
 async function detected(id) {
   const d = await (cache.detected[id] ??= getJSON(`/api/layer/${id}/detected`).catch(() => []));
   if (!d.length) delete cache.detected[id];
+  return d;
+}
+// the dates index's date mentions for a layer, the same way
+async function layerDates(id) {
+  const d = await (cache.dates[id] ??= getJSON(`/api/layer/${id}/dates`).catch(() => []));
+  if (!d.length) delete cache.dates[id];
   return d;
 }
 
@@ -434,15 +440,18 @@ class DocumentPane {
     this.root = el("section", { class: "pane", "data-pane": id });
     this.head = el("div", { class: "pane-head" });
     this.links = el("div", { class: "pane-links" });
+    this.strip = el("div", { class: "pane-dates" });
     this.body = el("div", { class: "pane-body", tabindex: "0" });
     this.side = el("div", { class: "pane-side" });
-    this.root.append(this.head, this.links, el("div", { class: "pane-split" }, this.body, this.side));
+    this.root.append(this.head, this.strip, this.links, el("div", { class: "pane-split" }, this.body, this.side));
     this.body.addEventListener("scroll", () => this.onScroll());
     this.watchHover(document, this.body);
     // pages are laid out to the pane's width: lay them out again when it changes
     let lastWidth = 0;
     new ResizeObserver(() => {
       const w = this.body.clientWidth;
+      // text and flow modes reflow on their own: only the marks drawn over them move
+      if (this.mode !== "page" && this.info) { clearTimeout(this.redrawTimer); this.redrawTimer = setTimeout(() => this.drawBoxes(), 120); return; }
       if (this.mode !== "page" || !this.info || Math.abs(w - lastWidth) < 20) return;
       lastWidth = w;
       clearTimeout(this.resizeTimer);
@@ -469,6 +478,8 @@ class DocumentPane {
       visible: this.visible, sequence: this.sequence && { position: this.sequence.position + 1, length: this.sequence.items.length, from: this.sequence.from },
       selection: this.selection, marks: this.marks, highlights: this.highlights.map((h) => ({ loc: h.loc, label: h.label })),
       ...(this.selectionEntity() ? { entity: this.selectionEntity() } : {}),
+      ...(this.selectionDate() ? { date: this.selectionDate() } : {}),
+      dated: this.info?.dated?.date ? { date: this.info.dated.date, source: this.info.dated.source } : null,
       entities: this.ents ? { known: this.ents.known.length, suggested: this.ents.suggested.length, display: adhoc.entityMode } : null,
       open_ms: this.timings || [],
     };
@@ -508,7 +519,7 @@ class DocumentPane {
       el("span", { class: "seg" }, ...this.modes()
         .map((m) => el("button", { class: m === this.mode ? "on" : "", onclick: () => this.setMode(m) }, m))),
       el("span", { class: "chips" }),
-      el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, click to select it and ask Claude. E shows all, known only, or none.",
+      el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, or a date to see what came before and after; click to select it and ask Claude. E shows all, known only, or none.",
         onclick: () => cycleEntityMode() }), el("span", { class: "status" }));
     const links = [];
     if (info.parent) links.push(["parent: " + (info.parent.name || short(info.parent.doc)), info.parent.doc]);
@@ -516,6 +527,7 @@ class DocumentPane {
     for (const d of info.duplicates) links.push(["duplicate " + short(d), d]);
     this.links.replaceChildren(...links.map(([t, d]) => el("a", { onclick: () => this.open("doc:" + d, { source: "user" }) }, t)));
     this.links.hidden = !links.length;
+    this.renderStrip();
     this.body.replaceChildren();
     this.words = null;
     if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer.")); }
@@ -625,7 +637,7 @@ class DocumentPane {
       for (const h of this.highlights) if (h.range) draw(...h.range, "hl");
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) draw(...mk.select.char, "mark");
       for (const h of this.highlights) if (h.region) this.drawRegion(h.region, "hl");
-      for (const x of this.shownEntities()) draw(x.start, x.end, x.known ? "ent" : "ent sug");
+      for (const x of this.shownEntities()) draw(x.start, x.end, markClass(x));
     } else {
       const root = this.textRoot();
       if (!root) return;
@@ -635,7 +647,7 @@ class DocumentPane {
       for (const h of this.highlights) if (h.range) drawRangeBoxes(container, null, root, ...h.range, "hl");
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) drawRangeBoxes(container, null, root, ...mk.select.char, "mark");
       const index = markedIndex(root);
-      for (const x of this.shownEntities()) drawRangeBoxes(container, null, root, x.start, x.end, x.known ? "ent" : "ent sug", index);
+      for (const x of this.shownEntities()) drawRangeBoxes(container, null, root, x.start, x.end, markClass(x), index);
     }
   }
   drawRegion(r, cls) {
@@ -1098,29 +1110,35 @@ class DocumentPane {
     const layer = this.currentLayer();
     if (!layer || this.mode === "grid") { this.ents = null; this.updateEntityStat(); return; }
     const id = layer.id;
-    const [t, det] = await Promise.all([layerText(id), detected(id)]);
+    const [t, det, dts] = await Promise.all([layerText(id), detected(id), layerDates(id)]);
     if (this.layer !== id) return;
     refreshCandidates();
     const folded = cache.folded[id] ??= entityFoldText(t.cps);
     const ents = adhoc.annotations.entities || [];
     const known = findEntityMentions(t.cps, ents, folded).map((x) => ({ ...x, known: true }));
     const suggested = det.filter((d) => !known.some((k) => d.start < k.end && k.start < d.end));
-    this.ents = { layer: id, cps: t.cps, known, suggested };
+    // dates: placed by the document's own date; a known entity's name wins over a date inside it
+    const anchor = this.info?.dated?.date;
+    const dates = dts.map((d) => ({ ...d, isDate: true, resolved: resolveDate(d, anchor) }))
+      .filter((d) => d.resolved && !known.some((k) => d.start < k.end && k.start < d.end));
+    this.ents = { layer: id, cps: t.cps, known, suggested, dates };
     this.updateEntityStat();
     this.drawBoxes();
     changed();
   }
   shownEntities() {
     if (!this.ents || this.ents.layer !== this.layer || adhoc.entityMode === "off") return [];
-    return adhoc.entityMode === "all" ? [...this.ents.known, ...this.ents.suggested] : this.ents.known;
+    return [...(adhoc.entityMode === "all" ? [...this.ents.known, ...this.ents.suggested] : this.ents.known), ...this.ents.dates];
   }
   updateEntityStat() {
     const b = $(".entstat", this.head);
     if (!b) return;
-    b.hidden = !this.ents || (!this.ents.known.length && !this.ents.suggested.length);
+    b.hidden = !this.ents || (!this.ents.known.length && !this.ents.suggested.length && !this.ents.dates.length);
     if (!this.ents) return;
     const k = new Set(this.ents.known.flatMap((x) => x.entities)).size, s = new Set(this.ents.suggested.map((x) => x.key)).size;
-    b.textContent = adhoc.entityMode === "off" ? "entities hidden" : `${k} known` + (s ? ` · ${s} suggested` + (adhoc.entityMode === "known" ? " (hidden)" : "") : "");
+    const d = this.ents.dates.length;
+    b.textContent = adhoc.entityMode === "off" ? "entities and dates hidden" : `${k} known` + (s ? ` · ${s} suggested` + (adhoc.entityMode === "known" ? " (hidden)" : "") : "")
+      + (d ? ` · ${plural(d, "date")}` : "");
     b.className = "entstat " + adhoc.entityMode;
   }
   // the mention under a mouse event, if the pointer is on its words
@@ -1169,24 +1187,61 @@ class DocumentPane {
     }
     this.selection = { doc: this.info.doc, layer: this.layer, select: { char: [x.start, x.end] } };
     entityCard.hide();
-    const name = x.known ? entityById(x.entities[0])?.name : x.form;
-    toast(`Selected ${name}: ask Claude about it` + (x.known ? "" : ", or press e to add it to the entities"));
+    const name = x.known ? entityById(x.entities[0])?.name : x.form.replace(/\s+/g, " ");
+    toast(`Selected ${name}: ask Claude about it` + (x.known ? "" : x.isDate ? " (\"what else happened then?\")" : ", or press e to add it to the entities"));
     changed();
   }
   // the entity the selection is (or is inside of): what Claude sees as "this"
   selectionMention() {
     const c = this.selection?.select?.char;
     if (!c || !this.ents || this.selection.layer !== this.ents.layer) return null;
-    const all = [...this.ents.known, ...this.ents.suggested];
+    const all = [...this.ents.known, ...this.ents.suggested, ...this.ents.dates];
     return all.find((x) => x.start === c[0] && x.end === c[1]) || all.find((x) => x.start <= c[0] && c[1] <= x.end) || null;
+  }
+  // the date the selection is (or is inside of), resolved
+  selectionDate() {
+    const c = this.selection?.select?.char;
+    if (!c || !this.ents || this.selection.layer !== this.ents.layer) return null;
+    const x = this.ents.dates.find((d) => d.start <= c[0] && c[1] <= d.end);
+    if (!x) return null;
+    return { form: x.form.replace(/\s+/g, " "), date: x.resolved, kind: x.kind,
+             ...(x.ambiguous ? { ambiguous: true, alt: x.alt } : {}), ...(x.header ? { quoted_from: x.header.who } : {}) };
   }
   selectionEntity() {
     const x = this.selectionMention();
-    if (!x) return null;
+    if (!x || x.isDate) return null;
     if (x.known) return { known: x.entities.map((id) => { const e = entityById(id); return e && { entity: id, name: e.name, kind: e.kind, summary: e.summary }; }).filter(Boolean) };
     const { start, end, ...d } = x;
     const c = adhoc.candidates[d.key];
     return { suggested: { ...d, ...(c && d.kind !== "term" ? { docs: c.docs } : {}) } };
+  }
+
+  // the date strip: when the document was sent (or attached, created,
+  // modified), and where that date came from; hover the date for its card
+  renderStrip() {
+    const d = this.info?.dated || {};
+    const parts = [];
+    if (d.date) {
+      this.stripMention = { isDate: true, strip: true, kind: "absolute", form: d.date, resolved: d.date.slice(0, 10), source: d.source };
+      const date = el("span", { class: "pd-date" }, fmtDateTime(d.date, d.source !== "sent"));
+      date.addEventListener("mousemove", (ev) => entityCard.hoverOn(this, this.stripMention, ev, null));
+      date.addEventListener("mouseleave", () => entityCard.hoverOff());
+      parts.push(el("span", { class: "pd-label" }, DATE_SOURCE[d.source] || "Dated"), " ", date);
+      if (d.source === "attached" && d.parent)
+        parts.push(" ", el("a", { onclick: () => openFromPane(this, "doc:" + d.parent.doc) }, "(the email)"));
+    }
+    // a file's own created and modified dates, when they say something the date above doesn't
+    const shown = (d.date || "").slice(0, 10);
+    for (const [k, label] of [["created", "Created"], ["modified", "Modified"]]) {
+      const v = d[k];
+      if (!v || v.slice(0, 10) === shown) continue;
+      if (parts.length) parts.push(el("span", { class: "pd-sep" }, " · "));
+      parts.push(el("span", { class: "pd-label" }, label), " ", el("span", { class: "pd-other" }, fmtDateTime(v, true)));
+    }
+    if (d.date && d.source !== "sent" && d.source !== "attached")
+      parts.push(el("span", { class: "pd-note", title: "Metadata dates are often wrong: a template's creation date, or when the file was copied." }, " (from the file's metadata)"));
+    this.strip.replaceChildren(...parts);
+    this.strip.hidden = !parts.length;
   }
 
   // everything needed to show this pane again in another window
@@ -1783,10 +1838,14 @@ const entityCard = {
   refresh() { if (!this.el.hidden && this.pane && this.mention) this.show(this.pane, this.mention, this.at); },
   show(pane, x, at) {
     this.pane = pane; this.mention = x; this.at = at;
+    if (x.isDate) return dateCard.show(this, pane, x, at);
     const body = x.known ? x.entities.map((id) => this.knownBlock(pane, entityById(id))).filter(Boolean) : [this.suggestedBlock(pane, x)];
     this.el.replaceChildren(...body, el("div", { class: "ec-foot" }, x.known
       ? "Click to select, then ask Claude · e edits"
       : "Not in the entity list · click to select and ask Claude · e adds it"));
+    this.place(at);
+  },
+  place(at) {
     this.el.hidden = false;
     const w = this.el.offsetWidth, h = this.el.offsetHeight;
     let left = Math.min(at[0] + 12, innerWidth - w - 8), top = at[1] + 18;
@@ -1828,6 +1887,133 @@ const entityCard = {
     if (x.kind !== "term" && c.docs) lines.push(el("div", { class: "ec-why" }, c.docs === 1 ? "Only in this document" : `In ${c.docs} documents`));
     return el("div", { class: "ec-entity suggested" },
       el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, x.form), el("span", { class: "ec-kind" }, kind)), ...lines);
+  },
+};
+
+// -- date cards ----------------------------------------------------------------------------------
+// Hovering a date (in the text, or the document's own in the date strip)
+// shows where it sits in the matter's story: the document's place in its
+// thread, how many documents are dated near it, the email a quoted header
+// names, and the nearest events someone already marked as mattering
+// (chronology entries, dated events in the entity list, key sets, pages'
+// citations, documents tagged hot or key). DATES.md has why.
+
+const DATE_SOURCE = { sent: "Sent", attached: "Attached to an email sent", created: "Created", modified: "Last modified", metadata: "Dated" };
+function markClass(x) { return x.isDate ? "ent date" : x.known ? "ent" : "ent sug"; }
+// "2026-03-09T10:14:00-05:00" -> "Mon, Mar 9, 2026, 10:14", in the time as written (no time-zone shift)
+function fmtDay(s, weekday = true) {
+  const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(s || "");
+  if (!m) return s || "";
+  const t = new Date(Date.UTC(+m[1], +m[2] - 1, +(m[3] || 1)));
+  return t.toLocaleDateString(undefined, m[3] ? { timeZone: "UTC", year: "numeric", month: "short", day: "numeric", ...(weekday ? { weekday: "short" } : {}) }
+                                                 : { timeZone: "UTC", year: "numeric", month: "long" });
+}
+function fmtDateTime(s, dayOnly) {
+  const time = !dayOnly && /T(\d{2}:\d{2})/.exec(s || "");
+  return fmtDay(s) + (time && time[1] !== "00:00" ? ", " + time[1] : "");
+}
+// "9 days before", "the same day", "3 months after"
+function distance(from, to) {
+  const a = dayNumber(from), b = dayNumber(to);
+  if (a === null || b === null) return "";
+  const n = b - a, abs = Math.abs(n), side = n < 0 ? "before" : "after";
+  if (n === 0) return "same day";
+  if (abs < 14) return `${abs} day${abs === 1 ? "" : "s"} ${side}`;
+  if (abs < 60) return `${Math.round(abs / 7)} weeks ${side}`;
+  if (abs < 730) return `${Math.round(abs / 30.44)} months ${side}`;
+  return `${Math.round(abs / 365.25)} years ${side}`;
+}
+
+const dateCard = {
+  seq: 0,
+  async show(card, pane, x, at) {
+    const seq = ++this.seq;
+    const date = x.resolved, doc = pane.info?.doc;
+    const head = el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, fmtDay(date)),
+      el("span", { class: "ec-kind" }, x.strip ? (DATE_SOURCE[x.source] || "date").toLowerCase() : "date"));
+    const lines = [];
+    if (!x.strip) {
+      const read = x.kind === "relative" || x.kind === "noyear";
+      if (read) lines.push(el("div", { class: "ec-why" }, `“${x.form.replace(/\s+/g, " ")}”, counted from the document's date`));
+      if (x.ambiguous) lines.push(el("div", { class: "ec-why" }, `Or ${fmtDay(x.alt, false)}, if the day is written first`));
+    }
+    card.el.replaceChildren(el("div", { class: "ec-entity dc" }, head, ...lines, el("div", { class: "ec-empty" }, "…")));
+    card.place(at);
+    let r;
+    try {
+      const q = new URLSearchParams({ date, ...(doc ? { doc } : {}), ...(x.header?.who ? { who: x.header.who } : {}) });
+      r = await getJSON("/api/around?" + q);
+    } catch { r = null; }
+    if (seq !== this.seq || card.mention !== x || card.el.hidden) return;
+    const body = r ? this.body(pane, x, r) : [el("div", { class: "ec-empty" }, "The matter's dates couldn't be read.")];
+    card.el.replaceChildren(el("div", { class: "ec-entity dc" }, head, ...lines, ...body),
+      el("div", { class: "ec-foot" }, x.strip ? "Click an entry to open it" : "Click the date to select it, then ask Claude · click an entry to open it"));
+    card.place(at);
+  },
+  open(pane, loc) { entityCard.hide(); openFromPane(pane, loc, true); },
+  body(pane, x, r) {
+    const out = [], date = r.date;
+    // in-text: where this document stands relative to the date
+    if (!x.strip && r.here?.date) {
+      const d = distance(date, r.here.date.slice(0, 10));
+      out.push(el("div", { class: "ec-summary" }, d === "same day" ? "This document is dated the same day."
+        : `This document is dated ${fmtDay(r.here.date, false)}, ${d.replace("before", "earlier").replace("after", "later")}.`));
+    }
+    for (const q of r.quoted || [])
+      out.push(el("div", { class: "ec-sees" }, "The email quoted here: ", el("a", { onclick: () => this.open(pane, "doc:" + q.doc) }, q.label)));
+    if (r.quoted_missing)
+      out.push(el("div", { class: "ec-why" }, `The email quoted here (${x.header.who}, ${fmtDay(date, false)}) isn't in the matter.`));
+    // its thread
+    // its thread, when the date is the document's own day (the thread places the document, not the date)
+    const t = r.thread;
+    if (t && t.size > 1 && (x.strip || r.here?.date?.slice(0, 10) === date)) {
+      const nav = [];
+      if (t.prev) nav.push(el("a", { title: t.prev.label, onclick: () => this.open(pane, "doc:" + t.prev.doc) }, `← ${fmtDay(t.prev.date, false)}`));
+      if (t.next) nav.push(el("a", { title: t.next.label, onclick: () => this.open(pane, "doc:" + t.next.doc) }, `${fmtDay(t.next.date, false)} →`));
+      out.push(el("div", { class: "ec-sees" }, `Message ${t.position} of ${t.size} in its thread`, ...(nav.length ? [": ", ...nav.flatMap((a, i) => i ? [" · ", a] : [a])] : [])));
+    }
+    // events: before, on, after
+    const short = (d) => d.slice(0, 4) === date.slice(0, 4) && d.length >= 10
+      ? new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10))).toLocaleDateString(undefined, { timeZone: "UTC", month: "short", day: "numeric" })
+      : fmtDay(d, false);
+    const row = (e, rel) => el("div", { class: "dc-row" + (e.here ? " here" : ""), title: (e.sources || []).join("; ") },
+      el("span", { class: "dc-when" }, rel), el("span", { class: "dc-date" }, short(e.date)),
+      e.doc || (e.loc && typeof e.loc === "object" && e.loc.doc)
+        ? el("a", { class: "dc-label", onclick: () => this.open(pane, e.loc && (typeof e.loc === "string" || e.loc.doc) ? e.loc : "doc:" + e.doc) }, e.label)
+        : el("span", { class: "dc-label" }, e.label),
+      el("span", { class: "dc-src" }, (e.sources || [])[0] || ""));
+    if (r.events) {
+      const rows = [];
+      if (r.more_before) rows.push(el("div", { class: "dc-more" }, `${r.more_before} earlier`));
+      for (const e of r.before) rows.push(row(e, distance(date, e.date.slice(0, 10)).replace(" before", "")));
+      rows.push(el("div", { class: "dc-row now" }, el("span", { class: "dc-when" }, "▸"), el("span", { class: "dc-date" }, short(date)),
+        el("span", { class: "dc-label" }, r.on.length ? "" : x.strip ? "this document" : "this date")));
+      for (const e of r.on) rows.push(row(e, ""));
+      for (const e of r.after) rows.push(row(e, distance(date, e.date.slice(0, 10)).replace(" after", "")));
+      if (r.more_after) rows.push(el("div", { class: "dc-more" }, `${r.more_after} later`));
+      out.push(el("div", { class: "dc-line" }, ...rows));
+    } else {
+      out.push(el("div", { class: "ec-why" }, "No events marked yet. They come from chronologies, pages' citations, key sets, dated events in the entity list, and documents tagged hot or key. ",
+        el("a", { onclick: () => askClaude("Write a chronology of the key events, quoting the documents, and add the turning points to the entity list as dated events.") }, "Ask Claude for a chronology")));
+    }
+    // documents near it
+    const n = r.near;
+    if (n && n.count > (x.strip ? 1 : 0)) {
+      const what = n.days ? `${plural(n.count, "document")} dated within ${n.days} days` : `${plural(n.count, "document")} dated in ${fmtDay(date)}`;
+      out.push(el("div", { class: "ec-sees" }, el("a", { title: "Step through them in date order with ] and [", onclick: () => this.stepThrough(pane, n.docs, date) }, what),
+        n.days && n.same_day > (x.strip ? 1 : 0) ? ` (${n.same_day} that day)` : ""));
+    }
+    return out;
+  },
+  // open the near documents beside the pane, as a sequence starting at the date
+  stepThrough(pane, docs, date) {
+    entityCard.hide();
+    if (!docs.length) return;
+    const items = docs.map((d) => "doc:" + d);
+    const target = addPane(new DocumentPane(newPaneId()), true, { beside: pane.id });
+    reveal(target.id);
+    target.seqOpen({ items, position: 0, from: pane.id }, items[0]);
+    toast(`${plural(items.length, "document")} near ${fmtDay(date, false)}: ] and [ step through them`);
   },
 };
 
@@ -2044,8 +2230,9 @@ const commands = {
   async selection() {
     const p = focusedPane();
     const entity = p?.kind === "document" ? p.selectionEntity() : null;
+    const date = p?.kind === "document" ? p.selectionDate() : null;
     return { pane: p?.id ?? null, selection: p ? (p.kind === "document" ? p.selection : p.state().selection) : null,
-             ...(entity ? { entity } : {}), marks: p?.marks || adhoc.listMarks || [] };
+             ...(entity ? { entity } : {}), ...(date ? { date } : {}), marks: p?.marks || adhoc.listMarks || [] };
   },
   async "clear-marks"(c) {
     for (const p of adhoc.panes) if (!c.pane || p.id === c.pane) { if (p.marks) { p.marks = []; p.drawBoxes(); } }

@@ -14,6 +14,12 @@ signature, "By:"), joined to known people by surname and given name or
 initial (Tom for Thomas). First names alone ("José") and initials ("TK")
 are not counted; search for those. ``people --person X --list F`` writes
 the documents that name someone, each mention a child row.
+
+Dates (DATES.md): ``dates DOC`` gives a document's own date, where it came
+from (sent, attached, created, modified), and the dates written in it,
+resolved ("yesterday" in an email is the day before it was sent).
+``around DATE`` lists what is near a date: documents, events with dates in
+the entity list, and chronology entries in list files.
 """
 
 import difflib

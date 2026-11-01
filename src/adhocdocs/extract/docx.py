@@ -144,6 +144,9 @@ def extract_docx(data: bytes) -> Extraction:
         "title": cp.title or None,
         "author": cp.author or None,
         "date": date.isoformat() if date else None,
+        "date_source": ("created" if cp.created else "modified") if date else None,
+        "created": cp.created.isoformat() if cp.created else None,
+        "modified": cp.modified.isoformat() if cp.modified else None,
         "tracked_changes": has_changes or None,
     }.items() if v}
     return Extraction(kind="docx", layers=layers, metadata=meta)

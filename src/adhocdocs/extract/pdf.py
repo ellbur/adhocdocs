@@ -239,7 +239,11 @@ def extract_pdf(data: bytes) -> Extraction:
     meta = {k: v for k, v in {
         "title": (doc.metadata or {}).get("title") or None,
         "author": (doc.metadata or {}).get("author") or None,
-        "date": _pdf_date((doc.metadata or {}).get("creationDate")),
+        "date": _pdf_date((doc.metadata or {}).get("creationDate")) or _pdf_date((doc.metadata or {}).get("modDate")),
+        "date_source": "created" if _pdf_date((doc.metadata or {}).get("creationDate"))
+                       else "modified" if _pdf_date((doc.metadata or {}).get("modDate")) else None,
+        "created": _pdf_date((doc.metadata or {}).get("creationDate")),
+        "modified": _pdf_date((doc.metadata or {}).get("modDate")),
         "pages": doc.page_count,
     }.items() if v}
     if is_transcript:

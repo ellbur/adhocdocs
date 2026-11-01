@@ -4,12 +4,12 @@
 :root {
   --bg: #f6f6f4; --pane: #fff; --ink: #1d1d1b; --muted: #6b6b66; --line: #ddd9d0;
   --accent: #2d5fd3; --sel: rgba(45, 95, 211, .28); --hl: rgba(255, 204, 0, .38); --mark: rgba(214, 70, 40, .25);
-  --ent: #1f8a70; --ent-bg: rgba(31, 138, 112, .07); --ent-sug: rgba(31, 138, 112, .55);
+  --ent: #1f8a70; --ent-bg: rgba(31, 138, 112, .07); --ent-sug: rgba(31, 138, 112, .55); --date: rgba(176, 108, 20, .7);
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1c1c1b; --pane: #252524; --ink: #e8e6e1; --muted: #9d9a93; --line: #3a3936;
           --accent: #7aa2ff; --sel: rgba(122, 162, 255, .35); --hl: rgba(255, 204, 0, .3); --mark: rgba(255, 120, 90, .3);
-          --ent: #4cc9a4; --ent-bg: rgba(76, 201, 164, .08); --ent-sug: rgba(76, 201, 164, .6); }
+          --ent: #4cc9a4; --ent-bg: rgba(76, 201, 164, .08); --ent-sug: rgba(76, 201, 164, .6); --date: rgba(240, 180, 90, .75); }
 }
 
 body.adhoc-shell { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
@@ -114,6 +114,21 @@ table.grid td.cur { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* the entity layer: known entities underlined, suggestions dotted */
 .page .box.ent, .hlbox.ent { mix-blend-mode: normal; border-bottom: 2px solid var(--ent); background: var(--ent-bg); }
 .page .box.ent.sug, .hlbox.ent.sug { border-bottom: 1.5px dotted var(--ent-sug); background: none; }
+.page .box.ent.date, .hlbox.ent.date { border-bottom: 1.5px dashed var(--date); background: none; }
+.pane-dates { padding: 2px 10px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--pane); }
+.pane-dates .pd-date { color: var(--ink); border-bottom: 1.5px dashed var(--date); cursor: default; }
+.pane-dates .pd-other { color: var(--ink); }
+.pane-dates .pd-note { font-size: 11px; }
+.pane-dates a { color: var(--accent); cursor: pointer; }
+#entity-card .dc-line { margin-top: 6px; border-left: 2px solid var(--line); padding-left: 6px; }
+#entity-card .dc-row { display: grid; grid-template-columns: 5.2em 5.6em 1fr; gap: 0 6px; align-items: baseline; padding: 1px 0; }
+#entity-card .dc-row .dc-src { grid-column: 3; color: var(--muted); font-size: 11px; }
+#entity-card .dc-row.now { font-weight: 600; color: var(--date); }
+#entity-card .dc-row.here .dc-label { font-style: italic; }
+#entity-card .dc-when, #entity-card .dc-date { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+#entity-card .dc-label { overflow: hidden; text-overflow: ellipsis; }
+#entity-card a.dc-label, #entity-card .ec-sees a { color: var(--accent); cursor: pointer; }
+#entity-card .dc-more { color: var(--muted); font-size: 11px; padding-left: 5.2em; }
 .pane-head .entstat { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 9px; padding: 0 8px; font: 11px/1.6 system-ui, sans-serif; cursor: pointer; }
 .pane-head .entstat.all, .pane-head .entstat.known { color: var(--ent); border-color: var(--ent); }
 #entity-card { position: fixed; z-index: 12; max-width: 360px; min-width: 200px; background: var(--pane); color: var(--ink);

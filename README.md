@@ -156,10 +156,12 @@ to try on the sample matter:
 - *"Who is José Ibáñez? Show me every document that mentions him."*
 - Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
 - *"Add the key people and companies in this dispute to the entities, with a line on each."*
+- Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
 
 **Writing**
 
-- *"Write a chronology of the dispute as a page, quoting the documents for each entry."*
+- *"Write a chronology of the dispute as a page, quoting the documents for each entry."* Its entries then appear on the date cards.
+- *"Add the turning points of the dispute to the entities as dated events."*
 - *"Show me a timeline of the emails, one lane per thread."* Or: *"…of the chronology entries."*
 - *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
 - *"In the memo, show the signature line of the delivery receipt as a picture, and the aging report rows as a table."*
@@ -254,6 +256,7 @@ data system-wide, put `eng.traineddata` in
 - [LISTS.md](LISTS.md): document lists and the list display
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
+- [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer
 - [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms

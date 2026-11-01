@@ -1,0 +1,16 @@
+{"about": "resolve() in src/adhocdocs/dates.py and resolveDate() in viewer/shell/dates.js give the same answers (tests/test_dates.py runs both)",
+ "cases": [
+  {"mention": {"kind": "absolute", "date": "2026-03-09"}, "anchor": null, "want": "2026-03-09"},
+  {"mention": {"kind": "month", "date": "2026-03"}, "anchor": "2026-05-01", "want": "2026-03"},
+  {"mention": {"kind": "noyear", "date": "--03-02"}, "anchor": "2026-03-11T10:14:00-05:00", "want": "2026-03-02"},
+  {"mention": {"kind": "noyear", "date": "--12-31"}, "anchor": "2026-01-05", "want": "2025-12-31"},
+  {"mention": {"kind": "noyear", "date": "--04-15"}, "anchor": "2026-03-01", "want": "2026-04-15"},
+  {"mention": {"kind": "noyear", "date": "--02-29"}, "anchor": "2026-03-01", "want": "2026-02-28"},
+  {"mention": {"kind": "relative", "rel": {"days": -1}}, "anchor": "2026-03-01", "want": "2026-02-28"},
+  {"mention": {"kind": "relative", "rel": {"days": 1}}, "anchor": "2026-12-31", "want": "2027-01-01"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 4, "dir": -1}}, "anchor": "2026-03-11", "want": "2026-03-06"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 1, "dir": 1}}, "anchor": "2026-03-11", "want": "2026-03-17"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 0, "dir": 0}}, "anchor": "2026-03-15", "want": "2026-03-09"},
+  {"mention": {"kind": "relative", "rel": {"days": -1}}, "anchor": null, "want": null},
+  {"mention": {"kind": "noyear", "date": "--03-02"}, "anchor": "someday", "want": null}
+ ]}

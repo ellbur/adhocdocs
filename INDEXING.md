@@ -51,6 +51,9 @@ docstrings.*
   defined terms, document numbers) for the entity layer's suggestions
   ([ENTITIES.md](ENTITIES.md)). It also writes a file per text and
   `candidates.json`, which the viewer reads without Python.
+- **`dates`**: the dates written in each text, and each email's thread,
+  for the date strip and date cards ([DATES.md](DATES.md)). Like
+  `entities`, it writes files the viewer reads without Python.
 - **`names`**: the person-name mentions in each text, with their evidence
   and any role beside them, for the cast of characters (`analyze people`).
 - **`grep`** needs no index: a regex over the layer files, for strings an

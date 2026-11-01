@@ -25,7 +25,7 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags, notes, privilege flags, and the entity list; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
-| `analyze` | email threads, near-duplicates and versions, redlines, people |
+| `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |

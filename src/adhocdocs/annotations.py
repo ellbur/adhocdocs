@@ -14,7 +14,8 @@ Each line of ``annotations/log.jsonl`` is an event with ``id``, ``at``,
 ``edit-note``      ``note``, ``body``
 ``delete-note``    ``note``
 ``define-entity``  ``entity`` (new ID), ``name``, and optional ``kind``,
-                   ``aliases``, ``summary``, ``recap``, ``see`` (targets)
+                   ``aliases``, ``summary``, ``recap``, ``see`` (targets),
+                   ``date`` (an event's: ``YYYY-MM-DD``, ``YYYY-MM`` or ``YYYY``)
 ``edit-entity``    ``entity`` and the fields that change; ``add_aliases``,
                    ``remove_aliases``
 ``delete-entity``  ``entity``
@@ -31,6 +32,7 @@ the only write path from the container, writes as ``claude``. The rules in
 """
 
 import json
+import re
 from contextlib import contextmanager
 
 from . import literate, locators
@@ -108,7 +110,7 @@ class Annotations:
             self.notes.pop(ev["note"], None)
         elif op == "define-entity":
             e = {"entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind") or "other", "aliases": [],
-                 "alias_by": {}, "summary": None, "recap": None, "see": [], "by": ev["author"], "at": ev["at"],
+                 "alias_by": {}, "summary": None, "recap": None, "see": [], "date": None, "by": ev["author"], "at": ev["at"],
                  "set_by": {}, "set_at": {}}
             self.entities[ev["entity"]] = e
             for f in ENTITY_FIELDS:
@@ -190,7 +192,9 @@ class Annotations:
                 raise Refused(f"no note {ev['note']}")
             if author == CLAUDE and is_user(n["by"]):
                 raise Refused(f"note {ev['note']} was written by {n['by']}; Claude can't change it")
-        elif op == "define-entity":
+        if op in ("define-entity", "edit-entity") and ev.get("date") is not None and not ENTITY_DATE.fullmatch(str(ev["date"])):
+            raise Refused(f"an entity's date is YYYY-MM-DD, YYYY-MM or YYYY, not {ev['date']!r}")
+        if op == "define-entity":
             if not ev["name"].strip():
                 raise Refused("an entity needs a name")
             same = self.entity_named(ev["name"], ev.get("kind"))
@@ -240,7 +244,11 @@ class Annotations:
         return out
 
 
-ENTITY_FIELDS = ("name", "kind", "summary", "recap", "see")
+ENTITY_FIELDS = ("name", "kind", "summary", "recap", "see", "date")
+
+
+# an event's date: a day, a month or a year (DATES.md)
+ENTITY_DATE = re.compile(r"\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?")
 
 
 def _add_alias(e: dict, alias: str, author: str):
@@ -279,8 +287,8 @@ OPS = {
     "reply": (("parent", "body"), ()),
     "edit-note": (("note", "body"), ()),
     "delete-note": (("note",), ()),
-    "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see")),
-    "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "add_aliases", "remove_aliases")),
+    "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see", "date")),
+    "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "date", "add_aliases", "remove_aliases")),
     "delete-entity": (("entity",), ()),
 }
 

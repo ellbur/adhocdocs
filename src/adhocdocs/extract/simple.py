@@ -180,6 +180,9 @@ def extract_xlsx(data: bytes) -> Extraction:
     props = wb.properties
     meta = {k: v for k, v in {"title": props.title, "author": props.creator,
                               "date": props.created.isoformat() if props.created else None,
+                              "date_source": "created" if props.created else None,
+                              "created": props.created.isoformat() if props.created else None,
+                              "modified": props.modified.isoformat() if props.modified else None,
                               "sheets": len(wb.worksheets)}.items() if v}
     wb.close()
     return Extraction(kind="spreadsheet", layers=[b.layer("native", primary=True)], metadata=meta)
