@@ -27,7 +27,7 @@ the case is about from them: ask the user.
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected |
 | `ann` | tags and notes; yours are recorded as Claude's. Also the entity list (`ann entities`, `define-entity`) |
 | `page` | literate pages: memos and chronologies whose quotations are references |
-| `analyze` | email threads, near-duplicates and versions, redlines, people (from headers and text, with roles and mentions) |
+| `analyze` | email threads, near-duplicates and versions, redlines, people (from headers and text, with roles and mentions), dates (a document's, and what is around one) |
 | `produce` | Bates-stamped productions, withholding and redaction (by the user's tags), privilege log, check for possible privilege; `produce exhibits` for exhibit stickers and lists |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |

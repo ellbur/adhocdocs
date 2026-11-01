@@ -12,6 +12,7 @@
 //! sandboxed iframes where no script can run.
 
 mod api;
+mod chrono;
 mod matter;
 mod overview;
 mod protocol;

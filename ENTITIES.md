@@ -105,6 +105,7 @@ Claude's through the annotation API.
 | `summary` | what it is, in a line or two |
 | `recap` | what Claude last told the user about it, dated |
 | `see` | locators to the words that define or show it, checked and fingerprinted like a tag's target |
+| `date` | an event's date (`YYYY-MM-DD`, `YYYY-MM` or `YYYY`): it goes on the date cards ([DATES.md](DATES.md)) |
 
 **Rules** (enforced in the write path, like the other annotation rules):
 each field remembers who set it last. Claude can't change a field the user
@@ -149,4 +150,4 @@ view selection                          the selection, with "entity" when it is 
 - Spreadsheets in grid mode have no entity layer.
 - Entities with no name-like form (an event, a meeting) are only reachable
   by their aliases. Mentions like "the March 9 call" need an alias that
-  says so.
+  says so. A dated event also appears on the date cards near its date.

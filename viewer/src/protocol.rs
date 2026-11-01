@@ -27,6 +27,7 @@ const SHELL_HTML: &str = include_str!("../shell/index.html");
 const SHELL_JS: &str = include_str!("../shell/shell.js");
 const SHELL_CSS: &str = include_str!("../shell/shell.css");
 const ENTITIES_JS: &str = include_str!("../shell/entities.js");
+const DATES_JS: &str = include_str!("../shell/dates.js");
 
 pub struct Response {
     pub status: u16,
@@ -55,6 +56,7 @@ pub struct Handler {
     pub panes: Panes,
     renderer: Renderer,
     overview: crate::overview::Overview,
+    chrono: crate::chrono::Chrono,
 }
 
 pub fn query(q: &str) -> HashMap<String, String> {
@@ -100,7 +102,7 @@ pub fn char_slice(text: &str, s: usize, e: usize) -> String {
 
 impl Handler {
     pub fn new(matter: Arc<Mutex<Matter>>, panes: Panes) -> Self {
-        Handler { matter, panes, renderer: Renderer::new(), overview: Default::default() }
+        Handler { matter, panes, renderer: Renderer::new(), overview: Default::default(), chrono: Default::default() }
     }
 
     pub fn handle(&mut self, path: &str, q: &str) -> Response {
@@ -112,8 +114,11 @@ impl Handler {
             ["shell.js"] => ok("text/javascript", SHELL_JS),
             ["shell.css"] => ok("text/css", SHELL_CSS),
             ["entities.js"] => ok("text/javascript", ENTITIES_JS),
+            ["dates.js"] => ok("text/javascript", DATES_JS),
             ["api", "doc", doc] => self.doc_info(doc),
             ["api", "layer", id, "detected"] => self.detected(id),
+            ["api", "layer", id, "dates"] => self.dates(id),
+            ["api", "around"] => self.around(&query(q)),
             ["api", "layer", id, part] => self.layer_part(id, part),
             ["api", "text"] => self.text_at(&query(q)),
             ["api", "docs"] => self.docs(),
@@ -144,6 +149,33 @@ impl Handler {
         let p = m.root.join("workspace/.adhoc/indexes/entities/texts").join(format!("{}.json", h));
         let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
         json_resp(v.get("detections").cloned().unwrap_or(json!([])))
+    }
+
+    /// The dates index's date mentions for a layer's text, or none if the
+    /// index hasn't reached it yet.
+    fn dates(&self, id: &str) -> Response {
+        let m = self.matter.lock().unwrap();
+        let Some(layer) = m.layer(id).cloned() else { return not_found("layer not in this matter") };
+        let h = layer.text.strip_prefix("sha256:").unwrap_or(&layer.text).to_string();
+        if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return json_resp(json!([]));
+        }
+        let p = m.root.join("workspace/.adhoc/indexes/dates/texts").join(format!("{}.json", h));
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("dates").cloned().unwrap_or(json!([])))
+    }
+
+    /// What is around a date, for a date card: `date`, and optionally `doc`
+    /// (the document it is shown in) and `who` (a quoted email's sender).
+    fn around(&mut self, q: &HashMap<String, String>) -> Response {
+        let Some(date) = q.get("date").filter(|d| d.len() >= 4 && d[..4].bytes().all(|b| b.is_ascii_digit())) else {
+            return not_found("no date");
+        };
+        let matter = self.matter.clone();
+        let mut m = matter.lock().unwrap();
+        m.refresh();
+        let doc = q.get("doc").and_then(|d| m.resolve_doc(d)).filter(|d| m.live(d));
+        json_resp(self.chrono.around(&m, date, doc.as_deref(), q.get("who").map(|s| s.as_str())))
     }
 
     /// Every detected candidate across the matter: how many documents name it.
@@ -216,11 +248,11 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     "entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind").filter(|k| !k.is_null()).cloned().unwrap_or(json!("other")),
                     "aliases": aliases, "summary": ev["summary"], "recap": ev["recap"],
                     "recap_at": if ev["recap"].is_string() { ev["at"].clone() } else { Value::Null },
-                    "see": ev.get("see").cloned().unwrap_or(json!([])), "by": ev["author"], "at": ev["at"]})));
+                    "see": ev.get("see").cloned().unwrap_or(json!([])), "date": ev["date"], "by": ev["author"], "at": ev["at"]})));
             }
             "edit-entity" => {
                 if let Some((_, e)) = entities.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["entity"].as_str()) {
-                    for k in ["name", "kind", "summary", "recap", "see"] {
+                    for k in ["name", "kind", "summary", "recap", "see", "date"] {
                         if ev.get(k).is_some() { e[k] = ev[k].clone(); }
                     }
                     if ev.get("recap").is_some() { e["recap_at"] = ev["at"].clone(); }
@@ -296,6 +328,7 @@ impl Handler {
             let info = json!({"doc": doc, "content": content, "meta": meta, "custodian": obj.get("custodian"),
                               "layers": layers, "children": children, "parent": parent,
                               "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
+                              "dated": crate::chrono::strip(&m, &doc),
                               "exhibits": exhibits_for(&m.root, &doc)});
             (doc, content, info, kind, name)
         };

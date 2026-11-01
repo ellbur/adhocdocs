@@ -124,6 +124,7 @@ list display: a linked preview pane, selecting, tagging, and `j`/`k` or
   (a day, or just `YYYY-MM` or `YYYY`, drawn dashed) and `event`, the label
   shown instead of the document's name. The locator points at the evidence
   for the entry, so a chronology is checked like any other quotation.
+  Its entries also appear on the viewer's date cards ([DATES.md](DATES.md)).
 - **Breaks:** long empty stretches are cut out of the axis and shown as a
   hatched break labeled with their length, so documents years apart don't
   spread over a mile of screen. The automatic scale is the finest that fits

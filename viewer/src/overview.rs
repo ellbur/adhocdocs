@@ -171,7 +171,7 @@ fn workspace_files(ws: &Path) -> (Value, Value) {
     (json!(pages), json!(lists))
 }
 
-fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(String, u64, std::path::PathBuf)>) {
+pub(crate) fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(String, u64, std::path::PathBuf)>) {
     if depth > MAX_DEPTH || out.len() >= MAX_FILES {
         return;
     }

@@ -197,12 +197,22 @@ known only, or none. The viewer matches aliases itself
 once, and reads suggestions from the `entities` index's files. See
 [ENTITIES.md](ENTITIES.md).
 
+## Dates
+
+A strip under the header says when the document is dated and where that
+came from (sent, attached, created, modified). Dates in the text have a
+dashed underline. Hovering either one shows a date card: the document's
+thread, how many documents are near the date, and the nearest events
+before and after, from chronologies, dated entities, key sets, pages'
+citations and hot tags. The card's data comes from `/api/around`
+([`chrono.rs`](viewer/src/chrono.rs)). See [DATES.md](DATES.md).
+
 ## State
 
 `view state` reports the layout, panes, and per pane: the document, layer
 and view, mode, what's visible (pages or a char range), the sequence
 position, the **selection as a JSON locator with its quote fingerprint**
-(ready for a `refs` block, tag or note) and the `entity` it is, if any, marks, highlights, form values, and
+(ready for a `refs` block, tag or note) and the `entity` or `date` it is, if any, marks, highlights, form values, and
 a list pane's selected rows. `view history` lists where the user went and
 whether the user, Claude or a pane went there.
 

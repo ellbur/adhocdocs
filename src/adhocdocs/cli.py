@@ -626,6 +626,8 @@ viewer to be reminded what they are.
   ann define-entity "Raymond Voss" --kind person --alias Voss --alias "R. Voss" \
       --summary "Harrowgate's controller; signed the supply agreement for Seller." --see <locator>
   ann edit-entity <id|name> --recap "You asked who chased the invoice: Voss, Mar 9 and Mar 17."
+  ann define-entity "Dock 4 rejection" --kind event --date 2026-03-09 --alias "the March 9 rejection" \
+      --summary "Ames refused the pallet at Dock 4; the start of the dispute." --see <locator>
   ann delete-entity <id|name>
 
 The viewer underlines known entities and dots suggestions (found by rules
@@ -638,6 +640,11 @@ recap what you just told them, so the next hover reminds them. Both are
 paraphrase: point at the words with --see, don't type quotations. Say in a
 line that you did it. After an analysis that names the key players (a cast,
 a chronology), add the ten or so that matter, not every suggestion.
+
+Events with a --date go on the viewer's date cards (DATES.md): hovering a
+date in a document shows the nearest events before and after it. Add the
+events that turn the story (a dozen or so, not every document) when you
+write a chronology, or when the user asks what matters when.
 
 Claude can't change a field, remove an alias or delete an entity the user
 set, made or added; it can fill in what the user left blank.
@@ -738,6 +745,7 @@ def ann(argv=None):
         s.add_argument("--recap", help="what you last told the user about it, shown under the summary")
         s.add_argument("--see", action="append", help="a locator to the words that define or show it (repeatable)")
         s.add_argument("--alias", dest="aliases", action="append", help="another way it is written (repeatable)")
+        s.add_argument("--date", help="an event's date (YYYY-MM-DD, YYYY-MM or YYYY): it goes on the viewer's date cards")
         if name == "edit-entity":
             s.add_argument("--remove-alias", action="append")
             s.add_argument("--clear-see", action="store_true", help="remove every --see")
@@ -830,7 +838,7 @@ def ann(argv=None):
             if a.clear_see:
                 req["see"] = []
         if a.cmd != "delete-entity":
-            req.update(kind=a.kind, summary=a.summary, recap=a.recap)
+            req.update(kind=a.kind, summary=a.summary, recap=a.recap, date=a.date)
             if a.see:
                 req["see"] = _targets(m, a.see)
         out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
@@ -869,7 +877,7 @@ def ann(argv=None):
 
 
 def _entity_row(e: dict) -> dict:
-    row = {k: e[k] for k in ("entity", "name", "kind", "aliases", "summary", "recap", "see", "by", "at") if e.get(k) not in (None, [])}
+    row = {k: e[k] for k in ("entity", "name", "kind", "aliases", "summary", "recap", "see", "date", "by", "at") if e.get(k) not in (None, [])}
     users = sorted({b for b in [*e["set_by"].values(), *e["alias_by"].values()] if annotations.is_user(b)})
     if users:
         row["user_set"] = sorted(f for f, b in e["set_by"].items() if annotations.is_user(b))
@@ -1153,7 +1161,8 @@ def view(argv=None):
     s.add_argument("--window", help="move: the window to move it to; close: the window")
     s.add_argument("--layout", choices=["tabs", "single", "split-v", "split-h", "grid"], help="new: its layout")
     sub.add_parser("state", help="windows, panes, what's visible, selections, marks, form values")
-    sub.add_parser("selection", help="the focused pane's selection and marks")
+    sub.add_parser("selection", help="the focused pane's selection and marks, and the entity or date it is "
+                                     "(a date with its resolved day: analyze around DAY says what is near it)")
     s = sub.add_parser("history")
     s.add_argument("--limit", type=int, default=50)
     s = sub.add_parser("clear-marks")
@@ -1254,6 +1263,11 @@ def analyze(argv=None):
     s.add_argument("a")
     s.add_argument("b")
     s.add_argument("--html", help="also write static HTML for a viewer pane (view pane --new FILE)")
+    s = sub.add_parser("dates", help="a document's own date (and where it came from) and the dates in its text, resolved")
+    s.add_argument("doc")
+    s = sub.add_parser("around", help="what is near a date: documents, dated events, chronology entries")
+    s.add_argument("date", help="YYYY-MM-DD")
+    s.add_argument("--days", type=int, default=7, help="how far either side (default 7)")
     matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
@@ -1309,6 +1323,12 @@ def analyze(argv=None):
                 if not a.mentions:
                     p_.pop("mentions", None)
                 out(p_)
+    elif a.cmd == "dates":
+        from . import dates
+        out(dates.doc_mentions(m, doc(a.doc)))
+    elif a.cmd == "around":
+        from . import dates
+        out(dates.around(m, a.date, a.days))
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))
         out(header)
