@@ -64,6 +64,10 @@ Adding documents works for these formats:
 - zip archives
 
 Originals are kept exactly as given, and identical files are stored once.
+Zip archives and mailboxes (`.mbox`, `.pst`) are read a member at a
+time, including when one is inside another or attached to an email, so
+they can be larger than memory. If an ingest is interrupted, run the same command
+again: it finishes the job without adding anything twice.
 Add more documents at any time; the session catches its indexes up when it
 starts. Each `ingest` names the collection the files came from. The
 custodian is optional.

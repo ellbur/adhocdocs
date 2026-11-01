@@ -61,6 +61,22 @@ passes, a .docx with tracked changes accepted and with them shown.
   is itself an `email`. The converted bytes are stored as the child's
   content and are the same each time, so re-ingesting finds the same
   documents. PSTs are read with libpff, through `libpff-python`.
+- Containers of any size: every original is put in the store before it
+  is read, and a zip, mbox or PST is then read from its stored copy a
+  member at a time (`extract_file`). That holds however it arrived, so a
+  PST in a zip, or an mbox attached to an email, is streamed like one
+  given as a file. A zip's members are streamed into the store without
+  being held in memory; a mailbox message is held while it is extracted,
+  with its attachments. So what must fit in memory is one message (or
+  one non-container file that something extracts, such as a PDF), never a
+  container, and never a file nothing can read (kind `other`). A zip member
+  that can't be read (a bad CRC, an unsupported compression method) is
+  skipped and counted (`unreadable`); the rest of the archive goes in.
+- A document's metadata is recorded after its children, so one without
+  metadata is unfinished, and re-running an interrupted ingest carries on
+  from where it stopped. A container that breaks part-way keeps the
+  members read before the break, and its metadata says where
+  (`extraction_error`).
 - Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet,
   and `sheet=…&cells=B2:D10` a rectangle of cells;
   cells hold the values Excel last calculated, not formulas.

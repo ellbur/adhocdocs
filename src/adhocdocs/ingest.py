@@ -3,14 +3,19 @@ children, every step recorded in the provenance log.
 
 Runs on the host, outside the container (the container sees the store
 read-only). Re-ingesting the same file with the same identity facts is a
-no-op, because the document ID is the same.
+no-op, because the document ID is the same; re-running an ingest that was
+interrupted finishes it. Containers (zip, mbox, PST) are stored first and
+read from the store a member at a time, wherever they came from, so they
+needn't fit in memory (see :func:`_extractors`).
 """
 
 import os
 import sys
+import zipfile
+import zlib
 from pathlib import Path
 
-from .extract import Extraction, extract, unextracted_kind
+from .extract import STREAMED, Extraction, extract, extract_file, file_kind, unextracted_file_kind, unextracted_kind
 from .matter import Matter
 from .objects import object_id
 
@@ -43,35 +48,121 @@ def store_layers(m: Matter, content: str, ext: Extraction, log="store", objects=
 
 
 def ingest_bytes(m: Matter, data: bytes, name: str | None, identity: dict, report=None) -> str:
+    return _ingest(m, m.objects.put_bytes(data), name, identity, report, data)
+
+
+def ingest_file(m: Matter, path, name: str | None, identity: dict, report=None) -> str:
+    """Ingest a file on disk, of any size: it is copied into the store in
+    blocks (see :func:`_ingest` for how it is read from there)."""
+    return _ingest(m, m.objects.put_file(path), name, identity, report)
+
+
+def ingest_stream(m: Matter, f, name: str | None, identity: dict, report=None) -> str:
+    """Ingest what a binary file object reads (a zip member), streamed into
+    the store."""
+    return _ingest(m, m.objects.put_stream(f), name, identity, report)
+
+
+def _extractors(m: Matter, content: str, name, data):
+    """How to extract stored content, and what to call it if that fails.
+    A container (zip, mbox, PST) is read from its stored copy a member at a
+    time, however it arrived, so a mailbox in a zip in an email is streamed
+    like one given as a file. Anything else is read whole, from ``data``
+    when the caller already has it."""
+    stored = m.objects.path(content)
+
+    def run():
+        kind = file_kind(stored, name)
+        if kind in STREAMED:
+            return extract_file(stored, kind)
+        if kind == "other" and data is None and not _maybe_msg(stored):
+            return Extraction(kind="other")         # nothing reads it, so don't load it
+        return extract(name, data if data is not None else stored.read_bytes())
+
+    def failed():
+        return unextracted_kind(name, data) if data is not None else unextracted_file_kind(stored, name)
+    return run, failed
+
+
+def _maybe_msg(path) -> bool:
+    """An OLE file may be a .msg: kind_for has to see all of it to say."""
+    with open(path, "rb") as f:
+        return f.read(4) == b"\xd0\xcf\x11\xe0"
+
+
+# Reading a zip member can fail on its own (a bad CRC, a compression method
+# zipfile lacks), and that loses only the member; an OSError (the disk is
+# full) stops the ingest.
+_MEMBER_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError, ValueError)
+
+
+def _ingest(m: Matter, content: str, name, identity: dict, report, data: bytes | None = None) -> str:
+    """A document's metadata is recorded last, after its children, so a
+    document without it is unfinished: an ingest that was interrupted (in
+    the middle of a large mailbox, say) picks up where it stopped when run
+    again. Children already in carry on being skipped, quickly."""
     state = m.state
-    content = m.objects.put_bytes(data)
     docobj = {"type": "document", "v": 1, "content": content, **identity}
     doc = object_id(docobj)
-    if doc in state.documents and doc not in state.withdrawn:
+    live = doc in state.documents and doc not in state.withdrawn
+    if live and doc in state.metadata:
         return doc
-    m.objects.put_object(docobj)
-    ev = m.logs["store"].append(op="add-document", doc=doc, content=content,
-                                **{k: identity[k] for k in ("parent",) if k in identity})
-    state.apply(ev)
+    if not live:
+        m.objects.put_object(docobj)
+        ev = m.logs["store"].append(op="add-document", doc=doc, content=content,
+                                    **{k: identity[k] for k in ("parent",) if k in identity})
+        state.apply(ev)
 
+    run_extract, failed_kind = _extractors(m, content, name, data)
     try:
-        ext = extract(name, data)
+        ext = run_extract()
     except Exception as e:  # an unreadable original is still in the matter, just unextracted
         print(f"warning: could not extract {name}: {e}", file=sys.stderr)
-        ext = Extraction(kind=unextracted_kind(name, data))
+        ext = Extraction(kind=failed_kind())
     if content not in state.layers:
         store_layers(m, content, ext)
 
+    n, unreadable, error = 0, 0, None
+    children = iter(ext.children)
+    try:
+        while True:
+            try:
+                child = next(children)
+            except StopIteration:
+                break
+            except Exception as e:      # the container broke part-way: keep what came out of it
+                error = f"stopped after {n} members: {e}"
+                print(f"warning: could not finish extracting {name}: {e}", file=sys.stderr)
+                break
+            ident = {"parent": doc, "part": child.part}
+            if child.open is None:
+                ingest_bytes(m, child.data, child.name, ident, report)
+            else:
+                try:
+                    with child.open() as f:
+                        member = m.objects.put_stream(f)
+                except _MEMBER_ERRORS as e:
+                    unreadable += 1
+                    print(f"warning: {name}: member {child.part} unreadable: {e}", file=sys.stderr)
+                    continue
+                _ingest(m, member, child.name, ident, report)
+            n += 1
+    finally:
+        if hasattr(children, "close"):
+            children.close()
+
     meta = {"type": "metadata", "v": 1, "doc": doc, "kind": ext.kind, **ext.metadata}
+    if unreadable:
+        meta["unreadable"] = meta.get("unreadable", 0) + unreadable
+        meta["members"] = n
+    if error:
+        meta["extraction_error"] = error
     if name:
         meta["name"] = os.path.basename(name)
     ev = m.logs["store"].append(op="set-metadata", doc=doc, metadata=m.objects.put_object(meta))
     state.apply(ev)
     if report:
-        report(doc, name, ext)
-
-    for child in ext.children:
-        ingest_bytes(m, child.data, child.name, {"parent": doc, "part": child.part}, report)
+        report(doc, name, ext, n)
     return doc
 
 
@@ -87,7 +178,7 @@ def ingest_paths(m: Matter, paths, custodian: str | None, collection: str, repor
             identity = {"source": {"collection": collection, "path": str(f.relative_to(base))}}
             if custodian:
                 identity["custodian"] = f"cust:{custodian}"
-            docs.append(ingest_bytes(m, f.read_bytes(), f.name, identity, report))
+            docs.append(ingest_file(m, f, f.name, identity, report))
     return docs
 
 
