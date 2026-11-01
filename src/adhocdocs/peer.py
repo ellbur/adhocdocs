@@ -1,8 +1,9 @@
 """Sync between members of a matter's pool: the protocol (SYNC.md).
 
 **Transport.** HTTPS (TLS 1.3) on one port, which can serve several matters:
-the client names the matter by SNI (``mat-<id>``, lowercase), and the server
-answers with that matter's origin certificate. Certificates aren't checked
+the client names the matter, by its ID and its pool's founder
+(:func:`pool_key`), in SNI, and the server answers with that matter's
+origin certificate. Certificates aren't checked
 against any authority. The client checks that the server's key hashes to
 the origin it meant to reach (an origin's ID is the hash of its key), so
 it can't be talked to by anyone else.
@@ -13,7 +14,7 @@ can't be replayed, or sent to another server). The server accepts them
 from the pool's active members, and ``/join`` from an installation holding
 an invitation. Nothing is read or written without one.
 
-Routes, under ``/v1/<matter ID>/``:
+Routes, under ``/v1/<matter ID>.<founder>/``:
 
 ====================================  ===========================================
 ``GET vector``                        how many events the server holds, per feed
@@ -80,8 +81,20 @@ JOIN_LIMIT = 64 << 10      # from someone not yet a member
 ADOPT_LIMIT = 16 << 20     # a matter's membership logs, from someone enrolled at the hub
 
 
-def sni_name(matter_id: str) -> str:
-    return matter_id.lower().replace("_", "-")
+def pool_key(m: Matter) -> str:
+    """How the protocol names a matter: its ID and its pool's founder. A
+    matter ID alone isn't secret (it's in invitations, and in clear in SNI),
+    so a hub keys replicas by both: someone else can't take a matter's place
+    by founding a pool of their own under its ID."""
+    founder = m.config.get("founder")
+    if not m.id or not founder:
+        raise SyncError("this matter has no pool yet: invite someone, push it to a hub, or serve it with "
+                        "--advertise, which founds one")
+    return f"{m.id}.{founder}"
+
+
+def sni_name(key: str) -> str:
+    return key.lower().replace("_", "-").replace(".", "-")
 
 
 def feed_of(m: Matter, name: str):
@@ -302,24 +315,23 @@ class Server:
     """Serves matters to their pools' members on one port."""
 
     def __init__(self, matters: list[Matter], host="0.0.0.0", port=PORT, on_change=None, hub=None):
-        self.matters = {m.id: m for m in matters}
-        if None in self.matters:
-            raise SyncError("a matter without an ID can't be served (open it on the host once)")
+        self._list = list(matters)
         self.nonces = _Nonces()
         self.on_change = on_change
         self.hub = hub                      # adhocdocs.hub.Hub: its own routes, under /hub/v1/
-        self.contexts = {}
-        if hub is not None:
-            self.contexts[HUB_SNI] = _server_context(hub.identity)
-        for m in matters:
-            self.contexts[sni_name(m.id)] = _server_context(m.identity)
-        if not self.contexts:
+        self._contexts: dict[Path, ssl.SSLContext] = {}
+        if not matters and hub is None:
             raise SyncError("nothing to serve")
-        default = next(iter(self.contexts.values()))
+        first = hub.identity if hub is not None else matters[0].identity
+        default = _server_context(first)
 
         def pick(sock, name, _ctx):
-            if name in self.contexts:
-                sock.context = self.contexts[name]
+            if name == HUB_SNI and self.hub is not None:
+                sock.context = self._context(self.hub.identity)
+                return
+            m = next((m for k, m in self.matters.items() if sni_name(k) == name), None)
+            if m is not None:
+                sock.context = self._context(m.identity)
         default.sni_callback = pick
         server = self
 
@@ -330,13 +342,30 @@ class Server:
         self.httpd.socket = default.wrap_socket(self.httpd.socket, server_side=True, do_handshake_on_connect=False)
 
     @property
+    def matters(self) -> dict[str, Matter]:
+        """The matters served, by :func:`pool_key`: looked up afresh, since a
+        matter's pool can be founded while it's served (its first invitation)."""
+        out = {}
+        for m in self._list:
+            try:
+                out[pool_key(m)] = m
+            except SyncError:
+                pass            # no pool yet: nothing to sync
+        return out
+
+    def _context(self, identity) -> ssl.SSLContext:
+        if identity.dir not in self._contexts:
+            self._contexts[identity.dir] = _server_context(identity)
+        return self._contexts[identity.dir]
+
+    @property
     def address(self) -> tuple[str, int]:
         return self.httpd.server_address[:2]
 
     def add(self, m: Matter):
         """Serve another matter (a hub, when one is pushed to it)."""
-        self.contexts[sni_name(m.id)] = _server_context(m.identity)
-        self.matters[m.id] = m
+        if all(x.root != m.root for x in self._list):
+            self._list.append(m)
 
     def serve_forever(self):
         self.httpd.serve_forever()
@@ -489,8 +518,7 @@ class _Handler(BaseHTTPRequestHandler):
             who = self._auth(None, body, req.get("cert", "").encode(), hub.identity.origin)
             if self.path == "/hub/v1/adopt" and self.command == "POST":
                 m, out = hub.adopt(req, who)
-                if m.id not in self.srv.matters:
-                    self.srv.add(m)
+                self.srv.add(m)
                 return self._json(200, out)
             return self._json(404, {"error": "no such route"})
         except PermissionError as e:
@@ -621,8 +649,8 @@ class Peer:
         self.m, self.origin = m, origin
         self.host, self.port = split_address(address)
         self.timeout = timeout
-        self.sni = sni or sni_name(m.id)
-        self.base = base or f"/v1/{urllib.parse.quote(m.id)}"
+        self.sni = sni or sni_name(pool_key(m))
+        self.base = base or f"/v1/{urllib.parse.quote(pool_key(m))}"
         self.conn = None
 
     def _connect(self):

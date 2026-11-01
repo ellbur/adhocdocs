@@ -286,12 +286,7 @@ in `pool/cutoffs.json`, and every reader of the logs (the matter's state,
 annotations, published work, indexes, the viewer) stops each removed
 installation's logs there.
 
-**Known limits.** Someone enrolled at a hub who isn't in a matter's pool,
-but knows its ID (it travels in invitation codes, and in clear in TLS's
-SNI), can push a pool of their own under that ID first; the hub then
-refuses the real one ("another founder"). Nothing leaks, but the real
-members can't use that hub for the matter until its administrator removes
-the squatter's replica. The server keeps the nonces of signed requests in
+**Known limits.** The server keeps the nonces of signed requests in
 memory: a request signed in the five minutes before a restart could be
 replayed once after it, by someone who had it (which, inside TLS, means
 the member who sent it).
@@ -346,6 +341,11 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   authority: it checks that the server's key hashes to the origin it meant
   to reach. One port serves several matters; the client names the matter by
   SNI.
+- **A matter is named by its ID and its pool's founder.** An ID alone isn't
+  secret (it's in invitations, and in clear in SNI), so a hub keeps a
+  replica per ID and founder: someone enrolled there who founds a pool of
+  their own under a matter's ID gets a replica of their own, and doesn't
+  take the real one's place.
 - **Signed requests.** Every request is signed by the client's origin key,
   over the method, path, time, a nonce, the body and the server's origin, so
   it can't be replayed or redirected. The server answers active members

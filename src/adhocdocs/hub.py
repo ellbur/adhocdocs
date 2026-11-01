@@ -18,7 +18,9 @@ Layout::
 
     <hub>/hub.json                  name, addresses, enrolled people (tokens as hashes)
     <hub>/sync/                     the hub's own key, for its admin routes (adhocdocs.origin)
-    <hub>/matters/<matter ID>/      one matter each, as on any installation
+    <hub>/matters/<ID>.<founder>/   one matter each, as on any installation; keyed by
+                                    founder too, so no one can take a matter's place by
+                                    pushing a pool of their own under its ID
 """
 
 import base64
@@ -117,7 +119,8 @@ class Hub:
         if not re.fullmatch(r"mat_[0-9A-HJKMNP-TV-Z]{26}", mid) or not is_origin(founder):
             raise ValueError(f"bad matter ID or founder ({mid!r}, {founder!r})")
         with self._lock():
-            path = self.root / "matters" / mid
+            # keyed by founder too: someone else's pool under the same ID is another replica
+            path = self.root / "matters" / f"{mid}.{founder}"
             new = not (path / "matter.toml").exists()
             try:
                 return self._adopt(path, new, mid, founder, person, req, requester)
@@ -137,7 +140,7 @@ class Hub:
             write_toml(path / "matter.toml", cfg)
         m = Matter(path)
         if m.config.get("founder") != founder:
-            raise PermissionError("this hub has that matter with another founder")
+            raise PermissionError("this replica has another founder")
         # the pusher's membership, so the hub knows who may sync
         pending = {o: evs for o, evs in req.get("pool", {}).items()}
         for _ in range(len(pending) + 1):

@@ -135,8 +135,9 @@ def _raw(addr, sni, request: bytes) -> bytes:
 
 def test_nothing_is_read_from_strangers(pair):
     a, b, srv, addr = pair
-    path = f"/v1/{a.id}/events/annotations/{a.origin}"
-    sni = peer.sni_name(a.id)
+    key = peer.pool_key(a)
+    path = f"/v1/{key}/events/annotations/{a.origin}"
+    sni = peer.sni_name(key)
     for headers in ("Content-Length: -1", "Content-Length: 999999999999", ""):
         t = time.time()
         out = _raw(addr, sni, f"POST {path} HTTP/1.1\r\nHost: x\r\n{headers}\r\n\r\n".encode() + b"x" * 100000)
@@ -202,3 +203,32 @@ def test_what_a_removed_member_wrote_afterwards_doesnt_count(tmp_path):
         assert {i["loc"][4:] for i in items} == {keep, before}
         assert not open_index(m, "keyword").behind()
     assert picture(a) == picture(c)
+
+
+def test_someone_elses_pool_under_a_matters_id_doesnt_take_its_place(tmp_path):
+    """Someone enrolled at the hub, who isn't in a matter's pool but knows its
+    ID, pushes a pool of their own under it first. The real one still gets
+    its own replica."""
+    import socket as sk
+    from adhocdocs import hub as hubmod
+    s = sk.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [f"127.0.0.1:{port}"])
+    srv = peer.Server(h.matters(), "127.0.0.1", port, hub=h)
+    srv.start()
+    try:
+        a = Matter.create(tmp_path / "a")
+        text_doc(a, "a.txt", "the real matter")
+        squat = Matter.create(tmp_path / "squat", matter_id=a.id)
+        text_doc(squat, "s.txt", "not the real one")
+        hubmod.push(squat, h.enroll("mallory")["code"], "user:mallory")
+        r = hubmod.push(Matter(a.root), h.enroll("alice")["code"], ALICE)
+        assert r["pushed"]
+        replicas = {m.config["founder"]: m for m in h.matters()}
+        assert len(replicas) == 2
+        real = replicas[Matter(a.root).config["founder"]]
+        assert set(real.state.live_documents()) == set(Matter(a.root).state.live_documents())
+    finally:
+        srv.stop()

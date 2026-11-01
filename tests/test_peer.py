@@ -169,6 +169,9 @@ def test_a_server_talks_only_to_members(a, served, tmp_path):
     _, addr = served
     invite.create(a, ALICE, [addr])
     x = Matter.create(tmp_path / "x", matter_id=a.id)
+    from adhocdocs.matter import write_toml
+    write_toml(x.root / "matter.toml", {**x.config, "founder": Matter(a.root).config["founder"]})   # knows both
+    x = Matter(x.root)
     with pytest.raises(peer.SyncError, match="403"):
         peer.Peer(x, addr, a.origin).json("GET", "vector")
     # and the client won't talk to a server that isn't the origin it expects
