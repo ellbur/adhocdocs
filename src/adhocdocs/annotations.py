@@ -67,20 +67,133 @@ def is_user(author: str) -> bool:
     return author.startswith("user:")
 
 
+# What a feed adds to an event as it reads it; not part of the event.
+_READ_TAGS = ("feed", "log", "origin")
+
+
+def _bare(ev: dict) -> dict:
+    return {k: v for k, v in ev.items() if k not in _READ_TAGS}
+
+
 class Annotations:
     def __init__(self):
         self.definitions: dict[str, dict] = {}   # tag -> definition (+ "by")
         self.tags: dict[str, dict] = {}          # target key -> tag -> application
         self.notes: dict[str, dict] = {}         # note ID -> note
         self.entities: dict[str, dict] = {}      # entity ID -> entity
+        self.entity_alias: dict[str, str] = {}   # merged entity ID -> the entity it joined
+        self.conflicts: list[dict] = []          # events that read differently on replay
+        self.replaced: dict[str, list] = {}      # event ID -> the events it replays as
         self.last_id: str | None = None
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
         a = cls()
         for ev in m.annotation_log.read():
-            a.apply(ev)
+            a.replay(ev)
         return a
+
+    # -- replay: the rules again, for events from every installation -------------------
+
+    def replay(self, ev: dict):
+        """Apply an event from the logs, holding it to the rules again.
+
+        Each event was checked where it was written, against what that
+        installation had. Events written concurrently on two installations
+        can conflict once merged (the same tag defined twice, a hotkey taken
+        twice, a note edited after someone else deleted it), and a log that
+        didn't come through the write path (an installation running
+        modified code) may break the rules outright. Replaying in the merge
+        order that every installation shares, each event is resolved the
+        same way everywhere: applied, applied in part, or of no effect.
+        Anything other than plain application is recorded in ``conflicts``
+        (when someone should look) and ``replaced`` (what the event
+        replays as, for the viewer: see :func:`save_replay`)."""
+        self.last_id = ev["id"]
+        try:
+            out = self._reconcile(ev)
+            for e in out:
+                self.check(e, replaying=True)
+        except Refused as e:
+            self._conflict(ev, "refused", str(e))
+            out = []
+        if out != [ev]:
+            self.replaced[ev["id"]] = [_bare(e) for e in out]
+        for e in out:
+            self.apply(e)
+
+    def _conflict(self, ev: dict, kind: str, reason: str):
+        self.conflicts.append({"event": ev["id"], "origin": ev.get("origin"), "at": ev.get("at"),
+                               "author": ev.get("author"), "op": ev["op"], "kind": kind, "reason": reason,
+                               **({k: ev[k] for k in ("tag", "note", "entity", "name") if k in ev})})
+
+    def _reconcile(self, ev: dict) -> list[dict]:
+        """The events ``ev`` replays as, given the state so far: usually just
+        ``ev``. Raises Refused for an event of no effect worth reporting."""
+        op = ev["op"]
+        if ev.get("entity") in self.entity_alias:
+            ev = {**ev, "entity": self.entity_alias[ev["entity"]]}
+        if op == "define-tag":
+            d = self.definitions.get(ev["tag"])
+            fields = ("color", "hotkey", "group", "description")
+            if d is not None:
+                if all(ev.get(k) == d.get(k) for k in fields):
+                    return []           # defined the same way twice: nothing to see
+                theirs = ", ".join(f"{k} {ev[k]!r}" for k in fields if k in ev and ev[k] != d.get(k))
+                self._conflict(ev, "defined-twice", f"tag {ev['tag']!r} was already defined by {d['by']}; "
+                                                    f"this definition's {theirs or 'fields'} weren't used")
+                return []
+        if op in ("define-tag", "edit-tag") and ev.get("hotkey"):
+            taken = next((t for t, o in self.definitions.items() if t != ev["tag"] and o.get("hotkey") == ev["hotkey"]), None)
+            if taken:
+                self._conflict(ev, "hotkey-taken", f"hotkey {ev['hotkey']!r} was already {taken!r}'s; "
+                                                   f"{ev['tag']!r} was defined without it")
+                ev = {k: v for k, v in ev.items() if k != "hotkey"}
+        if op == "untag" and ev["tag"] not in self.tags.get(target_key(ev["target"]), {}):
+            return []                   # untagged twice
+        if op == "tag" and ev["author"] == CLAUDE and is_privilege_call(ev["tag"]):
+            self._conflict(ev, "privilege-call-by-claude", f"Claude applied {ev['tag']!r}; kept as a flag, "
+                                                           "since only a person's privilege call acts in a production")
+        if op == "tag" and ev["tag"] in self.definitions:
+            # A group's other tags on the target were untagged where this was
+            # written, by events of their own. One applied concurrently elsewhere
+            # wasn't, so it goes now: the later tag wins.
+            others = self.group_conflicts(ev)
+            if others:
+                if ev["author"] == CLAUDE and any(is_user(o["by"]) for o in others):
+                    raise Refused(f"{ev['tag']!r} would replace {', '.join(o['tag'] for o in others)}, "
+                                  f"applied by {others[0]['by']}; Claude can't remove it")
+                self._conflict(ev, "group-replaced", f"{ev['tag']!r} replaced {', '.join(o['tag'] for o in others)}, "
+                                                     "tagged concurrently on another installation")
+                return [{**ev, "op": "untag", "tag": o["tag"], "target": o["target"], "id": ev["id"]} for o in others] + [ev]
+        if op == "reply" and ev.get("parent") not in self.notes and ev.get("target"):
+            self._conflict(ev, "parent-deleted", f"replied to note {ev['parent']}, which was deleted; kept as a note")
+            return [ev]
+        if op == "delete-note" and ev["note"] not in self.notes:
+            return []                   # deleted twice
+        if op == "delete-entity" and ev["entity"] not in self.entities:
+            return []
+        if op == "edit-entity" and ev.get("remove_aliases") and ev["entity"] in self.entities:
+            have = self.entities[ev["entity"]]["alias_by"]
+            gone = [a for a in ev["remove_aliases"] if a in have]
+            if gone != ev["remove_aliases"]:
+                ev = {**ev, "remove_aliases": gone}
+        if op == "define-entity":
+            same = self.entity_named(ev["name"], ev.get("kind"))
+            if same:
+                # Two installations added the same entity. They become one: the
+                # later's ID names the earlier, and it adds what the earlier lacks.
+                self.entity_alias[ev["entity"]] = same["entity"]
+                self._conflict(ev, "entity-merged", f"{ev['name']!r} was also added as {same['entity']} by "
+                                                    f"{same['by']}; the two are now one entity")
+                edit = {"id": ev["id"], "at": ev["at"], "author": ev["author"], "op": "edit-entity",
+                        "entity": same["entity"], "add_aliases": [ev["name"], *ev.get("aliases", [])],
+                        **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                for f in ("summary", "recap", "see", "date"):
+                    if ev.get(f) and not same.get(f):
+                        edit[f] = ev[f]
+                return [edit]
+        return [ev]
 
     def apply(self, ev: dict):
         op = ev["op"]
@@ -153,9 +266,13 @@ class Annotations:
 
     # -- the rules --------------------------------------------------------------------
 
-    def check(self, ev: dict):
+    def check(self, ev: dict, replaying=False):
         """Refuse a write the rules don't allow. Claude can't change or remove
-        what the user made; the user can change anything."""
+        what the user made; the user can change anything.
+
+        ``replaying``: the event is already in a log (see :meth:`replay`). A
+        privilege call by Claude is then kept, as a flag: productions act only
+        on a person's (produce.py), and the replay reports it."""
         op, author = ev["op"], ev["author"]
         if op == "define-tag":
             if ev["tag"] in self.definitions:
@@ -171,7 +288,7 @@ class Annotations:
             if ev.get("hotkey") and any(t != ev["tag"] and o.get("hotkey") == ev["hotkey"] for t, o in self.definitions.items()):
                 raise Refused(f"hotkey {ev['hotkey']!r} is already in use")
         elif op in ("tag", "untag"):
-            if op == "tag" and author == CLAUDE and is_privilege_call(ev["tag"]):
+            if op == "tag" and author == CLAUDE and is_privilege_call(ev["tag"]) and not replaying:
                 raise Refused(f"privilege calls are a lawyer's: Claude can't apply {ev['tag']!r}, even when asked. "
                               "Flag it for review instead: ann flag-privilege <locator> --basis \"…\"")
             if ev["tag"] not in self.definitions:
@@ -185,7 +302,7 @@ class Annotations:
                 if author == CLAUDE and is_user(current["by"]):
                     raise Refused(f"{ev['tag']!r} was applied by {current['by']}; Claude can't remove it")
         elif op == "reply":
-            if ev["parent"] not in self.notes:
+            if ev["parent"] not in self.notes and not (replaying and ev.get("target")):
                 raise Refused(f"no note {ev['parent']}")
         elif op in ("edit-note", "delete-note"):
             n = self.notes.get(ev["note"])
@@ -335,6 +452,8 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
 
     with _locked(m):
         ann = Annotations.load(m)
+        if ev.get("entity") in ann.entity_alias:     # merged with one added on another installation
+            ev["entity"] = ann.entity_alias[ev["entity"]]
         pending = []
         if op == "tag":
             if ev["tag"] in ann.tags.get(target_key(ev["target"]), {}):
@@ -342,11 +461,47 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
             for other in ann.group_conflicts({**ev}):
                 pending.append({"op": "untag", "tag": other["tag"], "target": other["target"], "author": author,
                                 **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})})
+        if op == "reply" and ev["parent"] in ann.notes:
+            # so a reply keeps its place if another installation deletes the parent
+            ev["target"] = ann.notes[ev["parent"]]["target"]
         pending.append(ev)
         for p in pending:
             ann.check({**p, "at": now()})
             ann.apply({**p, "id": "pending", "at": now()})
-        return [m.annotation_log.append(**p) for p in pending]
+        written = [m.annotation_log.append(**p) for p in pending]
+        save_replay(m, ann)
+        return written
+
+
+def replay_path(m: Matter):
+    return m.root / "annotations" / "replay.json"
+
+
+def save_replay(m: Matter, ann: "Annotations | None" = None) -> dict:
+    """Write ``annotations/replay.json``: the events that replay as something
+    other than themselves (``replace``: event ID -> the events it stands
+    for, none if it had no effect), and the conflicts. The viewer replays
+    the logs with these substitutions, so the rules live in one place.
+
+    Host writers keep it current: the annotation write path, and anything
+    that brings in another installation's logs. Events written through the
+    write path never change it (they're checked, and sort last), so it only
+    changes when logs arrive. Written only when it differs."""
+    if ann is None:
+        ann = Annotations.load(m)
+    data = {"v": 1, "replace": ann.replaced, "conflicts": ann.conflicts}
+    path = replay_path(m)
+    text = json.dumps(data, ensure_ascii=False, sort_keys=True) + "\n"
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return data
+    except FileNotFoundError:
+        if not ann.replaced and not ann.conflicts:
+            return data
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    tmp.replace(path)
+    return data
 
 
 def note_check(m: Matter, body: str) -> list[dict]:

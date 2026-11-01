@@ -2,7 +2,9 @@
 
 *Status: being built, in the steps under "Order of building". Built: step 1,
 one log per installation ([`matter.py`](src/adhocdocs/matter.py),
-[`origin.py`](src/adhocdocs/origin.py)). Decisions still open are at the
+[`origin.py`](src/adhocdocs/origin.py)), and step 2, conflicts resolved on
+replay ([`annotations.py`](src/adhocdocs/annotations.py),
+[`sync.py`](src/adhocdocs/sync.py)). Decisions still open are at the
 end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
@@ -136,27 +138,47 @@ every installation that has the same events reaches the same state.
   logs the clock wrote, that's ID order. Logs from before (whose IDs came
   from several processes' clocks) keep their file order, and every
   installation still picks the same order. The viewer merges the same way.
-- **The rules are checked again on replay.** An event that was valid where
-  it was written can conflict with one written concurrently elsewhere: the
-  same tag defined twice, the same hotkey, an untag of a tag someone else
-  just applied. Replaying in the common order, an event the rules refuse has
-  no effect. It stays in its log and is listed by `adhoc sync conflicts`.
-  Since every installation replays the same events in the same order, they
-  all refuse the same ones.
+- **The rules are checked again on replay** (`Annotations.replay` in
+  [`annotations.py`](src/adhocdocs/annotations.py)). An event that was valid
+  where it was written can conflict with one written concurrently
+  elsewhere: the same tag defined twice, the same hotkey, an untag of a tag
+  someone else just applied. Replaying in the common order, each event is
+  applied, applied in part, or has no effect, the same way on every
+  installation. It stays in its log either way, and `adhoc sync conflicts`
+  lists what happened and why. Doing the same thing twice (untagging twice,
+  defining a tag the same way twice) is quiet.
 - Specific cases:
   - **Tag and untag** on the same target: the later wins.
   - **Exclusive tag groups** are enforced on replay, not only by the untag
     events the writer recorded, since two installations can each apply a
-    different tag from the group.
+    different tag from the group. The later tag wins, unless it's Claude's
+    and would remove a person's: then Claude's has no effect.
+  - **Claude can't undo a person's work from elsewhere either:** Claude's
+    untag of a tag a person re-applied meanwhile, or its edit of a field a
+    person set meanwhile, has no effect.
   - **A tag defined on two installations:** the first definition stands,
     and the second's color, hotkey and description become a conflict to
     look at. Its applications still count, since it's the same name.
+  - **A hotkey taken twice:** the later tag is defined without it.
   - **An entity defined on two installations** under the same name and
-    kind: the later one's ID becomes an alias of the earlier's, so edits and
-    references to either land on one entity.
+    kind: the later one's ID becomes an alias of the earlier's, it adds the
+    names and fields the earlier lacks, and edits naming either ID land on
+    one entity.
+  - **A note deleted on one installation and edited on another:** whichever
+    is later wins. A reply to a deleted note stays, on the same document:
+    replies carry their thread's target for this.
   - **Two edits of a note or an entity field:** the later wins; the earlier
     is in the history.
   - **Withdraw and supersede** take effect whenever they arrive.
+  - **A privilege call by Claude** (from a log written outside the write
+    path, or from before the rule) is kept as a flag and reported:
+    productions act only on a person's.
+- **The viewer follows the same replay.** The rules live in one place.
+  Replaying, Python writes `annotations/replay.json`, naming each event that
+  replays as something other than itself and what it replays as, and the
+  viewer substitutes those as it replays. Only arriving logs change it
+  (events written through the write path are checked and sort last), so the
+  write path and sync keep it current.
 - **Cursors are per log.** A reader's cursor maps each log
   (`store/<origin>`, `workspace`) to the last event it read, and every event
   says which log it came from, so an event that arrives late but sorts early
@@ -182,7 +204,7 @@ makes privilege calls) still hold, for every person in the pool.
   tag, just as it can't untag Bob's.
 - The rules hold on replay, so an installation that broke them locally
   (modified code, a hand-edited log) can't break them for everyone else:
-  its events are refused when the others replay them.
+  its events have no effect when the others replay them.
 - Sync never runs in the container, and the container never sees `sync/`.
   The session sees synced changes the way it sees an ingest: new events in
   read-only feeds.
@@ -279,7 +301,8 @@ way, and with them the protocol is small.
    network. Test by copying logs between two matter directories by hand: two
    installations that exchange logs must end in the same state. *Built;
    tests in [`test_sync.py`](tests/test_sync.py).*
-2. Replay rules and `adhoc sync conflicts`.
+2. Replay rules and `adhoc sync conflicts`. *Built; tests in
+   [`test_sync.py`](tests/test_sync.py).*
 3. Publishing work product.
 4. Signing, the pool log, and sync between two members on a LAN.
 5. The hub, push and invitations through it.

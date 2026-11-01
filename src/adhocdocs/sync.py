@@ -1,0 +1,48 @@
+"""Syncing a matter across installations (SYNC.md).
+
+What's here so far works on one installation's disk: what it holds from
+each origin, and the conflicts that replaying every origin's events turned
+up. Sync itself (the pool, the protocol) builds on these.
+"""
+
+from . import annotations
+from .matter import Matter
+
+SYNCED_FEEDS = ("store", "annotations")
+
+
+def feeds(m: Matter) -> dict:
+    return {"store": m.logs["store"], "annotations": m.annotation_log}
+
+
+def vector(m: Matter) -> dict:
+    """For each synced feed, how many events this installation holds from each
+    origin. Two installations with the same vector hold the same logs."""
+    return {name: f.vector() for name, f in feeds(m).items()}
+
+
+def status(m: Matter) -> dict:
+    v = vector(m)
+    origins = sorted({o for per in v.values() for o in per})
+    me = m.identity.origin if (m.sync_dir / "origin.json").exists() else None
+    return {"matter": m.id, "origin": me,
+            "origins": [{"origin": o, "this": o == me, **{f: v[f].get(o, 0) for f in SYNCED_FEEDS}} for o in origins]}
+
+
+def conflicts(m: Matter, refresh=True) -> list[dict]:
+    """Events that replay as something other than themselves, with why.
+    ``refresh`` also brings ``annotations/replay.json`` (what the viewer
+    follows) up to date, where it can be written."""
+    ann = annotations.Annotations.load(m)
+    if refresh:
+        try:
+            annotations.save_replay(m, ann)
+        except OSError:
+            pass        # read-only here (a session): the host keeps it current
+    return ann.conflicts
+
+
+def refresh(m: Matter):
+    """After logs arrive from another installation: re-derive what depends on
+    the merged order (the viewer's replay file). Indexes catch up as usual."""
+    annotations.save_replay(m)

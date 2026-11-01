@@ -195,8 +195,21 @@ impl Handler {
 }
 
 /// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
+///
+/// The rules that resolve conflicts between installations are Python's
+/// (`Annotations.replay` in annotations.py). It writes `annotations/replay.json`,
+/// naming each event that replays as something else (none, part of itself, or
+/// several), and this follows it rather than repeating the rules.
 pub fn annotation_state(root: &std::path::Path) -> Value {
-    let events = crate::matter::annotation_events(root);
+    let replay: Value = std::fs::read(root.join("annotations/replay.json")).ok()
+        .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let replace = replay["replace"].as_object().cloned().unwrap_or_default();
+    let events: Vec<Value> = crate::matter::annotation_events(root).into_iter()
+        .flat_map(|ev| match ev["id"].as_str().and_then(|id| replace.get(id)) {
+            Some(Value::Array(instead)) => instead.clone(),
+            _ => vec![ev],
+        })
+        .collect();
     let mut defs: Vec<(String, Value)> = vec![];
     let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
     let mut notes: Vec<(String, Value)> = vec![];
@@ -224,7 +237,8 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
             }
             "note" | "reply" => {
                 let target = if ev["op"] == "reply" {
-                    notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone()).unwrap_or(Value::Null)
+                    notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone())
+                        .unwrap_or_else(|| ev["target"].clone())
                 } else { ev["target"].clone() };
                 notes.push((ev["note"].as_str().unwrap_or("").to_string(), json!({"note": ev["note"], "parent": ev["parent"],
                     "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]})));
@@ -544,6 +558,28 @@ fn remote_images(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn annotations_follow_the_replay_file() {
+        let dir = std::env::temp_dir().join(format!("adhoc-replay-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let ev = |id: &str, op: &str, tag: &str, author: &str| serde_json::json!({"id": id, "at": "t", "op": op, "tag": tag,
+            "author": author, "target": {"doc": "d"}}).to_string() + "\n";
+        std::fs::write(logs.join("o_A.jsonl"), ev("ev_1", "define-tag", "hot", "user:a") + &ev("ev_3", "tag", "hot", "claude")).unwrap();
+        std::fs::write(logs.join("o_B.jsonl"), ev("ev_2", "define-tag", "hot", "user:b") + &ev("ev_4", "tag", "cold", "user:b")).unwrap();
+        // ev_2 had no effect; ev_4 replays as an untag of hot, then itself
+        std::fs::write(dir.join("annotations/replay.json"), serde_json::json!({"v": 1, "replace": {
+            "ev_2": [],
+            "ev_4": [{"id": "ev_4", "at": "t", "op": "untag", "tag": "hot", "author": "user:b", "target": {"doc": "d"}},
+                     {"id": "ev_4", "at": "t", "op": "tag", "tag": "cold", "author": "user:b", "target": {"doc": "d"}}]}}).to_string()).unwrap();
+        let st = super::annotation_state(&dir);
+        assert_eq!(st["definitions"].as_array().unwrap().len(), 1);
+        assert_eq!(st["definitions"][0]["by"], "user:a");
+        let tags: Vec<&str> = st["tags"].as_array().unwrap().iter().map(|t| t["tag"].as_str().unwrap()).collect();
+        assert_eq!(tags, ["cold"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     use super::*;
 
     #[test]

@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from adhocdocs import annotations
+from adhocdocs import annotations, sync
+from adhocdocs.annotations import CLAUDE, Refused
 from adhocdocs.index import open_index
 from adhocdocs.ingest import ingest_bytes
 from adhocdocs.matter import Matter, new_event_id
@@ -45,6 +46,7 @@ def copy_logs(src: Matter, dst: Matter, origins=None):
         if p.is_file() and not q.exists():
             q.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(p, q)
+    sync.refresh(Matter(dst.root))
 
 
 def exchange(a: Matter, b: Matter):
@@ -70,6 +72,8 @@ def picture(m: Matter) -> dict:
         "tags": {k: sorted(v) for k, v in ann.tags.items()},
         "definitions": sorted(ann.definitions),
         "notes": {k: n["body"] for k, n in ann.notes.items()},
+        "entities": {k: (e["name"], sorted(e["aliases"]), e["summary"]) for k, e in ann.entities.items()},
+        "conflicts": ann.conflicts,
         "events": [e["id"] for e in m.changes()] + [e["id"] for e in m.annotation_log.read()],
     }
 
@@ -294,3 +298,204 @@ def test_many_writers_one_order(tmp_path, n):
                     copy_logs(x, y)
     pics = [picture(m) for m in ms]
     assert all(p == pics[0] for p in pics)
+
+
+# -- step 2: conflicts, resolved the same way everywhere ----------------------------------
+
+
+def pair(tmp_path):
+    a = Matter.create(tmp_path / "a")
+    b = install(tmp_path, "b", a.id)
+    doc = text_doc(a, "a.txt", "the pallet")
+    exchange(a, b)
+    return a, b, doc
+
+
+def write(m, author, **req):
+    return annotations.write(Matter(m.root), author, req)
+
+
+def state(m):
+    return annotations.Annotations.load(Matter(m.root))
+
+
+def kinds(m):
+    return [c["kind"] for c in state(m).conflicts]
+
+
+def test_a_tag_defined_on_two_installations(tmp_path):
+    a, b, doc = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot", color="red", hotkey="h")
+    write(b, "user:bob", op="define-tag", tag="hot", color="orange")
+    write(b, "user:bob", op="tag", tag="hot", target=f"doc:{doc}")
+    exchange(a, b)
+    s = state(a)
+    assert s.definitions["hot"]["by"] == "user:alice" and s.definitions["hot"]["color"] == "red"
+    assert kinds(a) == ["defined-twice"] and "orange" in s.conflicts[0]["reason"]
+    assert [t["tag"] for t in s.applications()] == ["hot"]       # bob's tag still counts
+    assert picture(a) == picture(b)
+
+
+def test_the_same_definition_twice_is_no_conflict(tmp_path):
+    a, b, _ = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot", hotkey="h")
+    write(b, "user:bob", op="define-tag", tag="hot", hotkey="h")
+    exchange(a, b)
+    assert kinds(a) == kinds(b) == []
+
+
+def test_a_hotkey_taken_twice(tmp_path):
+    a, b, _ = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot", hotkey="h")
+    write(b, "user:bob", op="define-tag", tag="helpful", hotkey="h")
+    exchange(a, b)
+    s = state(b)
+    assert s.definitions["hot"]["hotkey"] == "h" and "hotkey" not in s.definitions["helpful"]
+    assert kinds(b) == ["hotkey-taken"]
+    # the user can give it another
+    write(b, "user:bob", op="edit-tag", tag="helpful", hotkey="j")
+    assert state(b).definitions["helpful"]["hotkey"] == "j"
+
+
+def test_exclusive_groups_hold_across_installations(tmp_path):
+    a, b, doc = pair(tmp_path)
+    for t in ("responsive", "nonresponsive"):
+        write(a, "user:alice", op="define-tag", tag=t, group="resp")
+    exchange(a, b)
+    write(a, "user:alice", op="tag", tag="responsive", target=f"doc:{doc}")
+    write(b, "user:bob", op="tag", tag="nonresponsive", target=f"doc:{doc}")      # later
+    exchange(a, b)
+    for m in (a, b):
+        assert [t["tag"] for t in state(m).applications()] == ["nonresponsive"]
+    assert kinds(a) == ["group-replaced"]
+    # the viewer follows: the replay file says what bob's tag stands for
+    replay = json.loads((a.root / "annotations/replay.json").read_text(encoding="utf-8"))
+    (instead,) = replay["replace"].values()
+    assert [(e["op"], e["tag"]) for e in instead] == [("untag", "responsive"), ("tag", "nonresponsive")]
+    assert picture(a) == picture(b)
+
+
+def test_claude_cant_replace_a_persons_group_tag_from_elsewhere(tmp_path):
+    a, b, doc = pair(tmp_path)
+    for t in ("responsive", "nonresponsive"):
+        write(a, "user:alice", op="define-tag", tag=t, group="resp")
+    exchange(a, b)
+    write(a, "user:alice", op="tag", tag="responsive", target=f"doc:{doc}")
+    write(b, CLAUDE, op="tag", tag="nonresponsive", target=f"doc:{doc}")
+    exchange(a, b)
+    assert [(t["tag"], t["by"]) for t in state(a).applications()] == [("responsive", "user:alice")]
+    assert kinds(a) == ["refused"]
+
+
+def test_claude_cant_untag_what_a_person_retagged_meanwhile(tmp_path):
+    a, b, doc = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot")
+    write(a, CLAUDE, op="tag", tag="hot", target=f"doc:{doc}")
+    exchange(a, b)
+    write(a, "user:alice", op="untag", tag="hot", target=f"doc:{doc}")
+    write(a, "user:alice", op="tag", tag="hot", target=f"doc:{doc}")           # now alice's
+    write(b, CLAUDE, op="untag", tag="hot", target=f"doc:{doc}")               # b saw only Claude's
+    exchange(a, b)
+    (app,) = state(b).applications()
+    assert app["by"] == "user:alice"
+    assert [c["kind"] for c in state(b).conflicts] == ["refused"]
+    assert "Claude can't remove it" in state(b).conflicts[0]["reason"]
+
+
+def test_untagging_twice_is_quiet(tmp_path):
+    a, b, doc = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot")
+    write(a, "user:alice", op="tag", tag="hot", target=f"doc:{doc}")
+    exchange(a, b)
+    write(a, "user:alice", op="untag", tag="hot", target=f"doc:{doc}")
+    write(b, "user:bob", op="untag", tag="hot", target=f"doc:{doc}")
+    exchange(a, b)
+    assert state(a).applications() == [] and kinds(a) == []
+
+
+def test_notes_edited_and_deleted_concurrently(tmp_path):
+    a, b, doc = pair(tmp_path)
+    (n,) = write(a, "user:alice", op="note", target=f"doc:{doc}", body="first")
+    exchange(a, b)
+    write(a, "user:alice", op="delete-note", note=n["note"])
+    write(b, "user:bob", op="edit-note", note=n["note"], body="edited")
+    (r,) = write(b, "user:bob", op="reply", parent=n["note"], body="a reply")
+    exchange(a, b)
+    s = state(a)
+    assert n["note"] not in s.notes
+    assert s.notes[r["note"]]["target"] == {"doc": doc}            # the reply keeps its place
+    assert kinds(a) == ["refused", "parent-deleted"]
+    assert picture(a) == picture(b)
+
+
+def test_one_entity_added_on_two_installations(tmp_path):
+    a, b, doc = pair(tmp_path)
+    (ea,) = write(a, "user:alice", op="define-entity", name="Dana Okafor", kind="person")
+    (eb,) = write(b, CLAUDE, op="define-entity", name="Dana Okafor", kind="person", aliases=["D. Okafor"],
+                  summary="Bellwether's AP clerk")
+    write(b, CLAUDE, op="edit-entity", entity=eb["entity"], add_aliases=["Dana"])
+    exchange(a, b)
+    for m in (a, b):
+        s = state(m)
+        assert list(s.entities) == [ea["entity"]]
+        e = s.entities[ea["entity"]]
+        assert set(e["aliases"]) == {"Dana Okafor", "D. Okafor", "Dana"} and e["summary"] == "Bellwether's AP clerk"
+    assert kinds(a) == ["entity-merged"]
+    # an edit naming either ID lands on the one entity
+    write(b, "user:bob", op="edit-entity", entity=eb["entity"], recap="asked about the invoice")
+    exchange(a, b)
+    assert state(a).entities[ea["entity"]]["recap"] == "asked about the invoice"
+    assert picture(a) == picture(b)
+
+
+def forge(m: Matter, *events):
+    """A log written without the write path (modified code, a hand edit)."""
+    p = m.root / "annotations/logs" / ("o_" + "F" * 26 + ".jsonl")
+    with open(p, "a", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps({"id": new_event_id(), "at": "2026-11-01T00:00:00Z", **ev}) + "\n")
+
+
+def test_rules_hold_against_a_log_that_broke_them(tmp_path):
+    a, _, doc = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot")
+    write(a, "user:alice", op="define-tag", tag="privileged")
+    write(a, "user:alice", op="tag", tag="hot", target=f"doc:{doc}")
+    (n,) = write(a, "user:alice", op="note", target=f"doc:{doc}", body="mine")
+    forge(a, {"op": "untag", "tag": "hot", "target": {"doc": doc}, "author": CLAUDE},
+          {"op": "edit-note", "note": n["note"], "body": "changed", "author": CLAUDE},
+          {"op": "tag", "tag": "undefined-tag", "target": {"doc": doc}, "author": "user:alice"},
+          {"op": "tag", "tag": "privileged", "target": {"doc": doc}, "author": CLAUDE})
+    s = state(a)
+    assert {t["tag"] for t in s.applications()} == {"hot", "privileged"}
+    assert s.notes[n["note"]]["body"] == "mine"
+    assert [c["kind"] for c in s.conflicts] == ["refused", "refused", "refused", "privilege-call-by-claude"]
+    # the write path still refuses outright
+    other = text_doc(a, "b.txt", "another")
+    with pytest.raises(Refused):
+        write(a, CLAUDE, op="tag", tag="privileged", target=f"doc:{other}")
+
+
+def test_sync_conflicts_command(tmp_path, capsys):
+    from adhocdocs.cli import adhoc
+    a, b, _ = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot", hotkey="h")
+    write(b, "user:bob", op="define-tag", tag="warm", hotkey="h")
+    copy_logs(b, a)
+    (a.root / "annotations/replay.json").unlink()
+    adhoc(["--matter", str(a.root), "sync", "conflicts"])
+    (row,) = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert row["kind"] == "hotkey-taken" and row["origin"] == b.origin and row["tag"] == "warm"
+    assert (a.root / "annotations/replay.json").exists()
+    adhoc(["--matter", str(a.root), "sync", "status"])
+    st = json.loads(capsys.readouterr().out)
+    assert st["matter"] == a.id and st["origin"] == a.origin
+    assert {o["origin"]: o["annotations"] for o in st["origins"]} == {a.origin: 1, b.origin: 1}
+
+
+def test_replay_file_is_only_written_when_there_is_something_to_say(tmp_path):
+    a, b, doc = pair(tmp_path)
+    write(a, "user:alice", op="define-tag", tag="hot")
+    write(a, "user:alice", op="tag", tag="hot", target=f"doc:{doc}")
+    exchange(a, b)
+    assert not (a.root / "annotations/replay.json").exists()

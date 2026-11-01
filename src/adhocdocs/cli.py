@@ -94,6 +94,10 @@ def adhoc(argv=None):
     s.add_argument("--kind", action="append", help="show: only these kinds (session-start, session-end, prompt, "
                                                    "tool, connection, claude); repeatable")
     s.add_argument("--full", action="store_true", help="show: whole tool results instead of previews")
+    s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)")
+    s.add_argument("action", choices=["status", "conflicts"],
+                   help="status: this matter's ID, this installation's origin, and the events held from each origin. "
+                        "conflicts: events from different installations that clashed, and how each was resolved")
     s = sub.add_parser("audit-api", help=argparse.SUPPRESS)
     s.add_argument("--socket", required=True)
     s.add_argument("--session", required=True)
@@ -166,6 +170,13 @@ def adhoc(argv=None):
             out(report)
             if not report["ok"]:
                 sys.exit(1)
+    elif a.cmd == "sync":
+        from . import sync
+        if a.action == "status":
+            out(sync.status(m))
+        else:
+            for c in sync.conflicts(m):
+                out(c)
     elif a.cmd == "audit-api":
         from . import audit
         print(json.dumps({"serving": a.socket, "session": a.session}), file=sys.stderr, flush=True)
