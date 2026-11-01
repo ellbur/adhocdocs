@@ -42,6 +42,10 @@ edits freely. But the workspace is the user's scratch space: half-finished
 drafts, scripts, experiments. It isn't synced, and nothing from outside
 writes into it while Claude works there.
 
+Publishing applies only to what's made in the workspace. Documents,
+annotations and membership live outside it and sync on their own, with no
+step from anyone.
+
 So work product crosses over by **publishing**: `work publish memo.md`
 (from Claude, through a host API that stamps authorship, as annotations do),
 or `adhoc work publish` (from the user). A publication is a snapshot,
@@ -256,10 +260,6 @@ way, and with them the protocol is small.
 
 ## Open questions
 
-- **Publishing: explicit or automatic?** Recommended: explicit, as above.
-  The alternative is a `workspace/shared/` folder the host publishes on
-  every save. It's less to remember, but every save of a draft would reach
-  everyone, and a fork would appear wherever two people save.
 - **Matter-wide numbers.** Bates numbers and exhibit numbers must not
   repeat across installations. Two people producing at once could assign the
   same range. Productions and exhibit sets would be published work, and a
@@ -296,3 +296,4 @@ way, and with them the protocol is small.
 - An optional hub, which members can push to.
 - Synced: documents, annotations (tags, notes, entities), published work
   product, membership. Not synced: the workspace, indexes, `claude-home/`.
+- Work product made in the workspace syncs only when published, explicitly.
