@@ -13,6 +13,7 @@
 
 mod api;
 mod matter;
+mod overview;
 mod protocol;
 mod render;
 

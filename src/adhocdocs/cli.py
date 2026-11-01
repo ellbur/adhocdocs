@@ -1053,8 +1053,8 @@ this only talks to it. Locators are string or JSON; hash prefixes work.
 Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
 Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
 the duplicates), N note, e entity (add the selection, or edit the entity it
-is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane, Alt-drag
-a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
+is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane,
+H overview, Alt-drag a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
 
@@ -1137,6 +1137,8 @@ def view(argv=None):
     where(s)
     s = sub.add_parser("close")
     s.add_argument("pane")
+    s = sub.add_parser("home", help="show the overview: what the matter holds (the first window opens on it)")
+    s.add_argument("--window", help="default: the window the user last used")
     s = sub.add_parser("layout")
     s.add_argument("layout", choices=["single", "split-v", "split-h", "grid"])
     s.add_argument("--window", help="default: the window the user last used")
@@ -1202,8 +1204,8 @@ def view(argv=None):
              "link": a.preview, "preview_new": not a.preview and not a.pane}
     elif a.cmd in ("close",):
         c["pane"] = a.pane
-    elif a.cmd == "layout":
-        c.update(layout=a.layout, window=a.window)
+    elif a.cmd in ("layout", "home"):
+        c.update(layout=getattr(a, "layout", None), window=a.window)
     elif a.cmd == "window":
         if a.action in ("move",) and not (a.pane and a.window):
             raise ValueError("view window move needs --pane and --window")

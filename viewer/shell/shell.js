@@ -30,7 +30,7 @@ function parseCells(spec) {
   const [a, b = a] = ends.map((m) => [Number(m[2]) - 1, colIndex(m[1])]);
   return { r0: Math.min(a[0], b[0]), r1: Math.max(a[0], b[0]), c0: Math.min(a[1], b[1]), c1: Math.max(a[1], b[1]) };
 }
-const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "e", "E", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "?"]);
+const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "e", "E", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "H", "?"]);
 
 // -- locators -------------------------------------------------------------------------
 
@@ -141,8 +141,11 @@ function snapshot() {
 
 function renderTabs() {
   const tabs = $("#tabs");
-  tabs.replaceChildren(...adhoc.panes.map((p) =>
-    el("button", { class: p.id === adhoc.focused ? "focused" : "", title: p.title(), onclick: () => focus(p.id) }, `${p.id} · ${p.title()}`)));
+  const home = adhoc.panes.find((p) => p.kind === "home");
+  tabs.replaceChildren(
+    el("button", { class: "home-tab" + (home && home.id === adhoc.focused ? " focused" : ""), title: "Overview: what this matter holds (H)", onclick: openHome }, "⌂ Overview"),
+    ...adhoc.panes.filter((p) => p !== home).map((p) =>
+      el("button", { class: p.id === adhoc.focused ? "focused" : "", title: p.title(), onclick: () => focus(p.id) }, `${p.id} · ${p.title()}`)));
   $("#panes").className = adhoc.layout;
   for (const p of adhoc.panes) p.root.classList.toggle("focused", p.id === adhoc.focused);
 }
@@ -150,6 +153,7 @@ function focus(id) {
   if (!pane(id)) return;
   adhoc.focused = id;
   renderTabs();
+  pane(id).refresh?.();
 }
 function addPane(p, focusIt = true) {
   adhoc.panes.push(p);
@@ -162,6 +166,7 @@ function closePane(id, moving = false) {
   const p = pane(id);
   if (!p) throw new Error("no pane " + id);
   p.root.remove();
+  clearInterval(p.timer);
   adhoc.panes = adhoc.panes.filter((x) => x !== p);
   if (!moving) for (const q of adhoc.panes) if (q.link === id) q.link = null;
   if (adhoc.focused === id) adhoc.focused = adhoc.panes.length ? adhoc.panes[adhoc.panes.length - 1].id : null;
@@ -1141,6 +1146,214 @@ class WebPane {
   }
 }
 
+// -- the landing page ----------------------------------------------------------------------
+// What this matter holds and what state it's in, so the user sees what they
+// can ask for. Work isn't started here: suggestions are copied for the user
+// to paste into Claude, and the only thing that opens is a document.
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch {}
+  const ta = el("textarea", { style: "position:fixed;opacity:0" });
+  ta.value = t; document.body.append(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  ta.remove();
+  return ok;
+}
+async function askClaude(t) {
+  toast((await copyText(t)) ? `Copied. Paste it into Claude: “${t}”` : `Ask Claude: “${t}”`);
+}
+const plural = (n, one, many = one + "s") => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+function fmtDate(d) {
+  if (!d) return "";
+  const t = new Date(d.length === 10 ? d + "T00:00:00Z" : d);
+  return isNaN(t) ? d : t.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: d.length === 10 ? "UTC" : undefined });
+}
+function fmtAgo(secs) {
+  if (!secs) return "";
+  const s = Date.now() / 1000 - secs;
+  if (s < 90) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return fmtDate(new Date(secs * 1000).toISOString());
+}
+
+class HomePane {
+  constructor(id) {
+    this.id = id; this.kind = "home"; this.link = null;
+    this.selected = []; this.cursor = -1; this.data = null; this.raw = "";
+    this.root = el("section", { class: "pane", "data-pane": id });
+    this.head = el("div", { class: "pane-head" }, el("span", { class: "pane-title" }, "Overview"),
+      el("span", { class: "status" }, "What this matter holds. Ask Claude to work on it."));
+    this.body = el("div", { class: "pane-body home" });
+    this.root.append(this.head, this.body);
+    this.refresh();
+    this.timer = setInterval(() => { if (this.root.isConnected && this.root.offsetParent) this.refresh(); }, 3000);
+  }
+  title() { return "Overview"; }
+  state() { return { id: this.id, kind: "home", selection: [] }; }
+  spec() { return { kind: "home", id: this.id }; }
+  items() { return []; }
+  move() {}
+  targets() { return []; }
+  async refresh() {
+    let raw;
+    try { raw = await fetch("/api/overview").then((r) => r.text()); } catch { return; }
+    if (raw === this.raw) return;
+    this.raw = raw;
+    try { this.data = JSON.parse(raw); } catch { return; }
+    const top = this.body.scrollTop;
+    this.render();
+    this.body.scrollTop = top;
+  }
+
+  // a suggestion the user can paste into Claude
+  ask(text, cls = "") { return el("button", { class: "ask " + cls, title: "Copy, to paste into Claude", onclick: () => askClaude(text) }, text); }
+  // a row: opens a document, or copies a request about it
+  row(main, side, action, title) {
+    return el("li", { class: "row", tabindex: "0", title, onclick: action, onkeydown: (ev) => { if (ev.key === "Enter") { ev.stopPropagation(); action(); } } },
+      el("span", { class: "main" }, main), el("span", { class: "side" }, side));
+  }
+  section(name, count, ...kids) {
+    return el("section", { class: "card" }, el("h2", {}, name, count !== null ? el("span", { class: "count" }, count.toLocaleString()) : ""), ...kids);
+  }
+  empty(text, ask) { return el("div", { class: "empty" }, el("p", {}, text), ask ? this.ask(ask) : ""); }
+  more(n, shown, what, ask, whats = what + "s") {
+    return n > shown ? el("p", { class: "more" }, `${plural(n - shown, "more " + what, "more " + whats)} · `, el("a", { onclick: () => askClaude(ask) }, "ask Claude for them")) : "";
+  }
+
+  render() {
+    const o = this.data, d = o.documents, ann = o.annotations;
+    const lede = d.total
+      ? `${plural(d.total, "document")}` +
+        (d.custodians.length ? ` from ${plural(d.custodians.filter((c) => c.name !== "(none)").length || d.custodians.length, "custodian")}` : "") +
+        (d.first_date ? `, ${fmtDate(d.first_date)} to ${fmtDate(d.last_date)}` : "") + "."
+      : "No documents yet.";
+    const intro = el("header", { class: "home-intro" },
+      el("h1", {}, o.matter || "This matter"),
+      el("p", { class: "lede" }, lede),
+      el("p", {}, "This window shows the documents and what has been made from them. To search, read, summarize, " +
+        "tag or write about them, ask Claude in its prompt. Claude can open things here for you."),
+      d.total ? el("div", { class: "asks" }, el("span", { class: "label" }, "Try asking:"),
+        this.ask("What is this matter about?"),
+        this.ask("What are the key events, in order?"),
+        this.ask("Which documents matter most, and why?"),
+        this.ask("Find anything about …")) : "");
+
+    const cards = [this.documents(d), this.entities(o.entities, d), this.people(o.people, d), this.pages(o.pages), this.lists(o.lists),
+                   this.tags(ann), this.productions(o.productions, o.exhibits)];
+    this.body.replaceChildren(intro, el("div", { class: "cards" }, ...cards),
+      el("p", { class: "home-foot" }, "Click a suggestion to copy it, then paste it into Claude. Documents open in a new pane. Press ? for keys."));
+  }
+
+  documents(d) {
+    if (!d.total) return this.section("Documents", 0,
+      this.empty("Documents are added on your computer with adhoc ingest (Claude can't add or remove them). Once they're in, they show up here."));
+    const state = [];
+    if (d.attachments) state.push(`${plural(d.attachments, "attachment")} among them`);
+    if (d.no_text) state.push(`${plural(d.no_text, "document")} without text yet, so searches don't reach ${d.no_text === 1 ? "it" : "them"}`);
+    if (d.withdrawn) state.push(`${plural(d.withdrawn, "document")} withdrawn`);
+    const breakdown = (label, rows, ask) => rows.length ? el("div", { class: "breakdown" }, el("span", { class: "label" }, label),
+      ...rows.slice(0, 8).map((r) => el("button", { class: "tally", title: "Copy a request for these", onclick: () => askClaude(ask(r.name)) }, r.name, el("b", {}, r.n.toLocaleString()))),
+      rows.length > 8 ? el("span", { class: "muted" }, `+${rows.length - 8}`) : "") : "";
+    return this.section("Documents", d.total,
+      breakdown("By kind", d.kinds, (k) => `List the ${k} documents`),
+      breakdown("By custodian", d.custodians.filter((c) => c.name !== "(none)"), (c) => `Summarize ${c}'s documents`),
+      state.length ? el("p", { class: "muted" }, state.join(" · ") + ".") : "",
+      el("h3", {}, "Added most recently"),
+      el("ul", { class: "rows" }, ...d.recent.map((r) => this.row(r.subject || r.name || short(r.doc),
+        [r.kind, r.custodian, fmtDate(r.date)].filter(Boolean).join(" · "),
+        () => openFromPane(this, "doc:" + r.doc, true), r.name || ""))),
+      this.more(d.total - d.attachments, d.recent.length, "document", "List all the documents by date"));
+  }
+
+  entities(e, d) {
+    const sugg = e.suggested ? el("div", {},
+      el("p", { class: "muted" }, `${plural(e.suggested, "name")} found in the documents ${e.suggested === 1 ? "isn't" : "aren't"} on the list yet` +
+        " (dotted underlines in a document). Most mentioned:"),
+      el("ul", { class: "rows" }, ...e.top_suggested.map((x) => this.row(x.name, [x.kind, plural(x.docs, "document")].filter(Boolean).join(" · "),
+        () => askClaude(`Who or what is ${x.name}? Add it to the entity list.`))))) : "";
+    if (!e.total) return this.section("Entities", 0,
+      this.empty("The entity list holds the people, companies, defined terms and numbers that matter here, with what each is. " +
+        "Names on it are underlined in documents: hover one to see what it is, or select it and ask Claude.",
+        d.total ? "Who are the main people and companies? Add them to the entity list." : null),
+      sugg);
+    const kinds = e.kinds.map((k) => `${k.n} ${k.name}`).join(" · ");
+    return this.section("Entities", e.total,
+      kinds ? el("p", { class: "muted" }, kinds) : "",
+      el("ul", { class: "rows" }, ...e.known.map((x) => this.row(x.name, x.summary || x.kind || "",
+        () => askClaude(`Tell me about ${x.name}`), [x.kind, x.summary].filter(Boolean).join(": ")))),
+      this.more(e.total, e.known.length, "entity", "Show me the whole entity list", "entities"),
+      sugg);
+  }
+
+  people(p, d) {
+    if (!p.total) return this.section("People", null,
+      this.empty(d.total ? "No email headers to take names from. Claude can find people named in the documents' text." :
+        "People appear here from the documents' email headers.", d.total ? "Who are the people in these documents, and what are their roles?" : null));
+    return this.section("Email correspondents", p.total,
+      el("ul", { class: "rows" }, ...p.top.map((x) => this.row(x.name || x.address, plural(x.emails, "email"),
+        () => askClaude(`Who is ${x.name || x.address}, and what is their role in this matter?`), x.address))),
+      this.more(p.total, p.top.length, "person", "List everyone in the email headers", "people"),
+      el("p", { class: "muted" }, "From the From, To and Cc lines. For people named only in the text, with their roles:"),
+      this.ask("Make a cast of characters", "small"));
+  }
+
+  pages(pages) {
+    if (!pages.length) return this.section("Pages", 0,
+      this.empty("Pages are memos, chronologies and draft sections that Claude writes for you. Every quotation in them comes from a document and is checked against it.",
+        "Write a chronology of the key events, quoting the documents"));
+    return this.section("Pages", pages.length,
+      el("ul", { class: "rows" }, ...pages.slice(0, RECENT_ROWS).map((x) => this.row(x.title || x.file,
+        [x.refs ? plural(x.refs, "quotation") : "", fmtAgo(x.modified)].filter(Boolean).join(" · "),
+        () => askClaude(`Show me the page ${x.file}`), x.file))),
+      this.more(pages.length, RECENT_ROWS, "page", "List the pages in the workspace"),
+      this.ask("Draft a memo on …", "small"));
+  }
+
+  lists(lists) {
+    if (!lists.length) return this.section("Lists", 0,
+      this.empty("Lists are sets of documents Claude found for a question, to step through here. A key set keeps the few that explain a point and says why the rest add nothing.",
+        "Which documents show what happened, and in what order? Give me a key set."));
+    return this.section("Lists", lists.length,
+      el("ul", { class: "rows" }, ...lists.slice(0, RECENT_ROWS).map((x) => this.row(x.title || x.question || x.file,
+        [x.key_set ? "key set" : "", plural(x.items, "item"), fmtAgo(x.modified)].filter(Boolean).join(" · "),
+        () => askClaude(`Show me the list ${x.file}`), x.question || x.query || x.file))),
+      this.more(lists.length, RECENT_ROWS, "list", "List the saved lists and key sets"));
+  }
+
+  tags(a) {
+    const notes = a.notes ? el("p", { class: "muted" }, `${plural(a.threads, "note")}${a.notes > a.threads ? ` (${plural(a.notes - a.threads, "reply", "replies")})` : ""}.`) : "";
+    if (!a.tags.length) return this.section("Tags", 0,
+      this.empty("Tags record review calls: hot, responsive, privileged, and so on. Once defined, press t on a document (or its hotkey) to tag it.",
+        "Set up review tags: hot, responsive, not responsive"), notes);
+    return this.section("Tags", a.tags.length,
+      el("ul", { class: "rows" }, ...a.tags.map((t) => this.row(
+        el("span", {}, el("span", { class: "swatch", style: t.color ? `background:${t.color}` : "" }), t.tag, t.hotkey ? el("kbd", {}, t.hotkey) : ""),
+        t.by_user + t.by_claude ? `on ${t.by_user + t.by_claude}` + (t.by_claude ? ` (${t.by_claude} by Claude)` : "") : "not used yet",
+        () => askClaude(`Show me what's tagged ${t.tag}`), t.description || ""))),
+      notes,
+      ...a.recent_notes.slice(0, 3).map((n) => el("blockquote", { class: "note", title: "Open the document", onclick: () => openFromPane(this, "doc:" + n.doc, true) },
+        el("span", { class: "who" }, `${n.by === adhoc.user ? "You" : String(n.by || "").startsWith("user:") ? n.by.slice(5) : "Claude"} · ${fmtDate(n.at)}`), String(n.body || "").slice(0, 200))));
+  }
+
+  productions(prods, exhibits) {
+    const n = prods.length + exhibits.length;
+    if (!n) return this.section("Productions and exhibits", 0,
+      this.empty("Claude can Bates-stamp a production from your tags, with withholding, redactions and a check for possible privilege, and sticker exhibits for a deposition.",
+        "Prepare a production of the documents tagged responsive"));
+    const rows = [...prods.map((x) => this.row(x.name, `production · ${plural(x.documents, "document")}`, () => askClaude(`Summarize the production ${x.name}`))),
+                  ...exhibits.map((x) => this.row(x.name, `exhibits · ${plural(x.documents, "exhibit")}`, () => askClaude(`Show me the exhibit list ${x.name}`)))];
+    return this.section("Productions and exhibits", n, el("ul", { class: "rows" }, ...rows));
+  }
+}
+const RECENT_ROWS = 8;
+function openHome() {
+  const h = adhoc.panes.find((p) => p.kind === "home") || addPane(new HomePane(newPaneId()), true);
+  focus(h.id);
+  return h;
+}
+
 function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
   if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, { source: "pane" });
   let target = !forceNew && p.link && pane(p.link);
@@ -1481,7 +1694,7 @@ function onKey(ev) {
   if (!$("#palette").hidden || !$("#note-editor").hidden || !$("#entity-editor").hidden) return;
   const p = focusedPane();
   const k = ev.key;
-  const doc = p?.kind === "document" ? p : null, web = p && p.kind !== "document" ? p : null;
+  const doc = p?.kind === "document" ? p : null, web = p && p.kind !== "document" && p.kind !== "home" ? p : null;
   let handled = true;
   if (k === "Tab") { const i = adhoc.panes.indexOf(p); const n = adhoc.panes[(i + (ev.shiftKey ? -1 : 1) + adhoc.panes.length) % adhoc.panes.length]; if (n) focus(n.id); }
   else if ((k === "j" || k === "ArrowDown") && web) web.move(1);
@@ -1494,6 +1707,7 @@ function onKey(ev) {
   else if (k === "]" && web) { if (paneExists(web.link)) callPane(web.link, "step", 1); else web.move(1); }
   else if (k === "[" && web) { if (paneExists(web.link)) callPane(web.link, "step", -1); else web.move(-1); }
   else if (k === "W" && p) post({ type: "tearoff", pane: p.id });
+  else if (k === "H") openHome();
   else if (k === "m") mark();
   else if (k === "t") openPalette();
   else if (k === "N") newNote();
@@ -1503,7 +1717,7 @@ function onKey(ev) {
   else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -1584,7 +1798,7 @@ const commands = {
   async pane(c) {
     if (c.update) {
       const p = pane(c.update);
-      if (!p || p.kind === "document") throw new Error("no web pane " + c.update);
+      if (!p || p.kind === "document" || p.kind === "home") throw new Error("no web pane " + c.update);
       p.sequence = c.sequence || null;
       if (c.title) { p._title = c.title; $(".pane-title", p.head).textContent = c.title; }
       p.load(c.content);
@@ -1604,6 +1818,7 @@ const commands = {
     return { pane: p.id, preview: p.link };
   },
   async close(c) { closePane(c.pane); return {}; },
+  async home() { return { pane: openHome().id }; },
   // moving a pane to another window: taken out of this one, put into that one
   async detach(c) {
     const p = pane(c.pane);
@@ -1626,6 +1841,8 @@ const commands = {
         if (at) await p.scrollTo({ select: at });
         p.updateStatus();
       }
+    } else if (s.kind === "home") {
+      p = addPane(new HomePane(s.id), true);
     } else {
       p = addPane(new WebPane(s.id, s.kind, s.content, s.title), true);
       Object.assign(p, { link: s.link, sequence: s.sequence, form: s.form || {} });
@@ -1665,7 +1882,11 @@ adhoc.command = async (seq, cmd) => {
   post({ type: "result", seq, result });
   changed();
 };
-adhoc.config = (c) => { adhoc.user = c.user; adhoc.window = c.window || "w1"; };
+adhoc.config = (c) => {
+  adhoc.user = c.user; adhoc.window = c.window || "w1";
+  // the first window opens on the overview; Claude's commands then open panes beside it
+  if (adhoc.window === "w1" && !adhoc.panes.length) openHome();
+};
 adhoc.elsewhere = (map) => { adhoc.elsewhereMap = map; };
 adhoc.visited = (entry) => {
   adhoc.history.push(entry);
