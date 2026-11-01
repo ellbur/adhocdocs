@@ -275,9 +275,11 @@ recall what was already copied; the command says so. The removal records
 how much of the installation's logs the remover had, and nothing past that
 counts or is accepted, whatever IDs it carries: event IDs are the writer's
 to choose, so a removed member could otherwise backdate its way back in.
-*Not built yet:* documents, tags and published work it wrote after that
-point, and that some member took in before hearing of the removal, still
-replay; only membership events are set aside on replay.
+And what it wrote after that point, if some member took it in before
+hearing of the removal, is set aside everywhere: the removals' cutoffs are
+in `pool/cutoffs.json`, and every reader of the logs (the matter's state,
+annotations, published work, indexes, the viewer) stops each removed
+installation's logs there.
 
 **Known limits.** Someone enrolled at a hub who isn't in a matter's pool,
 but knows its ID (it travels in invitation codes, and in clear in TLS's

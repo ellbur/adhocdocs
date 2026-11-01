@@ -47,5 +47,11 @@ def refresh(m: Matter):
     """After logs arrive from another installation: re-derive what depends on
     the merged order (the viewer's replay file, ``work/``). Indexes catch up
     as usual."""
+    from . import pool
+    try:
+        pool.save_cutoffs(m)
+    except OSError:
+        pass
+    m = Matter(m.root)
     annotations.save_replay(m)
     work.materialize(m)

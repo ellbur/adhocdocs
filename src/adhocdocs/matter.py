@@ -184,11 +184,12 @@ class Feed:
     read-only) can only be read."""
 
     def __init__(self, name: str, logs_dir: Path | None = None, single: Path | None = None,
-                 identity=None, legacy: Path | None = None):
+                 identity=None, legacy: Path | None = None, cutoffs: Path | None = None):
         self.name = name
         self.dir = Path(logs_dir) if logs_dir else None
         self.single = Path(single) if single else None
         self.identity = identity
+        self.cutoffs_path = Path(cutoffs) if cutoffs else None
         self.legacy = Path(legacy) if legacy else None
 
     def logs(self) -> list[tuple[str, str | None, EventLog]]:
@@ -201,6 +202,19 @@ class Feed:
         if self.legacy is not None and self.legacy.exists():
             found.append(("legacy", self.legacy))       # an unmigrated matter, read-only
         return [(f"{self.name}/{o}", o, EventLog(p)) for o, p in sorted(found)]
+
+    def cutoffs(self) -> dict[str, int]:
+        """Origins removed from the pool, and how many of their events count
+        (``pool/cutoffs.json``, written by adhocdocs.pool): what a removed
+        installation wrote after its removal is set aside, here and in the
+        viewer."""
+        if self.cutoffs_path is None:
+            return {}
+        try:
+            data = json.loads(self.cutoffs_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return {}
+        return {o: n for o, n in data.get("feeds", {}).get(self.name, {}).items() if isinstance(n, int)}
 
     def log_for(self, origin: str) -> EventLog:
         """One origin's log. ``origin`` often comes from another installation,
@@ -228,11 +242,24 @@ class Feed:
                 raise ValueError(f"event {since} not found in the {self.name} feed")
             return
         since = since or {}
+        cut = self.cutoffs()
 
         def tagged(key, origin, log):
             tag = {"feed": self.name, "log": key, **({"origin": origin} if origin else {})}
-            for ev in log.read(since.get(key)):
-                yield {**ev, **tag}
+            limit = cut.get(origin)
+            if limit is None:
+                for ev in log.read(since.get(key)):
+                    yield {**ev, **tag}
+                return
+            after = since.get(key)
+            seen = after is None
+            for i, ev in enumerate(log.events()):
+                if i >= limit:
+                    break
+                if seen:
+                    yield {**ev, **tag}
+                elif ev["id"] == after:
+                    seen = True
 
         streams = [tagged(*l) for l in self.logs()]
         if len(streams) == 1:
@@ -242,7 +269,20 @@ class Feed:
 
     def cursor(self) -> dict:
         """The end of every log: a cursor that has read everything."""
-        return {key: last for key, _, log in self.logs() if (last := log.last_id())}
+        cut = self.cutoffs()
+        out = {}
+        for key, origin, log in self.logs():
+            if origin in cut:
+                last = None
+                for i, ev in enumerate(log.events()):
+                    if i >= cut[origin]:
+                        break
+                    last = ev["id"]
+            else:
+                last = log.last_id()
+            if last:
+                out[key] = last
+        return out
 
     def last_id(self) -> str | None:
         """The greatest event ID in the feed."""
@@ -305,14 +345,15 @@ class Matter:
         self.workspace_objects = ObjectStore(self.adhoc_dir / "objects", self.store_dir / "objects")
         self.identity = Identity(self.sync_dir, self.root)
         self._migrate()
+        cutoffs = self.root / "pool" / "cutoffs.json"
         self.logs = {
             "store": Feed("store", self.store_dir / "logs", identity=self.identity,
-                          legacy=self.store_dir / "log.jsonl"),
+                          legacy=self.store_dir / "log.jsonl", cutoffs=cutoffs),
             "workspace": Feed("workspace", single=self.adhoc_dir / "log.jsonl"),
         }
         self.annotation_log = Feed("annotations", self.root / "annotations" / "logs", identity=self.identity,
-                                   legacy=self.root / "annotations" / "log.jsonl")
-        self.work_log = Feed("work", self.root / "work" / "logs", identity=self.identity)
+                                   legacy=self.root / "annotations" / "log.jsonl", cutoffs=cutoffs)
+        self.work_log = Feed("work", self.root / "work" / "logs", identity=self.identity, cutoffs=cutoffs)
         self.pool_log = Feed("pool", self.root / "pool" / "logs", identity=self.identity)
         self.indexes_dir = self.adhoc_dir / "indexes"
         self._state = None

@@ -248,7 +248,7 @@ def read_events(m: Matter, feed: str, origin: str, start: int, limit: int) -> li
 def after_arrival(m: Matter, feeds):
     """Re-derive what depends on arrived events (adhocdocs.sync.refresh)."""
     from . import sync
-    if set(feeds) & {"annotations", "work"}:
+    if set(feeds) & {"annotations", "work", "pool"}:
         sync.refresh(Matter(m.root))
 
 

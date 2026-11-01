@@ -174,7 +174,39 @@ def remove_member(m: Matter, author: str, origin: str) -> dict:
     upto = {name: feed.log_for(origin).count()
             for name, feed in (("pool", m.pool_log), ("store", m.logs["store"]), ("annotations", m.annotation_log),
                                ("work", m.work_log))}
-    return m.pool_log.append(op="remove-member", member=origin, upto=upto, author=author)
+    ev = m.pool_log.append(op="remove-member", member=origin, upto=upto, author=author)
+    save_cutoffs(m)
+    return ev
+
+
+def save_cutoffs(m: Matter) -> dict:
+    """Write ``pool/cutoffs.json``: for each feed, each removed origin and how
+    many of its events count. Every reader of the logs (adhocdocs.matter's
+    feeds, so the matter's state, annotations, published work and indexes,
+    and the viewer) stops each such log there. Written whenever membership
+    changes here or arrives; only when it differs."""
+    import json
+    p = Pool.load(m)
+    feeds: dict = {}
+    for o, x in p.members.items():
+        if not x["active"] and x.get("upto_feeds"):
+            for feed, n in x["upto_feeds"].items():
+                if feed != "pool":           # membership has its own replay (Pool.replay)
+                    feeds.setdefault(feed, {})[o] = n
+    data = {"v": 1, "feeds": feeds}
+    path = m.root / "pool" / "cutoffs.json"
+    text = json.dumps(data, indent=1, sort_keys=True) + "\n"
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return data
+    except FileNotFoundError:
+        if not feeds:
+            return data
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    tmp.replace(path)
+    return data
 
 
 def set_addresses(m: Matter, author: str, addresses) -> dict | None:

@@ -157,3 +157,48 @@ def test_malformed_membership_events_dont_break_the_pool(pair):
     log.append(op="set-addresses", member=a.origin, addresses=None, author=ALICE)
     p = poolmod.Pool.load(Matter(a.root))
     assert p.is_member(b.origin) and len(p.ignored) >= 1
+
+
+def test_what_a_removed_member_wrote_afterwards_doesnt_count(tmp_path):
+    """Bob is removed; what he writes afterwards reaches Carol (who hadn't
+    heard), and through her, Alice. It doesn't count anywhere once the
+    removal is known: not in the documents, tags, published work or search."""
+    from test_sync import copy_logs, picture
+    from adhocdocs import search
+    a = Matter.create(tmp_path / "a")
+    keep = text_doc(a, "a.txt", "the original pallet document")
+    poolmod.found(a, ALICE, "Alice")
+    b = Matter.create(tmp_path / "b", matter_id=a.id)
+    c = Matter.create(tmp_path / "c", matter_id=a.id)
+    for x in (b, c):
+        cfg = x.config
+        cfg["founder"] = a.origin
+        from adhocdocs.matter import write_toml
+        write_toml(x.root / "matter.toml", cfg)
+        poolmod.add_member(a, ALICE, x.identity.cert_path().read_text(encoding="ascii"), x.root.name)
+    for x in (b, c):
+        copy_logs(a, x)
+    before = text_doc(b, "before.txt", "bob's pallet note, before")
+    copy_logs(b, a)
+    poolmod.remove_member(a, ALICE, b.origin)
+    # Bob, not having heard, carries on; Carol takes it in
+    after = text_doc(b, "after.txt", "bob's pallet note, after")
+    annotations.write(Matter(b.root), "user:bob", {"op": "define-tag", "tag": "bobs"})
+    (b.workspace / "memo.md").write_text("# Bob's\n", encoding="utf-8")
+    work.publish(Matter(b.root), "user:bob", "memo.md")
+    copy_logs(b, c)
+    copy_logs(c, a)            # raw copies: as if relayed before the removal was known
+    copy_logs(a, c)
+    for m in (a, c):
+        m = Matter(m.root)
+        docs = m.state.live_documents()
+        assert before in docs and after not in docs and keep in docs
+        assert "bobs" not in annotations.Annotations.load(m).definitions
+        assert not (m.root / "work/memo.md").exists()
+        from adhocdocs.index import open_index
+        open_index(m, "keyword").update()
+        s = search.Searcher(Matter(m.root), search.Options())
+        _, items = s.finish(*s.keyword("pallet"))
+        assert {i["loc"][4:] for i in items} == {keep, before}
+        assert not open_index(m, "keyword").behind()
+    assert picture(a) == picture(c)

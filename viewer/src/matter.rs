@@ -61,12 +61,36 @@ fn read_log(p: &Path) -> Vec<Value> {
     text.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).ok()).collect()
 }
 
+/// How many of each removed installation's events count, in one feed
+/// (`pool/cutoffs.json`, written by adhocdocs.pool): what it wrote after its
+/// removal is set aside, as `Feed.read` does.
+pub fn cutoffs(root: &Path, feed: &str) -> HashMap<String, usize> {
+    let v: Value = fs::read(root.join("pool/cutoffs.json")).ok()
+        .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    v["feeds"][feed].as_object().map(|o| o.iter()
+        .filter_map(|(k, n)| Some((k.clone(), n.as_u64()? as usize))).collect()).unwrap_or_default()
+}
+
+/// A feed's logs merged, each removed installation's cut where it was removed.
+pub fn feed_events(root: &Path, feed: &str, dir: &Path, legacy: &Path) -> Vec<Value> {
+    let cut = cutoffs(root, feed);
+    let paths = feed_logs(dir, legacy);
+    let limits: Vec<Option<usize>> = paths.iter()
+        .map(|p| p.file_stem().and_then(|s| cut.get(s.to_string_lossy().as_ref()).copied())).collect();
+    merged_limited(&paths, &limits)
+}
+
 /// Several logs' events in the order every installation replays them: at
 /// each step, the earliest of the logs' next events by ID, ties going to the
 /// earlier log. Each log keeps its own file order. (`heapq.merge` in
 /// adhocdocs/matter.py makes the same choices.)
 pub fn merged(paths: &[PathBuf]) -> Vec<Value> {
-    let logs: Vec<Vec<Value>> = paths.iter().map(|p| read_log(p)).collect();
+    merged_limited(paths, &vec![None; paths.len()])
+}
+
+fn merged_limited(paths: &[PathBuf], limits: &[Option<usize>]) -> Vec<Value> {
+    let logs: Vec<Vec<Value>> = paths.iter().zip(limits)
+        .map(|(p, l)| { let mut v = read_log(p); if let Some(n) = l { v.truncate(*n); } v }).collect();
     let mut pos = vec![0usize; logs.len()];
     let mut out = Vec::with_capacity(logs.iter().map(|l| l.len()).sum());
     loop {
@@ -88,7 +112,7 @@ pub fn merged(paths: &[PathBuf]) -> Vec<Value> {
 
 /// The annotation feed's events, merged.
 pub fn annotation_events(root: &Path) -> Vec<Value> {
-    merged(&feed_logs(&root.join("annotations/logs"), &root.join("annotations/log.jsonl")))
+    feed_events(root, "annotations", &root.join("annotations/logs"), &root.join("annotations/log.jsonl"))
 }
 
 fn hex(h: &str) -> &str {
@@ -117,16 +141,19 @@ impl Matter {
     pub fn refresh(&mut self) {
         let store = feed_logs(&self.root.join("store/logs"), &self.root.join("store/log.jsonl"));
         let workspace = self.root.join("workspace/.adhoc/log.jsonl");
+        let cutoffs = self.root.join("pool/cutoffs.json");
         let sizes: Vec<(PathBuf, u64)> = store
             .iter()
             .chain(std::iter::once(&workspace))
+            .chain(std::iter::once(&cutoffs))
             .map(|p| (p.clone(), fs::metadata(p).map(|m| m.len()).unwrap_or(0)))
             .collect();
         if sizes == self.log_sizes {
             return;
         }
         let mut s = State::default();
-        for ev in merged(&store).iter().chain(read_log(&workspace).iter()) {
+        let store_events = feed_events(&self.root, "store", &self.root.join("store/logs"), &self.root.join("store/log.jsonl"));
+        for ev in store_events.iter().chain(read_log(&workspace).iter()) {
             apply(&mut s, ev);
         }
         self.state = s;
@@ -342,6 +369,11 @@ mod tests {
         m.refresh();
         assert!(m.live("x"));
         assert_eq!(m.state.order, ["x", "y"]);
+        // C is removed from the pool, having written nothing that counts
+        fs::create_dir_all(dir.join("pool")).unwrap();
+        fs::write(dir.join("pool/cutoffs.json"), r#"{"v": 1, "feeds": {"store": {"o_C": 0}}}"#).unwrap();
+        m.refresh();
+        assert!(!m.live("x"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
