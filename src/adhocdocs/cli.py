@@ -94,6 +94,15 @@ def adhoc(argv=None):
     s.add_argument("--kind", action="append", help="show: only these kinds (session-start, session-end, prompt, "
                                                    "tool, connection, claude); repeatable")
     s.add_argument("--full", action="store_true", help="show: whole tool results instead of previews")
+    s = sub.add_parser("publish", help="publish a workspace file or directory as yours, for the matter's other "
+                                       "installations (see `work --help`)")
+    s.add_argument("path")
+    s.add_argument("--user", required=True)
+    s.add_argument("--merge", action="store_true", help="revise every current version: resolves a fork")
+    s.add_argument("--revises", action="append")
+    s = sub.add_parser("retire", help="take published work out of work/ (the history stays)")
+    s.add_argument("name")
+    s.add_argument("--user", required=True)
     s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)")
     s.add_argument("action", choices=["status", "conflicts"],
                    help="status: this matter's ID, this installation's origin, and the events held from each origin. "
@@ -170,6 +179,12 @@ def adhoc(argv=None):
             out(report)
             if not report["ok"]:
                 sys.exit(1)
+    elif a.cmd in ("publish", "retire"):
+        from . import work
+        if a.cmd == "publish":
+            out(work.publish(m, f"user:{a.user}", work.name_of(m, a.path), a.revises, a.merge))
+        else:
+            out(work.retire(m, f"user:{a.user}", a.name))
     elif a.cmd == "sync":
         from . import sync
         if a.action == "status":
@@ -1406,9 +1421,69 @@ def produce_exhibits(argv):
         sys.exit(1)
 
 
+# -- work --------------------------------------------------------------------------------------
+
+WORK_HELP = """\
+Published work product, shared with this matter's other installations.
+
+The workspace is yours alone. To share a page, chronology, key set, list or
+production with the matter's other installations, publish it: a snapshot
+goes into the store and appears in work/ (read-only here) on every
+installation. Publish when a draft is ready to share, or when the user asks.
+
+  work ls                          what's published, and any forks
+  work publish <path> [--merge]    publish a file or directory in the workspace
+  work checkout <name>             copy a published version into the workspace
+  work log <name>                  a name's versions
+  work retire <name>               take it out of work/ (the history stays)
+
+To revise someone else's page: work checkout memo.md, edit it in the
+workspace, then work publish memo.md. If two installations revised the same
+version, it forks: work ls shows both, the other is in work/.forks/; check
+both out, merge them, and publish with --merge."""
+
+
+@run
+def work(argv=None):
+    from . import work as w
+    p = parser("work", WORK_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("ls", help="published work, with forks")
+    s = sub.add_parser("publish", help="publish a workspace file or directory (through the annotation API)")
+    s.add_argument("path")
+    s.add_argument("--merge", action="store_true", help="revise every current version: resolves a fork")
+    s.add_argument("--revises", action="append", help="the version this revises (default: the one checked out)")
+    s.add_argument("--requested-by", help="user, when the user asked for this")
+    s = sub.add_parser("checkout", help="copy a published version into the workspace")
+    s.add_argument("name")
+    s.add_argument("--version", help="default: the current one")
+    s.add_argument("--force", action="store_true", help="replace workspace changes that aren't published")
+    s = sub.add_parser("log", help="a name's versions")
+    s.add_argument("name")
+    s = sub.add_parser("retire", help="take a name out of work/ (through the annotation API)")
+    s.add_argument("name")
+    s.add_argument("--requested-by")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    if a.cmd == "ls":
+        for row in w.listing(m):
+            out(row)
+    elif a.cmd == "log":
+        for row in w.history(m, a.name):
+            out(row)
+    elif a.cmd == "checkout":
+        out(w.checkout(m, a.name, a.version, a.force))
+    elif a.cmd == "publish":
+        req = {"name": w.name_of(m, a.path), "merge": a.merge, "revises": a.revises, "requested_by": a.requested_by}
+        out(annapi.request(m, {k: v for k, v in req.items() if v}, "/publish"))
+    elif a.cmd == "retire":
+        out(annapi.request(m, {"name": a.name, **({"requested_by": a.requested_by} if a.requested_by else {})}, "/retire"))
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

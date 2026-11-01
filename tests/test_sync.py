@@ -26,7 +26,7 @@ def text_doc(m, name, body, custodian="x"):
                                                  "source": {"collection": "c", "path": name}})
 
 
-SYNCED = ("store/logs", "annotations/logs")
+SYNCED = ("store/logs", "annotations/logs", "work/logs")
 
 
 def copy_logs(src: Matter, dst: Matter, origins=None):
@@ -144,7 +144,8 @@ def legacy_matter(tmp_path) -> tuple[Path, dict]:
     before = picture(m)
     last = m.logs["store"].last_id()
     # undo the new layout
-    for d in SYNCED:
+    shutil.rmtree(m.root / "work")
+    for d in ("store/logs", "annotations/logs"):
         logs = list((m.root / d).glob("*.jsonl"))
         assert len(logs) == 1
         logs[0].replace(m.root / d.replace("/logs", "/log.jsonl"))

@@ -89,6 +89,8 @@ what can be done with it, and how far along it is:
 - **Work product** in the workspace: pages (`*.md`, with their quotation
   counts), lists and key sets (`*.list.jsonl`), productions and exhibit
   sets.
+- **Published** work: pages and lists published from any installation of
+  the matter (`work/`, [SYNC.md](SYNC.md)), and whether any are forked.
 - **Tags** with how often each is used and by whom, and the latest notes.
 
 Each section that is empty says what it would hold and offers a request

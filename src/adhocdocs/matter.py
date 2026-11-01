@@ -7,6 +7,8 @@ Layout::
       store/objects/                    originals, document/layer/metadata objects, part files
       store/logs/<origin>.jsonl         provenance log: the "store" change feed
       annotations/logs/<origin>.jsonl   tags, notes and entities
+      work/logs/<origin>.jsonl          published work product (adhocdocs.work)
+      work/<name>                       published files, laid out from that feed (derived)
       sync/                             this installation's identity (host only; adhocdocs.origin)
       audit/                            what each session did (host only; see adhocdocs.audit)
       workspace/                        work product (read-write in the container)
@@ -286,6 +288,7 @@ class Matter:
         }
         self.annotation_log = Feed("annotations", self.root / "annotations" / "logs", identity=self.identity,
                                    legacy=self.root / "annotations" / "log.jsonl")
+        self.work_log = Feed("work", self.root / "work" / "logs", identity=self.identity)
         self.indexes_dir = self.adhoc_dir / "indexes"
         self._state = None
 
@@ -331,7 +334,7 @@ class Matter:
     @classmethod
     def create(cls, root: Path, matter_id: str | None = None) -> "Matter":
         root = Path(root)
-        for d in ("store/objects", "store/logs", "annotations/logs", "workspace/.adhoc/objects"):
+        for d in ("store/objects", "store/logs", "annotations/logs", "work/logs", "workspace/.adhoc/objects"):
             (root / d).mkdir(parents=True, exist_ok=True)
         (root / "workspace/.adhoc/log.jsonl").touch()
         if not (root / "matter.toml").exists():

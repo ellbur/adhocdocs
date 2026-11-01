@@ -10,6 +10,11 @@ container, so this is the only path, and Claude can't write as the user.
 Protocol: ``POST /write`` with a JSON request (``op`` and its fields, plus
 optional ``requested_by``). The reply is ``{"events": [...]}`` and, for
 notes, ``{"check": [...]}``, or ``{"refused": reason}`` with status 403.
+
+It also publishes work product for Claude (:mod:`adhocdocs.work`), stamped
+``claude`` the same way: ``POST /publish`` with ``{"name", "revises"?,
+"merge"?, "requested_by"?}`` (``name`` is the path in the workspace), and
+``POST /retire`` with ``{"name", "requested_by"?}``.
 """
 
 import hashlib
@@ -54,11 +59,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path != "/write":
+        if self.path not in ("/write", "/publish", "/retire"):
             return self._reply(404, {"error": "not found"})
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             m = Matter(self.matter.root)          # fresh state for every request
+            if self.path != "/write":
+                from . import work
+                if self.path == "/publish":
+                    return self._reply(200, work.publish(m, annotations.CLAUDE, str(req.get("name", "")),
+                                                         req.get("revises"), bool(req.get("merge")),
+                                                         req.get("requested_by")))
+                return self._reply(200, work.retire(m, annotations.CLAUDE, str(req.get("name", "")),
+                                                    req.get("requested_by")))
             events = annotations.write(m, annotations.CLAUDE, req)
             out = {"events": events}
             if req.get("op") in ("note", "reply", "edit-note"):
@@ -91,14 +104,14 @@ class Unavailable(Exception):
     pass
 
 
-def request(m: Matter, req: dict) -> dict:
+def request(m: Matter, req: dict, route="/write") -> dict:
     """Send a write to the API. Raises Unavailable if it isn't running, and
     annotations.Refused if the write was refused."""
     path = socket_path(m)
     conn = _Connection(path)
     try:
         body = json.dumps(req).encode()
-        conn.request("POST", "/write", body, {"Content-Type": "application/json"})
+        conn.request("POST", route, body, {"Content-Type": "application/json"})
         resp = conn.getresponse()
         out = json.loads(resp.read())
     except (FileNotFoundError, ConnectionRefusedError):

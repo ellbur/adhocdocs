@@ -4,7 +4,8 @@
 one log per installation ([`matter.py`](src/adhocdocs/matter.py),
 [`origin.py`](src/adhocdocs/origin.py)), and step 2, conflicts resolved on
 replay ([`annotations.py`](src/adhocdocs/annotations.py),
-[`sync.py`](src/adhocdocs/sync.py)). Decisions still open are at the
+[`sync.py`](src/adhocdocs/sync.py)), and step 3, publishing work product
+([`work.py`](src/adhocdocs/work.py)). Decisions still open are at the
 end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
@@ -51,26 +52,38 @@ Publishing applies only to what's made in the workspace. Documents,
 annotations and membership live outside it and sync on their own, with no
 step from anyone.
 
-So work product crosses over by **publishing**: `work publish memo.md`
-(from Claude, through a host API that stamps authorship, as annotations do),
-or `adhoc work publish` (from the user). A publication is a snapshot,
-stored by hash, recorded as an event, and synced. Published work appears on
-every installation in `<matter>/work/`, mounted read-only into sessions, and
-in the viewer's overview with its author and version. To keep working on
-someone's page, `work checkout memo` copies it into the workspace.
+So work product crosses over by **publishing**
+([`work.py`](src/adhocdocs/work.py)): `work publish memo.md` (from Claude,
+through the annotation API, which stamps authorship), or `adhoc publish
+memo.md --user <id>` (from the user, on the host). A publication is a
+snapshot of a file or directory, stored by hash in the store, recorded as an
+event in the `work` feed (`work/logs/<origin>.jsonl`, one log per
+installation like the others), and synced. Published work is laid out on
+every installation in `<matter>/work/`, mounted read-only into sessions,
+and the viewer's overview has a Published section. To keep working on
+someone's page, `work checkout memo.md` copies it into the workspace.
 
-- **Versions form a history.** Each publication names the version it
-  revises. Two installations revising the same version concurrently make a
-  **fork**: both are kept, the viewer shows the fork, and someone resolves it
-  by publishing a version that revises both (Claude is good at merging two
-  drafts). Nothing is merged silently, since a page's prose is someone's
-  judgment.
+- **Versions form a history.** Each publication names the versions it
+  revises. The workspace remembers which version each file was checked out
+  from or last published as, so publishing again revises that one.
+  Publishing over a name someone else published, without checking it out,
+  is refused: there'd be nothing to say what it revises.
+- **Forks.** Two installations revising the same version without seeing
+  each other's make a fork: the later is current in `work/`, the other is
+  kept in `work/.forks/`, `work ls` and `adhoc sync conflicts` list it, and
+  the overview says so. Someone resolves it by publishing a version that
+  revises both (`--merge`); Claude is good at merging two drafts. Nothing is
+  merged silently, since a page's prose is someone's judgment.
 - **Publishing carries what the work needs.** A page can quote a layer made
-  in the workspace (a re-OCR, say). Publishing promotes those layers into
-  the store, so the quotations resolve everywhere. A quotation that would
-  only resolve locally refuses to publish.
+  in the workspace (a re-OCR, say). Publishing promotes the layers a page or
+  list names into the store, with `add-layer` events in this installation's
+  store log, so the quotations resolve everywhere. A page's `cite-style`
+  file goes with it. A directory (a production) publishes whole.
+- **Retiring** a name takes it out of `work/`; the history stays.
 - Locators are content-addressed (document and layer hashes), so a
   published page's quotations mean the same thing on every installation.
+- Chronologies and key sets in `work/` count on the date cards like the
+  workspace's own.
 
 ## The data model: one log per installation
 
@@ -303,7 +316,7 @@ way, and with them the protocol is small.
    tests in [`test_sync.py`](tests/test_sync.py).*
 2. Replay rules and `adhoc sync conflicts`. *Built; tests in
    [`test_sync.py`](tests/test_sync.py).*
-3. Publishing work product.
+3. Publishing work product. *Built; tests in [`test_work.py`](tests/test_work.py).*
 4. Signing, the pool log, and sync between two members on a LAN.
 5. The hub, push and invitations through it.
 

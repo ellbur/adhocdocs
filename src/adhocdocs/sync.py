@@ -5,14 +5,14 @@ each origin, and the conflicts that replaying every origin's events turned
 up. Sync itself (the pool, the protocol) builds on these.
 """
 
-from . import annotations
+from . import annotations, work
 from .matter import Matter
 
-SYNCED_FEEDS = ("store", "annotations")
+SYNCED_FEEDS = ("store", "annotations", "work")
 
 
 def feeds(m: Matter) -> dict:
-    return {"store": m.logs["store"], "annotations": m.annotation_log}
+    return {"store": m.logs["store"], "annotations": m.annotation_log, "work": m.work_log}
 
 
 def vector(m: Matter) -> dict:
@@ -39,10 +39,12 @@ def conflicts(m: Matter, refresh=True) -> list[dict]:
             annotations.save_replay(m, ann)
         except OSError:
             pass        # read-only here (a session): the host keeps it current
-    return ann.conflicts
+    return ann.conflicts + work.forks(m)
 
 
 def refresh(m: Matter):
     """After logs arrive from another installation: re-derive what depends on
-    the merged order (the viewer's replay file). Indexes catch up as usual."""
+    the merged order (the viewer's replay file, ``work/``). Indexes catch up
+    as usual."""
     annotations.save_replay(m)
+    work.materialize(m)

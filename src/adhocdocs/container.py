@@ -12,6 +12,7 @@ Inside the session:
 ====================  ==================  ====================================
 /matter/store         read-only           originals, layers, provenance logs
 /matter/annotations   read-only           tags and notes (writes go through the API)
+/matter/work          read-only           published work product (publishing goes through the API)
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
                                           sign-in (``<matter>/claude-home``)
@@ -142,6 +143,7 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
             "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
             *_bind(root / "store", "/matter/store", ro=True, bridged=bridged),
             *_bind(root / "annotations", "/matter/annotations", ro=True, bridged=bridged),
+            *_bind(root / "work", "/matter/work", ro=True, bridged=bridged),
             *_bind(root / "workspace", "/matter/workspace", bridged=bridged),
             *_bind(root / "claude-home", "/home/adhoc/.claude", bridged=bridged)]
     if bridged:
@@ -223,6 +225,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         print("Building the session image (first run; this takes a few minutes)…", file=sys.stderr)
         build_image()
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
+    (m.root / "work").mkdir(exist_ok=True)
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)

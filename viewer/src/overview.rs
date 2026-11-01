@@ -42,6 +42,7 @@ impl Overview {
             "people": people,
             "pages": pages,
             "lists": lists,
+            "published": published(&m.root.join("work")),
             "productions": sets(&ws.join("productions"), "production.jsonl"),
             "exhibits": sets(&ws.join("exhibits"), "exhibits.jsonl"),
             "annotations": annotations(&m.root),
@@ -138,6 +139,14 @@ fn documents(m: &Matter) -> (Value, Value) {
 
 /// Literate pages (`*.md`) and list files (`*.list.jsonl`) in the
 /// workspace, newest first, skipping hidden directories.
+/// Work product published from any installation (work/, laid out from the
+/// work feed: SYNC.md), and how many names have forks waiting to be merged.
+fn published(work: &Path) -> Value {
+    let (pages, lists) = workspace_files(work);
+    let forks = fs::read_dir(work.join(".forks")).map(|d| d.count()).unwrap_or(0);
+    json!({"pages": pages, "lists": lists, "forks": forks})
+}
+
 fn workspace_files(ws: &Path) -> (Value, Value) {
     let mut found = vec![];
     walk(ws, ws, 0, &mut found);
@@ -285,6 +294,23 @@ mod tests {
         assert_eq!(lists[0]["title"], "Hot");
         assert_eq!(lists[0]["items"], 2);
         assert_eq!(lists[0]["key_set"], true);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn published_work() {
+        let dir = std::env::temp_dir().join(format!("adhoc-published-{}", std::process::id()));
+        let work = dir.join("work");
+        fs::create_dir_all(work.join("logs")).unwrap();
+        fs::create_dir_all(work.join(".forks/memo.md/ABC")).unwrap();
+        fs::write(work.join("memo.md"), "# Memo\n").unwrap();
+        fs::write(work.join(".forks/memo.md/ABC/memo.md"), "# Other memo\n").unwrap();
+        fs::write(work.join("logs/o_A.jsonl"), "{}\n").unwrap();
+        let p = published(&work);
+        assert_eq!(p["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(p["pages"][0]["title"], "Memo");
+        assert_eq!(p["lists"].as_array().unwrap().len(), 0);
+        assert_eq!(p["forks"], 1);
         fs::remove_dir_all(&dir).unwrap();
     }
 }
