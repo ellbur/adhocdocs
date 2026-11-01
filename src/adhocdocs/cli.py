@@ -1581,6 +1581,8 @@ is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane,
 H overview, Alt-drag a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
+Hex mode (f, or opening a bytes= locator) shows the original's bytes; a
+drag selects a `bytes=a,b` locator.
 
 Entities: the viewer underlines known entities and dots suggested ones;
 the user hovers to see what they are and clicks to select one. `view

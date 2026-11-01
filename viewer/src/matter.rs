@@ -174,6 +174,22 @@ impl Matter {
         self.roots.iter().map(|r| r.join(&h[..2]).join(&h[2..])).find(|p| p.exists())
     }
 
+    /// The size of an object, without reading it.
+    pub fn size(&self, h: &str) -> Option<u64> {
+        fs::metadata(self.path(h)?).ok().map(|m| m.len())
+    }
+
+    /// Bytes [start, end) of an object (clipped to its end), without reading
+    /// the rest. Callers check scope first.
+    pub fn byte_range(&self, h: &str, start: u64, end: u64) -> Option<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = fs::File::open(self.path(h)?).ok()?;
+        f.seek(SeekFrom::Start(start)).ok()?;
+        let mut out = Vec::new();
+        f.take(end.saturating_sub(start)).read_to_end(&mut out).ok()?;
+        Some(out)
+    }
+
     /// Bytes of an object. Callers check scope first.
     pub fn bytes(&self, h: &str) -> Option<Vec<u8>> {
         fs::read(self.path(h)?).ok()

@@ -48,6 +48,7 @@ function parseLoc(s) {
       else if (k === "page") sel.page = v.includes("-") ? v.split("-").map(Number) : Number(v);
       else if (k === "xywh") sel.xywh = v.split(",").map(Number);
       else if (k === "sheet") sel.sheet = decodeURIComponent(v);
+      else if (k === "bytes") sel.bytes = v.split(",").map(Number);
       else sel[k] = v;
     }
     loc.select = sel;
@@ -64,6 +65,7 @@ function locString(loc) {
   if (sel.xywh) parts.push("xywh=" + sel.xywh.join(","));
   if (sel.sheet !== undefined) parts.push("sheet=" + encodeURIComponent(sel.sheet));
   if (sel.cells) parts.push("cells=" + sel.cells);
+  if (sel.bytes) parts.push("bytes=" + sel.bytes.join(","));
   if (parts.length) s += "#" + parts.join("&");
   return s;
 }
@@ -83,6 +85,15 @@ async function layerText(id) {
 }
 async function geometry(id) { return cache.geometry[id] ??= getJSON(`/api/layer/${id}/geometry`); }
 async function segments(id) { return cache.segments[id] ??= getJSON(`/api/layer/${id}/segments`); }
+// a chunk of an original's bytes, for hex mode (the original never changes, so chunks are kept)
+const HEX_CHUNK = 4096;
+cache.bytes = {};
+async function byteChunk(doc, i) {
+  const key = doc + ":" + i;
+  return cache.bytes[key] ??= getJSON(`/api/bytes/${encodeURIComponent(doc)}?start=${i * HEX_CHUNK}&end=${(i + 1) * HEX_CHUNK}`)
+    .then((r) => { const b = new Uint8Array(r.hex.length / 2); for (let j = 0; j < b.length; j++) b[j] = parseInt(r.hex.substr(2 * j, 2), 16); return b; })
+    .catch((e) => { delete cache.bytes[key]; throw e; });
+}
 // the entities index's detections for a layer (they appear once the index reaches it, so an empty answer isn't kept)
 async function detected(id) {
   const d = await (cache.detected[id] ??= getJSON(`/api/layer/${id}/detected`).catch(() => []));
@@ -469,7 +480,9 @@ class DocumentPane {
   modes() {
     const info = this.info, layer = this.currentLayer();
     if (!info) return [];
-    return [info.meta.kind === "spreadsheet" && layer && "grid", info.pages && "page", layer?.presentation && "flow", "text"].filter(Boolean);
+    // hex shows the original's bytes: for any document, and the only mode for one nothing reads
+    return [info.meta.kind === "spreadsheet" && layer && "grid", info.pages && "page", layer?.presentation && "flow",
+            (layer || info.size == null) && "text", info.size != null && "hex"].filter(Boolean);
   }
   currentLayer() { return this.info?.layers.find((l) => l.id === this.layer); }
   state() {
@@ -496,13 +509,13 @@ class DocumentPane {
     if (!layer && !fresh) layer = this.currentLayer();
     this.layer = (layer || info.layers.find((l) => l.primary) || info.layers[0] || {}).id || null;
     const paged = !!info.pages && this.currentLayer()?.geometry !== false;
-    const mode = opts.mode || (fresh ? null : this.mode) || this.modes()[0];
-    this.mode = this.modes().includes(mode) ? mode : "text";
-    if (fresh) this.grid = null;
+    const sel = loc.select || {};
+    const mode = opts.mode || (sel.bytes && "hex") || (fresh ? null : this.mode) || this.modes()[0];
+    this.mode = this.modes().includes(mode) ? mode : (this.modes()[0] || "text");
+    if (fresh) { this.grid = null; this.hex = null; }
     if (fresh) { this.selection = null; this.highlights = []; }
     await this.render();
-    const sel = loc.select || {};
-    if (sel.char || sel.cells || sel.page !== undefined) {
+    if (sel.char || sel.cells || sel.bytes || sel.page !== undefined) {
       this.flash(loc);
       await this.scrollTo(loc);
     }
@@ -530,10 +543,11 @@ class DocumentPane {
     this.renderStrip();
     this.body.replaceChildren();
     this.words = null;
-    if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer: nothing here reads its format. Ask Claude what it is; it can look at the bytes, and show you its own reading of them, marked as such.")); }
+    if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer: nothing here reads its format. " + (this.mode === "hex" ? "These are its bytes, exactly as given. " : "") + "Ask Claude what it is; it can look at the bytes, and show you its own reading of them, marked as such.")); }
     if (this.mode === "page") await this.renderPages();
     else if (this.mode === "flow") await this.renderFlow();
     else if (this.mode === "grid") await this.renderGrid();
+    else if (this.mode === "hex") await this.renderHex();
     else if (layer) await this.renderText();
     this.renderAnnotations();
     this.updateStatus();
@@ -624,6 +638,7 @@ class DocumentPane {
   }
   drawBoxes() {
     if (this.mode === "grid") return this.paintCells();
+    if (this.mode === "hex") return this.paintHex();
     if (this.mode === "page") {
       for (const p of this.pageEls || []) p.querySelectorAll(".box").forEach((b) => b.remove());
       const draw = (s, e, cls) => {
@@ -942,6 +957,156 @@ class DocumentPane {
     const sel = this.selection?.select?.cells;
     return `${name} · ${g.rows.length} rows` + (sel ? ` · ${sel} selected` : "");
   }
+
+  // hex mode: the original's bytes, sixteen to a row: offset, hex, and the
+  // printable ASCII among them (the display rule for bytes, DATA.md). Rows
+  // are drawn only around what's in view, from chunks fetched as needed, so
+  // a large file is never read whole. A drag selects bytes: a bytes=a,b
+  // locator, fingerprinted by whoever resolves it.
+  async renderHex() {
+    const size = this.info.size || 0, rows = Math.ceil(size / 16);
+    const ROW = 18, MAXH = 8e6;              // past MAXH px, scroll position maps to rows proportionally
+    const spacer = el("div", { class: "hex-spacer", style: `height:${Math.min(rows * ROW, MAXH) + 8}px` });
+    const win = el("div", { class: "hex-rows" });
+    spacer.append(win);
+    const box = el("div", { class: "hexmode" }, spacer);
+    const keep = this.hex?.doc === this.info.doc ? this.hex : null;
+    this.hex = { doc: this.info.doc, size, rows, ROW, H: Math.min(rows * ROW, MAXH), scaled: rows * ROW > MAXH, win, spacer, first: -1, count: 0,
+                 anchor: keep?.anchor ?? null, focus: keep?.focus ?? null, chunks: new Map() };
+    this.body.append(box);
+    if (!size) { win.append(el("p", { class: "hint" }, "The original is empty.")); return; }
+    this.setupByteSelect(win);
+    await this.drawHex();
+  }
+  // where the rows start in the pane's scrolling (below the hint, if any)
+  hexOrigin() { return this.hex.spacer.getBoundingClientRect().top - this.body.getBoundingClientRect().top + this.body.scrollTop; }
+  hexView() {
+    const x = this.hex, viewRows = Math.ceil(this.body.clientHeight / x.ROW) + 1;
+    const st = Math.max(0, this.body.scrollTop - this.hexOrigin());
+    let top;
+    if (!x.scaled) top = Math.floor(st / x.ROW);
+    else top = Math.round(st / Math.max(1, x.H - this.body.clientHeight) * Math.max(0, x.rows - viewRows + 1));
+    return { top: Math.max(0, Math.min(top, x.rows - 1)), viewRows, st };
+  }
+  async drawHex() {
+    const x = this.hex;
+    if (!x || !x.size) return;
+    const { top, viewRows, st } = this.hexView();
+    const pad = x.scaled ? 0 : 32;
+    const first = Math.max(0, top - pad), count = Math.min(x.rows - first, viewRows + 2 * pad);
+    // in a scaled view the rows ride along with the scroll position; otherwise each row has its place
+    x.win.style.top = (x.scaled ? st - (top - first) * x.ROW : first * x.ROW) + "px";
+    if (!x.scaled && first === x.first && count === x.count) return;
+    if (x.scaled && first === x.first && count === x.count && x.win.dataset.st === String(st)) return;
+    x.first = first; x.count = count; x.win.dataset.st = String(st);
+    const a = first * 16, b = Math.min(x.size, (first + count) * 16);
+    const need = [];
+    for (let c = Math.floor(a / HEX_CHUNK); c * HEX_CHUNK < b; c++) need.push(c);
+    let got;
+    try { got = await Promise.all(need.map((c) => byteChunk(x.doc, c))); }
+    catch (e) { x.win.replaceChildren(el("p", { class: "hint" }, "Can't read the bytes: " + e.message)); return; }
+    if (this.hex !== x || x.first !== first || x.count !== count) return;      // scrolled on meanwhile
+    const byteAt = (o) => got[Math.floor(o / HEX_CHUNK) - need[0]]?.[o % HEX_CHUNK];
+    const frag = document.createDocumentFragment();
+    const width = Math.max(8, (x.size - 1).toString(16).length);
+    for (let r = first; r < first + count; r++) {
+      const row = el("div", { class: "hx-row" }, el("span", { class: "hx-off" }, (r * 16).toString(16).padStart(width, "0")));
+      const hex = el("span", { class: "hx-hex" }), asc = el("span", { class: "hx-asc" });
+      for (let i = 0; i < 16; i++) {
+        const o = r * 16 + i;
+        if (o >= x.size) break;
+        const v = byteAt(o);
+        hex.append(el("span", { "data-b": o, class: i === 8 ? "gap" : "" }, v.toString(16).padStart(2, "0")));
+        asc.append(el("span", { "data-b": o }, v >= 0x20 && v < 0x7f ? String.fromCharCode(v) : "."));
+      }
+      row.append(hex, asc);
+      frag.append(row);
+    }
+    x.win.replaceChildren(frag);
+    this.paintHex();
+    this.updateStatus();
+  }
+  // the selected range, [a, b), or null
+  byteSel() {
+    const x = this.hex;
+    if (!x || x.anchor === null || x.focus === null) return null;
+    return [Math.min(x.anchor, x.focus), Math.max(x.anchor, x.focus) + 1];
+  }
+  paintHex() {
+    const x = this.hex;
+    if (!x) return;
+    const ranges = [...this.highlights.filter((h) => h.bytes).map((h) => [h.bytes, "hl"]),
+                    ...this.marks.filter((m) => m.doc === x.doc && m.select?.bytes).map((m) => [m.select.bytes, "mark"])];
+    const sel = this.byteSel();
+    if (sel) ranges.push([sel, "sel"]);
+    for (const c of x.win.querySelectorAll("[data-b]")) {
+      const o = Number(c.dataset.b);
+      c.classList.remove("hl", "mark", "sel");
+      for (const [[a, b], cls] of ranges) if (a <= o && o < b) c.classList.add(cls);
+    }
+  }
+  setupByteSelect(win) {
+    const x = this.hex;
+    const at = (ev) => { const t = ev.target.closest("[data-b]"); return t ? Number(t.dataset.b) : null; };
+    let dragging = false;
+    win.addEventListener("mousedown", (ev) => {
+      const o = at(ev);
+      if (o === null || ev.button !== 0) return;
+      ev.preventDefault();
+      focus(this.id);
+      if (ev.shiftKey && x.anchor !== null) x.focus = o;
+      else x.anchor = x.focus = o;
+      dragging = true;
+      this.paintHex();
+    });
+    win.addEventListener("mouseover", (ev) => {
+      if (!dragging) return;
+      const o = at(ev);
+      if (o !== null && o !== x.focus) { x.focus = o; this.paintHex(); }
+    });
+    const up = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.removeEventListener("mouseup", up);
+      if (this.hex !== x) return;
+      const r = this.byteSel();
+      this.selection = r && { doc: this.info.doc, select: { bytes: r } };
+      this.updateStatus();
+      changed();
+    };
+    win.addEventListener("mousedown", (ev) => { if (at(ev) !== null && ev.button === 0) document.addEventListener("mouseup", up); });
+  }
+  scrollToByte(o) {
+    const x = this.hex;
+    if (!x) return;
+    const r = Math.floor(o / 16), viewH = this.body.clientHeight, origin = this.hexOrigin();
+    if (!x.scaled) this.body.scrollTop = Math.max(0, origin + r * x.ROW - viewH / 3);
+    else {
+      const viewRows = Math.ceil(viewH / x.ROW) + 1;
+      this.body.scrollTop = origin + Math.max(0, r - 2) / Math.max(1, x.rows - viewRows + 1) * Math.max(1, x.H - viewH);
+    }
+    return this.drawHex();
+  }
+  hexStatus() {
+    const x = this.hex;
+    if (!x.size) return "0 bytes";
+    const { top, viewRows } = this.hexView();
+    const a = top * 16, b = Math.min(x.size, (top + viewRows) * 16);
+    this.visible = { bytes: [a, b] };
+    const sel = this.byteSel();
+    return `0x${a.toString(16)} · ${x.size.toLocaleString()} bytes` + (sel ? ` · ${sel[1] - sel[0]} selected (0x${sel[0].toString(16)}–0x${sel[1].toString(16)})` : "");
+  }
+  // the selected bytes as hex, for copying
+  async byteSelText() {
+    const r = this.byteSel();
+    if (!r || r[1] - r[0] > 1 << 20) return null;
+    const out = [];
+    for (let c = Math.floor(r[0] / HEX_CHUNK); c * HEX_CHUNK < r[1]; c++) {
+      const b = await byteChunk(this.hex.doc, c);
+      for (let i = 0; i < b.length; i++) { const o = c * HEX_CHUNK + i; if (r[0] <= o && o < r[1]) out.push(b[i].toString(16).padStart(2, "0")); }
+    }
+    return out.join(" ");
+  }
   textRoot() {
     if (this.mode === "flow") return this.frame?.contentDocument?.body;
     if (this.mode === "text") return $(".textmode", this.body);
@@ -966,6 +1131,7 @@ class DocumentPane {
     document.getSelection().removeAllRanges();
     this.body.querySelectorAll(".region").forEach((r) => r.remove());
     if (this.grid) { this.grid.anchor = this.grid.focus = null; this.paintCells(); }
+    if (this.hex) { this.hex.anchor = this.hex.focus = null; this.paintHex(); }
     changed();
   }
 
@@ -973,6 +1139,7 @@ class DocumentPane {
   async scrollTo(loc) {
     const sel = loc.select || {};
     if (this.mode === "grid") return this.scrollToCells(sel);
+    if (this.mode === "hex") return sel.bytes && this.scrollToByte(sel.bytes[0]);
     if (this.mode === "page") {
       let n = Array.isArray(sel.page) ? sel.page[0] : sel.page;
       if (sel.char) {
@@ -996,7 +1163,7 @@ class DocumentPane {
   }
   flash(loc) {
     const sel = parseLoc(loc).select || {};
-    const h = { loc: locString(loc), label: "opened", range: sel.char, cells: sel.cells && { sheet: sel.sheet, cells: sel.cells }, temp: true };
+    const h = { loc: locString(loc), label: "opened", range: sel.char, bytes: sel.bytes, cells: sel.cells && { sheet: sel.sheet, cells: sel.cells }, temp: true };
     this.highlights.push(h);
     this.drawBoxes();
     setTimeout(() => { this.highlights = this.highlights.filter((x) => x !== h); this.drawBoxes(); }, 1800);
@@ -1005,13 +1172,14 @@ class DocumentPane {
     const l = parseLoc(loc);
     if (l.doc !== this.info?.doc || (l.layer && l.layer !== this.layer)) await this.open(l, { quiet: true });
     const sel = l.select || {};
-    this.highlights.push({ loc: locString(l), label, range: sel.char, region: sel.xywh && { page: sel.page, xywh: sel.xywh },
+    this.highlights.push({ loc: locString(l), label, range: sel.char, bytes: sel.bytes, region: sel.xywh && { page: sel.page, xywh: sel.xywh },
                            cells: sel.cells && { sheet: sel.sheet, cells: sel.cells } });
     this.drawBoxes();
     await this.scrollTo(l);
   }
 
   onScroll() {
+    if (this.mode === "hex" && this.hex) requestAnimationFrame(() => this.drawHex());
     if (entityCard.pane === this) entityCard.hide();
     clearTimeout(this.scrollTimer);
     this.scrollTimer = setTimeout(() => { this.updateStatus(); changed(); }, 150);
@@ -1034,6 +1202,8 @@ class DocumentPane {
       }
     } else if (this.mode === "grid" && this.grid) {
       text = this.gridStatus();
+    } else if (this.mode === "hex" && this.hex) {
+      text = this.hexStatus();
     } else if (this.mode === "text") {
       const spans = [...this.body.querySelectorAll("[data-s]")];
       const top = this.body.getBoundingClientRect().top, bottom = top + this.body.clientHeight;
@@ -2128,6 +2298,13 @@ document.addEventListener("keydown", onKey);
 // Copying cells in grid mode gives their text, tab-separated, as a spreadsheet would.
 document.addEventListener("copy", (ev) => {
   const p = focusedPane();
+  // in hex mode, the selected bytes' hex (the copy itself has to be made later: the bytes may need fetching)
+  if (p?.mode === "hex" && p.byteSel()) {
+    ev.preventDefault();
+    p.byteSelText().then((t) => t ? navigator.clipboard.writeText(t).then(() => toast("Copied the bytes as hex"), () => toast("Couldn't copy"))
+                                  : toast("Too many bytes to copy; ask Claude for raw hex"));
+    return;
+  }
   const x = p?.mode === "grid" && p.rect();
   if (!x) return;
   ev.clipboardData.setData("text/plain", p.rectText(x));
