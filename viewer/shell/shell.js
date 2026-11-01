@@ -93,7 +93,7 @@ async function detected(id) {
 // -- state -------------------------------------------------------------------------------
 
 const adhoc = {
-  panes: [], focused: null, layout: "single", user: "user", history: [], nextId: 1, window: "w1",
+  panes: [], focused: null, user: "user", history: [], nextId: 1, window: "w1",
   elsewhereMap: {},       // pane ID -> {window, kind}, for every window's panes
   annotations: { definitions: [], tags: [], notes: [], entities: [] }, annLogSize: -1,
   // the entity layer: "all" (known and suggested), "known", or "off"; candidates: detected key -> {docs, …}
@@ -132,33 +132,204 @@ function addHistory(loc, source) {
 function snapshot() {
   return {
     running: true, focused: adhoc.focused,
-    windows: [{ id: adhoc.window, layout: adhoc.layout, panes: adhoc.panes.map((p) => p.id) }],
+    windows: [{ id: adhoc.window, layout: adhoc.tile || "tabs", tree: treeSpec(), panes: leaves() }],
     panes: adhoc.panes.map((p) => p.state()),
   };
 }
 
 // -- layout ---------------------------------------------------------------------------------
+// A window's panes are arranged in a tree. Its root is a row of tabs; a tab
+// holds a pane or a split, and a split puts a view beside the views it led to
+// (a page and the documents its references opened), which are themselves
+// tabs. Unrelated views get tabs of their own, so columns are spent only on
+// views that are read together:
+//
+//   tabs(split(page, tabs(doc, doc)), split(page, tabs(doc)), list)
+//
+// Panes are never moved in the DOM (an iframe moved there reloads): they stay
+// in #panes, positioned over the slots the tree is drawn with.
+
+const tabsNode = (children = [], active = 0) => ({ type: "tabs", children, active });
+const splitNode = (children, dir = "v") => ({ type: "split", dir, children, sizes: children.map(() => 1) });
+const leafNode = (id) => ({ type: "pane", id });
+adhoc.tree = tabsNode();
+adhoc.tile = null;          // null: the root's tabs one at a time; or "split-v", "split-h", "grid" to tile them
+adhoc.focusStack = [];      // most recently focused last, for where focus goes when a pane closes
+
+// The nodes from the root down to a pane's leaf, or null.
+function pathTo(id, node = adhoc.tree, path = []) {
+  if (node.type === "pane") return node.id === id ? [...path, node] : null;
+  for (const c of node.children) { const r = pathTo(id, c, [...path, node]); if (r) return r; }
+  return null;
+}
+function leaves(node = adhoc.tree) { return node.type === "pane" ? [node.id] : node.children.flatMap((c) => leaves(c)); }
+function addTab(group, node) { group.children.push(node); group.active = group.children.length - 1; }
+function replaceChild(parent, old, node) {
+  parent.children[parent.children.indexOf(old)] = node;
+}
+
+// A new, unrelated view: a tab of its own.
+function placeTop(id) { addTab(adhoc.tree, leafNode(id)); }
+// A view opened from another (a reference in a page, a list's item): beside it,
+// in the group of views it has opened, as a new tab there.
+function placeBeside(srcId, id) {
+  const path = pathTo(srcId);
+  if (!path || path.length < 2) return placeTop(id);
+  const leaf = path[path.length - 1], parent = path[path.length - 2];
+  if (parent.type === "split") {
+    const next = parent.children[parent.children.indexOf(leaf) + 1];
+    if (next?.type === "tabs") return addTab(next, leafNode(id));
+    if (next) return replaceChild(parent, next, tabsNode([next, leafNode(id)], 1));
+  }
+  // a view that is itself beside the one that opened it: its neighbors take the
+  // new one, so columns don't multiply
+  const grand = path[path.length - 3];
+  if (parent.type === "tabs" && grand?.type === "split" && grand.children.indexOf(parent) > 0) return addTab(parent, leafNode(id));
+  replaceChild(parent, leaf, splitNode([leaf, tabsNode([leafNode(id)])]));
+}
+// Take a pane's leaf out, folding away groups and splits it leaves empty or alone.
+function removeLeaf(id) {
+  const path = pathTo(id);
+  if (!path) return;
+  for (let i = path.length - 1; i > 0; i--) {
+    const node = path[i], parent = path[i - 1], k = parent.children.indexOf(node);
+    const gone = node.type === "pane" || node.children.length === 0;
+    if (gone) {
+      parent.children.splice(k, 1);
+      if (parent.sizes) parent.sizes.splice(k, 1);
+      if (parent.type === "tabs" && (parent.active > k || parent.active === parent.children.length)) parent.active = Math.max(0, parent.active - 1);
+      continue;
+    }
+    if (node.type === "split" && node.children.length === 1) {
+      const only = node.children[0];
+      // tabs left alone in a tab: its tabs join the outer ones
+      if (parent.type === "tabs" && only.type === "tabs") {
+        parent.children.splice(k, 1, ...only.children);
+        if (parent.active === k) parent.active = k + only.active;
+        else if (parent.active > k) parent.active += only.children.length - 1;
+      } else parent.children[k] = only;
+    }
+    break;
+  }
+}
+
+function tabLabel(node) {
+  if (node.type === "pane") {
+    const p = pane(node.id);
+    if (!p) return node.id;
+    return p.kind === "home" ? "⌂ Overview" : `${p.id} · ${p.title()}`;
+  }
+  const ids = leaves(node);
+  const first = pane(ids[0]);
+  return (first?.kind === "home" ? "⌂ Overview" : first ? first.title() : ids[0]) + (ids.length > 1 ? `  +${ids.length - 1}` : "");
+}
+function tabTitle(node) {
+  return leaves(node).map((id) => { const p = pane(id); return p ? `${p.id} · ${p.title()}` : id; }).join("\n");
+}
 
 function renderTabs() {
-  const tabs = $("#tabs");
-  const home = adhoc.panes.find((p) => p.kind === "home");
-  tabs.replaceChildren(
-    el("button", { class: "home-tab" + (home && home.id === adhoc.focused ? " focused" : ""), title: "Overview: what this matter holds (H)", onclick: openHome }, "⌂ Overview"),
-    ...adhoc.panes.filter((p) => p !== home).map((p) =>
-      el("button", { class: p.id === adhoc.focused ? "focused" : "", title: p.title(), onclick: () => focus(p.id) }, `${p.id} · ${p.title()}`)));
-  $("#panes").className = adhoc.layout;
+  const slots = new Map();
+  const focusedPath = adhoc.focused ? pathTo(adhoc.focused) || [] : [];
+  const strip = (node, into) => {
+    node.active = Math.max(0, Math.min(node.active, node.children.length - 1));
+    into.replaceChildren(...node.children.map((c, i) => {
+      const home = c.type === "pane" && pane(c.id)?.kind === "home";
+      const cls = ["lt-tab", i === node.active ? "on" : "", focusedPath.includes(c) ? "focused" : "", home ? "home-tab" : ""].filter(Boolean).join(" ");
+      return el("div", { class: cls, role: "tab", title: home ? "Overview: what this matter holds (H)" : tabTitle(c),
+                         onclick: () => focus(adhoc.focusStack.findLast((id) => leaves(c).includes(id)) || leaves(c)[0]) },
+        el("span", { class: "label" }, tabLabel(c)),
+        home ? "" : el("span", { class: "x", title: c.type === "pane" ? "Close" : "Close these panes",
+                                 onclick: (ev) => { ev.stopPropagation(); for (const id of leaves(c)) closePane(id); } }, "×"));
+    }));
+    return into;
+  };
+  const build = (node, top = false) => {
+    if (node.type === "pane") { const s = el("div", { class: "lt-slot" }); slots.set(node.id, s); return s; }
+    if (node.type === "split") {
+      const box = el("div", { class: "lt-split " + node.dir });
+      node.children.forEach((c, i) => {
+        if (i) box.append(el("div", { class: "lt-splitter", onmousedown: (ev) => dragSplitter(ev, node, i, box) }));
+        const cell = build(c);
+        cell.style.flex = `${node.sizes[i] ?? 1} 1 0`;
+        box.append(cell);
+      });
+      return box;
+    }
+    const tiled = top && adhoc.tile;
+    if (top) strip(node, $("#tabs"));
+    const body = el("div", { class: "lt-body" + (tiled ? " " + tiled : "") });
+    node.children.forEach((c, i) => { if (tiled || i === node.active) body.append(build(c)); });
+    if (top) return body;
+    // a group of one shows no tab strip: the pane's own header says what it is
+    return el("div", { class: "lt-tabs" }, ...(node.children.length > 1 ? [strip(node, el("div", { class: "lt-strip" }))] : []), body);
+  };
+  $("#layout").replaceChildren(build(adhoc.tree, true));
+  adhoc.slots = slots;
   for (const p of adhoc.panes) p.root.classList.toggle("focused", p.id === adhoc.focused);
+  positionPanes();
+}
+// Each pane over its slot; panes in tabs not showing are hidden.
+function positionPanes() {
+  const origin = $("#panes").getBoundingClientRect();
+  for (const p of adhoc.panes) {
+    const s = adhoc.slots?.get(p.id);
+    if (!s) { p.root.style.display = "none"; continue; }
+    const r = s.getBoundingClientRect();
+    Object.assign(p.root.style, { display: "", left: `${r.left - origin.left}px`, top: `${r.top - origin.top}px`,
+                                  width: `${r.width}px`, height: `${r.height}px` });
+  }
+}
+new ResizeObserver(() => positionPanes()).observe($("#panes"));
+function dragSplitter(ev, node, i, box) {
+  ev.preventDefault();
+  const cells = [...box.children].filter((c) => !c.classList.contains("lt-splitter"));
+  const a = cells[i - 1], b = cells[i], horiz = node.dir === "v";
+  const size = (e) => (horiz ? e.getBoundingClientRect().width : e.getBoundingClientRect().height);
+  const pairPx = size(a) + size(b), pairW = node.sizes[i - 1] + node.sizes[i], startA = size(a);
+  const start = horiz ? ev.clientX : ev.clientY;
+  document.body.classList.add("dragging", horiz ? "drag-v" : "drag-h");
+  const move = (e) => {
+    const aPx = Math.max(120, Math.min(pairPx - 120, startA + (horiz ? e.clientX : e.clientY) - start));
+    node.sizes[i - 1] = pairW * aPx / pairPx; node.sizes[i] = pairW - node.sizes[i - 1];
+    a.style.flex = `${node.sizes[i - 1]} 1 0`; b.style.flex = `${node.sizes[i]} 1 0`;
+    positionPanes();
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up);
+    document.body.classList.remove("dragging", "drag-v", "drag-h");
+    changed();
+  };
+  document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+}
+// The tree for `view state`: a pane ID, {tabs, active} or {split, sizes}.
+function treeSpec(node = adhoc.tree) {
+  if (node.type === "pane") return node.id;
+  if (node.type === "tabs") return { tabs: node.children.map((c) => treeSpec(c)), active: node.active };
+  return { split: node.dir, children: node.children.map((c) => treeSpec(c)), sizes: node.sizes.map((s) => Math.round(s / node.sizes.reduce((x, y) => x + y, 0) * 100) / 100) };
+}
+
+// Show a pane: every group on the way shows the tab that leads to it.
+function reveal(id, render = true) {
+  const path = pathTo(id);
+  if (!path) return false;
+  for (let i = 0; i < path.length - 1; i++) if (path[i].type === "tabs") path[i].active = path[i].children.indexOf(path[i + 1]);
+  if (render) renderTabs();
+  return true;
 }
 function focus(id) {
-  if (!pane(id)) return;
+  if (!pane(id) || !reveal(id, false)) return;
   adhoc.focused = id;
+  adhoc.focusStack = [...adhoc.focusStack.filter((x) => x !== id), id];
   renderTabs();
   pane(id).refresh?.();
 }
-function addPane(p, focusIt = true) {
+// Add a pane: by default as a tab of its own; {beside: id} puts it with the
+// views that pane opened.
+function addPane(p, focusIt = true, where = {}) {
   adhoc.panes.push(p);
   $("#panes").append(p.root);
   p.root.addEventListener("mousedown", () => focus(p.id), true);
+  if (where.beside && pathTo(where.beside)) placeBeside(where.beside, p.id); else placeTop(p.id);
   if (focusIt || !adhoc.focused) focus(p.id); else renderTabs();
   return p;
 }
@@ -168,9 +339,15 @@ function closePane(id, moving = false) {
   p.root.remove();
   clearInterval(p.timer);
   adhoc.panes = adhoc.panes.filter((x) => x !== p);
+  removeLeaf(id);
+  adhoc.focusStack = adhoc.focusStack.filter((x) => x !== id);
   if (!moving) for (const q of adhoc.panes) if (q.link === id) q.link = null;
-  if (adhoc.focused === id) adhoc.focused = adhoc.panes.length ? adhoc.panes[adhoc.panes.length - 1].id : null;
-  renderTabs();
+  if (adhoc.focused === id) {
+    adhoc.focused = null;
+    const next = adhoc.focusStack[adhoc.focusStack.length - 1] || leaves()[0];
+    if (next) return focus(next);
+  }
+  if (adhoc.focused) reveal(adhoc.focused); else renderTabs();
 }
 
 // -- selections in any DOM that marks text with offsets -----------------------------------
@@ -1112,6 +1289,7 @@ class WebPane {
     this.selected = items.filter((x) => x.classList.contains("adhoc-selected")).map((x) => x.dataset.locator);
     item.scrollIntoView({ block: "nearest" });
     if (paneExists(this.link)) {
+      if (pane(this.link)) reveal(this.link);
       const loc = item.dataset.locator;
       const seq = this.sequence || items.map((x) => x.dataset.locator);
       const pos = seq.indexOf(loc);
@@ -1354,13 +1532,21 @@ function openHome() {
   return h;
 }
 
+// Open a locator from a pane. A list's preview follows it (its linked pane);
+// anything else opens beside the pane, as a new tab among the documents it has
+// opened, or in the tab already showing that document.
 function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
   if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, { source: "pane" });
   let target = !forceNew && p.link && pane(p.link);
-  if (!target) {
-    target = adhoc.panes.find((x) => x.kind === "document" && x !== p && x.id !== adhoc.focused) || null;
-    if (!target || forceNew) target = addPane(new DocumentPane(newPaneId()), true);
+  if (!target && !forceNew) {
+    let doc = null; try { doc = parseLoc(loc).doc; } catch {}
+    const path = pathTo(p.id) || [];
+    const parent = path[path.length - 2];
+    const beside = parent?.type === "split" ? parent.children[parent.children.indexOf(path[path.length - 1]) + 1] : null;
+    target = beside ? leaves(beside).map(pane).find((x) => x?.kind === "document" && x.info?.doc === doc) : null;
   }
+  if (!target) target = addPane(new DocumentPane(newPaneId()), true, { beside: p.id });
+  reveal(target.id);
   target.open(loc, { source: "pane" });
 }
 
@@ -1696,7 +1882,7 @@ function onKey(ev) {
   const k = ev.key;
   const doc = p?.kind === "document" ? p : null, web = p && p.kind !== "document" && p.kind !== "home" ? p : null;
   let handled = true;
-  if (k === "Tab") { const i = adhoc.panes.indexOf(p); const n = adhoc.panes[(i + (ev.shiftKey ? -1 : 1) + adhoc.panes.length) % adhoc.panes.length]; if (n) focus(n.id); }
+  if (k === "Tab") { const ids = leaves(), i = ids.indexOf(p?.id); const n = ids[(i + (ev.shiftKey ? -1 : 1) + ids.length) % ids.length]; if (n) focus(n); }
   else if ((k === "j" || k === "ArrowDown") && web) web.move(1);
   else if ((k === "k" || k === "ArrowUp") && web) web.move(-1);
   else if (k === "Enter" && web && web.cursor >= 0) openFromPane(web, web.items()[web.cursor].dataset.locator, true, true);
@@ -1807,9 +1993,8 @@ const commands = {
     const p = addPane(new WebPane(newPaneId(), c.kind || "custom", c.content, c.title), true);
     p.sequence = c.sequence || null;
     if (c.preview_new) {
-      const d = addPane(new DocumentPane(newPaneId()), false);
+      const d = addPane(new DocumentPane(newPaneId()), false, { beside: p.id });
       p.link = d.id;
-      if (adhoc.layout === "single") adhoc.layout = "split-v";
     } else if (c.link) {
       if (paneKind(c.link) !== "document") throw new Error("can only link to a document pane");
       p.link = c.link;
@@ -1850,9 +2035,10 @@ const commands = {
     renderTabs();
     return { window: adhoc.window, pane: p.id };
   },
+  // how the window's tabs are shown: one at a time ("tabs"; "single" is the same), or all tiled
   async layout(c) {
-    if (!["single", "split-v", "split-h", "grid"].includes(c.layout)) throw new Error("layout is single, split-v, split-h or grid");
-    adhoc.layout = c.layout; renderTabs(); return {};
+    if (!["tabs", "single", "split-v", "split-h", "grid"].includes(c.layout)) throw new Error("layout is tabs, split-v, split-h or grid");
+    adhoc.tile = c.layout === "tabs" || c.layout === "single" ? null : c.layout; renderTabs(); return {};
   },
   async state() { return snapshot(); },
   async selection() {
