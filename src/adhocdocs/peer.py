@@ -365,6 +365,8 @@ class _Handler(BaseHTTPRequestHandler):
             pass        # the client went away (or wasn't who it should be): nothing to answer
 
     def setup(self):
+        # Many small requests: without this, each waits on a delayed ACK (~40 ms)
+        self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         super().setup()
         try:
             self.connection.do_handshake()
@@ -602,6 +604,7 @@ class _Connection(http.client.HTTPSConnection):
 
     def connect(self):
         sock = socket.create_connection((self.host, self.port), self.timeout)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         tls = self.ctx.wrap_socket(sock, server_hostname=self.sni)
         got, _ = cert_origin(tls.getpeercert(binary_form=True))
         if got != self.origin:
