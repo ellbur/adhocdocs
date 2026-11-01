@@ -93,7 +93,7 @@ def test_exhibits_reserve_too(two, tmp_path):
     assert r["first"] == "Exhibit 3"
 
 
-def test_through_a_hub_two_installations_dont_clash(tmp_path):
+def test_through_a_hub_two_installations_dont_clash(tmp_path, monkeypatch):
     import socket
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -108,8 +108,10 @@ def test_through_a_hub_two_installations_dont_clash(tmp_path):
         hubmod.push(Matter(a.root), h.enroll("alice")["code"], ALICE)
         invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "b")
         b = Matter(tmp_path / "b")
+        monkeypatch.setenv("ADHOC_USER", "alice")
         ra = produce.produce(Matter(a.root), a_list(a, tmp_path, "pa", docs[:1]), "vol-a", "HFS")
         # b hasn't synced since a's production; reserving syncs with the hub first
+        monkeypatch.setenv("ADHOC_USER", "bob")
         rb = produce.produce(b, a_list(b, tmp_path, "pb", docs[1:]), "vol-b", "HFS")
         assert int(rb["begin"][3:]) == int(ra["end"][3:]) + 1
         assert sync.conflicts(Matter(b.root)) == []

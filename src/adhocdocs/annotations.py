@@ -90,11 +90,13 @@ class Annotations:
         self.replaced: dict[str, list] = {}      # event ID -> the events it replays as
         self.last_id: str | None = None
         self.hotkeys: dict[str, str] = {}        # tag -> key, this installation's own (hotkeys())
+        self.pool = None                          # who writes for whom (adhocdocs.pool), once there's a pool
         self.reservations: dict[str, dict] = {}  # reserve event ID -> number range (adhocdocs.numbers)
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
         a = cls()
+        a.pool = _pool(m)
         for ev in m.annotation_log.read():
             a.replay(ev)
         a.hotkeys = hotkeys(m)
@@ -122,6 +124,9 @@ class Annotations:
         replays as, for the viewer: see :func:`save_replay`)."""
         self.last_id = ev["id"]
         try:
+            if self.pool is not None and not self.pool.writes_for(ev.get("origin"), ev.get("author")):
+                raise Refused(f"{ev.get('author')} doesn't write from that installation ({ev.get('origin')}); "
+                              "another installation is theirs")
             out = self._reconcile(ev)
             for e in out:
                 self.check(e, replaying=True)
@@ -500,6 +505,11 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
     if req.get("requested_by"):
         ev["requested_by"] = str(req["requested_by"])
 
+    from . import pool as poolmod
+    try:
+        poolmod.claim(m, author)
+    except poolmod.PoolError as e:
+        raise Refused(str(e))
     with _locked(m):
         ann = Annotations.load(m)
         if ev.get("entity") in ann.entity_alias:     # merged with one added on another installation
@@ -572,6 +582,14 @@ def save_hotkeys(m: Matter, keys: dict):
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps({"v": 1, "keys": keys}, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     tmp.replace(p)
+
+
+def _pool(m: Matter):
+    """The pool, if the matter has one (who writes for whom)."""
+    if not m.config.get("founder"):
+        return None
+    from .pool import Pool
+    return Pool.load(m)
 
 
 def replay_path(m: Matter):

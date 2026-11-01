@@ -145,3 +145,22 @@ def test_a_restarted_hub_serves_what_it_holds(a, tmp_path):
         assert picture(h2.matters()[0]) == picture(a)
     finally:
         srv.stop()
+
+
+def test_a_same_person_invitation_through_the_hub(a, hub, tmp_path):
+    """The hub accepts it, though it isn't Alice: her own installation vouched
+    for whoever accepts that invitation when she made it."""
+    h, srv, addr = hub
+    hubmod.push(a, h.enroll("alice")["code"], ALICE)
+    inv = invite.create(Matter(a.root), ALICE, same_person=True)
+    assert inv["through"] == "the hub"
+    invite.join(inv["code"], tmp_path / "desk")
+    desk = Matter(tmp_path / "desk")
+    annotations.write(desk, ALICE, {"op": "define-tag", "tag": "from-the-desk"})
+    peer.sync_all(desk)
+    peer.sync_all(Matter(a.root))
+    assert "from-the-desk" in annotations.Annotations.load(Matter(a.root)).definitions
+    # an ordinary invitation doesn't make the joiner Alice
+    invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "bob")
+    with pytest.raises(annotations.Refused):
+        annotations.write(Matter(tmp_path / "bob"), ALICE, {"op": "define-tag", "tag": "nope"})

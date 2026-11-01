@@ -209,11 +209,16 @@ every installation that has the same events reaches the same state.
 The annotation rules (Claude can't change a person's work; only a person
 makes privilege calls) still hold, for every person in the pool.
 
-- **People are members too.** *Not built yet:* the pool log would bind each
-  person (`user:<id>`, with a display name) to the installations they use,
-  and an event authored `user:alice` would count only from an installation
-  bound to Alice. Until then, a member installation is trusted to say which
-  person it writes for.
+- **People belong to installations** ([`pool.py`](src/adhocdocs/pool.py)).
+  An event authored `user:alice` (a tag, a note, a publication) counts only
+  if it comes from an installation that writes for Alice; from anywhere
+  else it has no effect, and is reported. The first installation to write
+  as a person claims them (founding a pool claims everyone who wrote there
+  before). After that, only one of their installations can add another:
+  `adhoc sync vouch <origin> --user alice`, or an invitation made with
+  `--same-person` (which works through a hub too: the vouch is made with
+  the invitation). So a member can't write as someone who works elsewhere.
+  A person no installation has claimed is anyone's to write as.
 - **Claude's events say where they came from:** `claude`, with the origin
   and, as now, `requested_by`. Claude on Bob's machine can't untag Alice's
   tag, just as it can't untag Bob's.
@@ -398,6 +403,7 @@ On the host (the user's; Claude can't run them in a session):
 | `adhoc sync push <hub code> --user me` | put the matter on a hub |
 | `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |
 | `adhoc sync remove <origin> --user me` | take a member out of the pool |
+| `adhoc sync vouch <origin> --user me` | that member writes for me too (my other machine) |
 | `adhoc publish <path> --user me`, `adhoc retire <name> --user me` | share work product as the user |
 | `adhoc hub init \| enroll \| revoke \| serve \| matters` | run a hub |
 

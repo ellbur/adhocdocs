@@ -360,7 +360,12 @@ class Matter:
 
     @property
     def config(self) -> dict:
-        return read_toml(self.root / "matter.toml")
+        cfg = read_toml(self.root / "matter.toml")
+        if not cfg and os.environ.get("ADHOC_MATTER_ID"):
+            # in a session, matter.toml isn't mounted: the launcher passes what it says
+            cfg = {"id": os.environ["ADHOC_MATTER_ID"],
+                   **({"founder": os.environ["ADHOC_POOL_FOUNDER"]} if os.environ.get("ADHOC_POOL_FOUNDER") else {})}
+        return cfg
 
     @property
     def id(self) -> str | None:

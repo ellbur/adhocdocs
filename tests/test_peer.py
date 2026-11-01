@@ -262,3 +262,60 @@ def test_a_session_sees_the_pool_but_cant_change_it(a, tmp_path, monkeypatch):
     assert f"{a.root}/pool:/matter/pool:ro" in args and f"{a.root}/work:/matter/work:ro" in args
     assert f"ADHOC_POOL_FOUNDER={a.origin}" in args
     assert "/sync" not in args.replace("/matter/", "")         # keys and invitations stay on the host
+
+
+# -- people and installations ---------------------------------------------------------------------
+
+
+def test_a_member_cant_write_as_someone_who_works_elsewhere(a, served, tmp_path):
+    _, addr = served
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "b")
+    b = Matter(tmp_path / "b")
+    # alice wrote on a before the pool: founding made her a's
+    assert poolmod.Pool.load(Matter(a.root)).users[ALICE] == [a.origin]
+    with pytest.raises(annotations.Refused, match="another installation"):
+        annotations.write(b, ALICE, {"op": "define-tag", "tag": "mine"})
+    # Bob, unclaimed until now, is claimed by the first installation he writes on
+    annotations.write(b, BOB, {"op": "define-tag", "tag": "bobs"})
+    peer.sync_with(b, addr, a.origin)
+    assert poolmod.Pool.load(Matter(a.root)).users[BOB] == [b.origin]
+    with pytest.raises(annotations.Refused):
+        annotations.write(Matter(a.root), BOB, {"op": "define-tag", "tag": "not-bobs"})
+
+
+def test_events_written_as_someone_else_dont_count(a, served, tmp_path):
+    """b's code is modified to write as Alice anyway: on replay it has no effect."""
+    _, addr = served
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "b")
+    b = Matter(tmp_path / "b")
+    b.annotation_log.append(op="tag", tag="hot", target={"doc": a.doc}, author=ALICE)      # around the write path
+    b.annotation_log.append(op="define-tag", tag="forged", author=ALICE)
+    (b.workspace / "memo.md").write_text("# Not Alice's\n", encoding="utf-8")
+    from adhocdocs import work as workmod
+    b.work_log.append(op="publish", name="memo.md", publication=workmod._store(b).put_object(
+        {"type": "publication", "v": 1, "files": {"memo.md": workmod._store(b).put_bytes(b"# Not Alice's\n")}}),
+        revises=[], kind="page", author=ALICE)
+    peer.sync_with(b, addr, a.origin)
+    ann = annotations.Annotations.load(Matter(a.root))
+    assert "forged" not in ann.definitions
+    assert [c["reason"] for c in ann.conflicts if "doesn't write from" in c["reason"]]
+    assert not (a.root / "work/memo.md").exists()
+
+
+def test_vouching_for_another_installation_of_the_same_person(a, served, tmp_path):
+    _, addr = served
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "desk")
+    desk = Matter(tmp_path / "desk")
+    poolmod.vouch(a, ALICE, desk.origin)
+    peer.sync_with(desk, addr, a.origin)
+    annotations.write(Matter(desk.root), ALICE, {"op": "define-tag", "tag": "from-the-desk"})
+    peer.sync_with(desk, addr, a.origin)
+    assert "from-the-desk" in annotations.Annotations.load(Matter(a.root)).definitions
+
+
+def test_an_invitation_for_the_same_person(a, served, tmp_path):
+    _, addr = served
+    invite.join(invite.create(a, ALICE, [addr], same_person=True)["code"], tmp_path / "desk")
+    desk = Matter(tmp_path / "desk")
+    assert sorted(poolmod.Pool.load(desk).users[ALICE]) == sorted([a.origin, desk.origin])
+    annotations.write(desk, ALICE, {"op": "define-tag", "tag": "desk"})      # allowed

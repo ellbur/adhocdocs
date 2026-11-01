@@ -68,13 +68,19 @@ class Work:
 
     @classmethod
     def load(cls, m: Matter) -> "Work":
+        from .annotations import _pool
         w = cls()
+        w.pool = _pool(m)
         for ev in m.work_log.read():
             w.apply(ev)
         return w
 
     def apply(self, ev: dict):
         if ev["op"] not in ("publish", "retire"):
+            return
+        if getattr(self, "pool", None) is not None and not self.pool.writes_for(ev.get("origin"), ev.get("author")):
+            self.ignored.append({"event": ev["id"], "origin": ev.get("origin"),
+                                 "reason": f"{ev.get('author')} doesn't write from that installation"})
             return
         if not safe_rel(ev.get("name")) or not isinstance(ev.get("revises", []), list):
             self.ignored.append({"event": ev["id"], "origin": ev.get("origin"), "reason": f"bad name {ev.get('name')!r}"})
@@ -355,6 +361,11 @@ def publish(m: Matter, author: str, name: str, revises=None, merge=False, reques
     workspace: :func:`name_of`). Host only: the store and the work feed are
     written. The annotation API calls this for Claude."""
     name = check_name(m, name)
+    from . import pool as poolmod
+    try:
+        poolmod.claim(m, author)
+    except poolmod.PoolError as e:
+        raise Refused(str(e))
     found = _gather(m, name)
     with _locked(m):
         w = Work.load(m)
@@ -399,6 +410,11 @@ def publish(m: Matter, author: str, name: str, revises=None, merge=False, reques
 
 
 def retire(m: Matter, author: str, name: str, requested_by=None) -> dict:
+    from . import pool as poolmod
+    try:
+        poolmod.claim(m, author)
+    except poolmod.PoolError as e:
+        raise Refused(str(e))
     with _locked(m):
         w = Work.load(m)
         if not w.current(name):

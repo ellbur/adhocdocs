@@ -127,6 +127,8 @@ def adhoc(argv=None):
     x.add_argument("--role", choices=["member", "hub"], default="member")
     x.add_argument("--hours", type=float, default=72, help="how long the invitation works (default 72)")
     x.add_argument("--name", help="this installation's name, if this founds the pool (default: the host name)")
+    x.add_argument("--same-person", action="store_true",
+                   help="the one joining is yours too (your desktop, say): it may write as --user")
     x = ss.add_parser("join", help="join a matter's pool with an invitation, into a new matter directory")
     x.add_argument("code")
     x.add_argument("path", help="a new, empty directory for the matter")
@@ -143,6 +145,9 @@ def adhoc(argv=None):
     x.add_argument("code", help="the hub code from adhoc hub enroll")
     x.add_argument("--user", required=True)
     ss.add_parser("members", help="the pool's members")
+    x = ss.add_parser("vouch", help="say another member writes for you too (from an installation that writes for you)")
+    x.add_argument("origin")
+    x.add_argument("--user", required=True)
     x = ss.add_parser("remove", help="remove a member: no one syncs with it again (it keeps what it has)")
     x.add_argument("origin")
     x.add_argument("--user", required=True)
@@ -293,7 +298,9 @@ def _sync(m, a):
         for row in pool.Pool.load(m).summary(m.origin):
             out(row)
     elif a.action == "invite":
-        out(invite.create(m, f"user:{a.user}", a.address, a.role, a.hours, a.name))
+        out(invite.create(m, f"user:{a.user}", a.address, a.role, a.hours, a.name, a.same_person))
+    elif a.action == "vouch":
+        out(pool.vouch(m, f"user:{a.user}", a.origin))
     elif a.action == "remove":
         out({**pool.remove_member(m, f"user:{a.user}", a.origin),
              "note": "No member will sync with it once they have this removal (run adhoc sync now). It keeps "

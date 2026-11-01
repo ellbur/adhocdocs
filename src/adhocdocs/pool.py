@@ -11,7 +11,19 @@ it, ``user:<id>``), ``prev`` and ``sig``:
                    or ``hub``), ``addresses`` (``host:port`` where it listens)
 ``remove-member``  ``member``
 ``set-addresses``  ``member`` (the event's own origin), ``addresses``
+``bind-user``      ``user`` (``user:<id>``), ``member``: that installation writes
+                   for that person
 =================  ==============================================================
+
+**People and installations.** An event authored ``user:alice`` counts only
+if it comes from an installation bound to Alice (annotations, published
+work). The first installation to write as a person claims them (a
+``bind-user`` of itself, written automatically); after that, only an
+installation already bound to Alice can bind another to her: her laptop
+vouching for her desktop (``adhoc sync vouch``, or ``invite
+--same-person``). So a member can't write as someone who works elsewhere.
+A person no installation has claimed is anyone's to write as, which is how
+a matter worked before it had a pool.
 
 **Who can change membership.** The founder (``founder`` in ``matter.toml``,
 carried in every invitation) is the first member, by its own
@@ -37,6 +49,9 @@ class Pool:
     def __init__(self, founder: str | None):
         self.founder = founder
         self.cutoffs: dict[str, int] = {}      # removed origin -> how many of its pool events count
+        self.users: dict[str, list[str]] = {}  # user:<id> -> the installations that write for them
+        self._vouched: dict[str, str] = {}     # invitation digest -> the person it's for
+        self._invited: list[tuple] = []        # (add-member event, digest)
         self.members: dict[str, dict] = {}     # origin -> member (``active`` False once removed)
         self.ignored: list[dict] = []          # events that didn't count, and why
 
@@ -69,6 +84,12 @@ class Pool:
                     p.apply(ev)
                 except (KeyError, TypeError, AttributeError, ValueError) as e:
                     p._ignore(ev, f"malformed: {type(e).__name__}")
+            # an invitation "for the same person" binds whoever accepted it,
+            # wherever the vouch and the acceptance fall in the order
+            for ev, digest in p._invited:
+                user = p._vouched.get(digest)
+                if user and ev["member"] in p.members and ev["member"] not in p.users.get(user, []):
+                    p.users.setdefault(user, []).append(ev["member"])
             new = {o: x["upto"] for o, x in p.members.items() if not x["active"] and x.get("upto") is not None}
             if new == cutoffs:
                 break
@@ -107,6 +128,10 @@ class Pool:
             self.members[origin] = {"origin": origin, "cert": ev["cert"], "name": ev.get("name") or origin,
                                     "role": ev.get("role", "member"), "addresses": list(ev.get("addresses", [])),
                                     "added_by": by, "author": ev.get("author"), "at": ev["at"], "active": True}
+            for u in ev.get("users") or []:          # "the same person as me": the inviter vouches
+                self._bind(ev, u, origin, by)
+            if isinstance(ev.get("invitation"), str):
+                self._invited.append((ev, ev["invitation"]))
         elif op == "remove-member":
             x = self.members.get(ev["member"])
             if x is None:
@@ -121,10 +146,42 @@ class Pool:
             if ev.get("member") != by:
                 return self._ignore(ev, "a member sets only its own addresses")
             self.members[by]["addresses"] = list(ev.get("addresses", []))
+        elif op == "bind-user" and isinstance(ev.get("invitation"), str):
+            # a vouch for whoever accepts an invitation, made by an installation of that person
+            if by in self.users.get(ev["user"], []):
+                self._vouched[ev["invitation"]] = ev["user"]
+            else:
+                return self._ignore(ev, f"{by} doesn't write for {ev['user']}")
+        elif op == "bind-user":
+            if ev.get("member") not in self.members:
+                return self._ignore(ev, f"{ev.get('member')} isn't a member")
+            self._bind(ev, ev["user"], ev["member"], by)
+
+    def _bind(self, ev, user, member, by):
+        if not isinstance(user, str) or not user.startswith("user:"):
+            return self._ignore(ev, f"not a person: {user!r}")
+        bound = self.users.get(user)
+        if bound and member in bound:
+            return
+        # the first claim is the installation's own; after that, a bound one vouches
+        if (not bound and member == by) or (bound and by in bound):
+            self.users.setdefault(user, []).append(member)
+        else:
+            return self._ignore(ev, f"{by} can't say {member} writes for {user}"
+                                    + (f" (that's {', '.join(bound)})" if bound else ""))
+
+    def writes_for(self, origin: str | None, author: str) -> bool:
+        """Whether an event by ``author`` from ``origin`` counts: Claude's and
+        unclaimed people's do; a claimed person's only from their installations."""
+        if not author or not author.startswith("user:") or origin is None:
+            return True
+        bound = self.users.get(author)
+        return not bound or origin in bound
 
     def summary(self, me: str | None = None) -> list[dict]:
         return [{k: x[k] for k in ("origin", "name", "role", "addresses", "active", "at", "author") if k in x}
-                | {"this": x["origin"] == me} for x in self.members.values()]
+                | {"this": x["origin"] == me, "people": sorted(u for u, os_ in self.users.items() if x["origin"] in os_)}
+                for x in self.members.values()]
 
 
 class PoolError(Exception):
@@ -138,14 +195,50 @@ def founded(m: Matter) -> bool:
 def found(m: Matter, author: str, name: str, addresses=(), role="member") -> dict:
     """Make this installation the founder of the matter's pool: seal its logs
     (sign the events it wrote before signing existed), record it as founder,
-    and add it as the first member. Host only."""
+    and add it as the first member. The people its events were written by
+    are its own. Host only."""
     if founded(m):
         raise PoolError(f"this matter already has a pool (founded by {m.config['founder']})")
     seal(m)
     cfg = m.config
     cfg["founder"] = m.origin
     write_toml(m.root / "matter.toml", cfg)
-    return add_self(m, author, name, addresses, role)
+    ev = add_self(m, author, name, addresses, role)
+    people = {author} if author.startswith("user:") else set()
+    for feed in (m.annotation_log, m.work_log):
+        people |= {e["author"] for e in feed.read() if str(e.get("author", "")).startswith("user:")}
+    for u in sorted(people):
+        m.pool_log.append(op="bind-user", user=u, member=m.origin, author=author)
+    return ev
+
+
+def claim(m: Matter, author: str):
+    """Before this installation writes as a person: they must be its own, or
+    nobody's yet (then it claims them). Raises PoolError otherwise. Nothing
+    to do before there's a pool, or for Claude."""
+    if not author.startswith("user:") or not founded(m):
+        return
+    p = Pool.load(m)
+    if not p.is_member(m.origin):
+        return          # joining: not a member yet, and nothing it writes counts until it is
+    bound = p.users.get(author)
+    if bound is None:
+        m.pool_log.append(op="bind-user", user=author, member=m.origin, author=author)
+    elif m.origin not in bound:
+        names = ", ".join(p.members[o]["name"] for o in bound if o in p.members)
+        raise PoolError(f"{author} works on another installation ({names}). To write as them here, have that "
+                        f"installation vouch for this one: adhoc sync vouch {m.origin} --user {author[5:]}")
+
+
+def vouch(m: Matter, author: str, member: str) -> dict:
+    """Say another member writes for ``author`` too (from an installation
+    bound to them)."""
+    p = Pool.load(m)
+    if member not in p.members or not p.members[member]["active"]:
+        raise PoolError(f"{member} isn't a member")
+    if m.origin not in p.users.get(author, []):
+        raise PoolError(f"this installation doesn't write for {author}, so it can't vouch for another")
+    return m.pool_log.append(op="bind-user", user=author, member=member, author=author)
 
 
 def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> dict:
@@ -153,7 +246,8 @@ def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> 
                              name=name, role=role, addresses=list(addresses), author=author)
 
 
-def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=()) -> dict:
+def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False,
+               invitation: str | None = None) -> dict:
     p = Pool.load(m)
     if not p.is_member(m.origin):
         raise PoolError("this installation isn't a member of the pool, so it can't add one")
@@ -161,7 +255,9 @@ def add_member(m: Matter, author: str, cert: str, name: str, role="member", addr
     if p.is_member(origin):
         return {"member": origin, "already": True}
     return m.pool_log.append(op="add-member", member=origin, cert=cert, name=name, role=role,
-                             addresses=list(addresses), author=author)
+                             addresses=list(addresses), author=author,
+                             **({"users": [author]} if same_person and author.startswith("user:") else {}),
+                             **({"invitation": invitation} if invitation else {}))
 
 
 def remove_member(m: Matter, author: str, origin: str) -> dict:

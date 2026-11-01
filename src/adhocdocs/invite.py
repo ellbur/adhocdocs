@@ -42,7 +42,7 @@ def _digest(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
-def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=None) -> dict:
+def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=None, same_person=False) -> dict:
     """An invitation to this matter's pool, founding the pool if there isn't
     one yet. Host only."""
     if role not in poolmod.ROLES:
@@ -55,7 +55,12 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
     if addresses:
         poolmod.set_addresses(m, author, addresses)
     secret = secrets.token_urlsafe(24)
-    record = {"by": author, "role": role, "made": now(), "expires": int(time.time() + hours * 3600)}
+    record = {"by": author, "role": role, "made": now(), "expires": int(time.time() + hours * 3600),
+              **({"same_person": True} if same_person else {})}
+    if same_person:
+        # whoever joins with this writes for the same person: vouched for now, by an installation of theirs
+        poolmod.claim(m, author)
+        m.pool_log.append(op="bind-user", user=author, invitation=_digest(secret), author=author)
     hubs = [x for x in p.active() if x["role"] == "hub" and x["addresses"] and x["origin"] != m.origin]
     if hubs and not addresses:
         # through the hub, which is always there: the invitation works while this one is off
@@ -65,6 +70,9 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
             peer = Peer(m, address, hub["origin"])
             try:
                 peer.json("POST", "invites", {"digest": _digest(secret), **record})
+                if same_person:     # the hub must have the vouch before anyone accepts
+                    from .peer import sync_with
+                    sync_with(m, address, hub["origin"])
                 break
             except (OSError, SyncError) as e:
                 errors.append(f"{address}: {e}")
@@ -104,6 +112,7 @@ def register(m: Matter, req: dict, member: str) -> dict:
         invites = _load(m)
         if digest not in invites:
             invites[digest] = {"by": str(req.get("by", "")), "role": req.get("role", "member"), "made": now(),
+                               **({"same_person": True} if req.get("same_person") else {}),
                                "expires": min(int(req.get("expires", 0)), int(time.time() + 30 * 86400)),
                                "registered_by": member}
             _save(m, invites)
@@ -154,7 +163,8 @@ def accept(m: Matter, req: dict) -> dict:
         if time.time() > inv["expires"]:
             raise PermissionError("that invitation has expired")
         poolmod.add_member(m, inv["by"], req["cert"], str(req.get("name") or origin)[:200], inv["role"],
-                           [str(a) for a in req.get("addresses", [])][:8])
+                           [str(a) for a in req.get("addresses", [])][:8],
+                           invitation=_digest(str(req["secret"])) if inv.get("same_person") else None)
         inv["used"] = {"origin": origin, "at": now()}
         _save(m, invites)
     return {"matter": m.id, "founder": m.config.get("founder"), "member": origin}
