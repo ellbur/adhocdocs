@@ -111,6 +111,7 @@ p { margin: 0; line-height: 1.35; white-space: pre-wrap; }
 p.header { font-size: 10pt; color: #333; }
 p.quoted { color: #555; }
 p.heading { font-weight: bold; font-size: 13pt; }
+p.footnote, p.endnote, p.comment, p.header-footer { font-size: 9.5pt; color: #333; }
 """
 TAGS = (("b", "b"), ("i", "i"), ("u", "u"), ("s", "s"), ("sup", "sup"), ("sub", "sub"))
 _rendered = {}
@@ -119,7 +120,8 @@ _rendered = {}
 def _render_html(text: str, segments: list, styles: list) -> str:
     """The layer's text as HTML, a paragraph per line, with its formatting."""
     import html
-    kinds = [s for s in segments if s["kind"] in ("header", "quoted", "heading")]
+    from .extract import NOTE_KINDS
+    kinds = [s for s in segments if s["kind"] in ("header", "quoted", "heading", *NOTE_KINDS)]
     out, pos = [], 0
     for line in text.replace("\f", "\n").split("\n"):
         end = pos + len(line)

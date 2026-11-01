@@ -91,20 +91,44 @@ class TextBuilder:
         return Layer(view, self.text, segs, self.geometry, presentation, primary, styles=self.styles)
 
 
+# Segments for what a document shows outside its body (a .docx's notes,
+# comments, headers and footers), set apart when displayed
+NOTE_KINDS = ("footnote", "endnote", "comment", "header-footer")
+
+
+# Segments shown raised: footnote and endnote numbers, in the body and at their notes
+RAISED_KINDS = ("note-ref", "note-mark")
+
+
+def _raised_spans(line: str, pos: int, raised: list) -> str:
+    """A line as spans carrying their layer offsets, the raised ranges in <sup>."""
+    end = pos + len(line)
+    cuts = sorted({pos, end, *[x for a, b in raised for x in (a, b) if pos < x < end]})
+    out = []
+    for a, b in zip(cuts, cuts[1:]):
+        span = f'<span data-o="{a}">{html.escape(line[a - pos:b - pos])}</span>'
+        out.append(f"<sup>{span}</sup>" if any(x <= a and b <= y for x, y in raised) else span)
+    return "".join(out)
+
+
 def text_presentation(text: str, segments: list) -> str:
     """A plain HTML rendering of layer text, every line a span carrying its
     layer offset, for flow-mode display of content without pages."""
     kinds_at = []
     for seg in segments:
-        if seg["kind"] in ("header", "quoted", "signature", "heading"):
+        if seg["kind"] in ("header", "quoted", "signature", "heading", *NOTE_KINDS):
             kinds_at.append(seg)
+    raised = [(seg["start"], seg["end"]) for seg in segments if seg["kind"] in RAISED_KINDS]
+    titles = {seg["start"]: seg["title"] for seg in segments if seg["kind"] in NOTE_KINDS and seg.get("title")}
     out = ['<article class="adhoc-flow">']
     pos = 0
     for line in text.split("\n"):
         classes = sorted({s["kind"] for s in kinds_at if s["start"] <= pos < s["end"] or (s["start"] == pos and s["end"] == pos)})
         cls = f' class="{" ".join(classes)}"' if classes else ""
+        if pos in titles:     # shown by CSS (::before), so it isn't selected or quoted as the document's text
+            cls += f' data-title="{html.escape(titles[pos])}"'
         if line:
-            out.append(f'<p{cls}><span data-o="{pos}">{html.escape(line)}</span></p>')
+            out.append(f"<p{cls}>{_raised_spans(line, pos, raised)}</p>")
         else:
             out.append(f"<p{cls}><br></p>")
         pos += len(line) + 1

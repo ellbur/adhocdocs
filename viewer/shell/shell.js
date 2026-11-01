@@ -708,7 +708,10 @@ class DocumentPane {
   async renderText() {
     const layer = this.currentLayer();
     const [t, segs] = await Promise.all([layerText(layer.id), segments(layer.id)]);
-    const lineKinds = segs.filter((s) => ["header", "quoted", "signature"].includes(s.kind));
+    const noteKinds = ["footnote", "endnote", "comment", "header-footer"];   // a .docx's text outside its body
+    const lineKinds = segs.filter((s) => ["header", "quoted", "signature", ...noteKinds].includes(s.kind));
+    const titles = new Map(segs.filter((s) => noteKinds.includes(s.kind) && s.title).map((s) => [s.start, s.title]));
+    const raised = segs.filter((s) => s.kind === "note-ref" || s.kind === "note-mark");   // footnote numbers
     const labels = new Map(segs.filter((s) => s.kind === "line").map((s) => [s.start, s.label]));
     const box = el("div", { class: "textmode" });
     let pos = 0, page = 1;
@@ -718,11 +721,18 @@ class DocumentPane {
         const n = cpLen(line);
         const kinds = lineKinds.filter((s) => s.start <= pos && pos < s.end).map((s) => s.kind);
         const div = el("div", { class: "ln " + kinds.join(" ") });
+        if (titles.has(pos)) div.dataset.title = titles.get(pos);   // shown by CSS, so selections don't take it
         const lbl = labels.get(pos);
         if (lbl) div.append(el("span", { class: "lbl" }, lbl));
-        const span = el("span", { "data-s": pos });
-        span.textContent = line;
-        div.append(span);
+        // spans carry their offsets; a footnote number is a span of its own, raised
+        const end = pos + n, cps = [...line];
+        const cuts = [...new Set([pos, end, ...raised.flatMap((s) => [s.start, s.end]).filter((x) => pos < x && x < end)])].sort((a, b) => a - b);
+        for (let i = 0; i + 1 < cuts.length || (i === 0 && n === 0); i++) {
+          const a = cuts[i], b = cuts[i + 1] ?? a;
+          const span = el("span", { "data-s": a });
+          span.textContent = cps.slice(a - pos, b - pos).join("");
+          div.append(raised.some((s) => s.start <= a && b <= s.end && a < b) ? el("sup", {}, span) : span);
+        }
         box.append(div);
         pos += n + 1;
       }

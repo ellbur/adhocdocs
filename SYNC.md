@@ -558,6 +558,17 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 - **The audit log.** Should a hub collect members' audit logs, for a firm
   that wants one record of every session on a matter?
 
+## Known issues
+
+- **A flaky test:** `test_sync_security.py::test_nothing_is_read_from_strangers`
+  sometimes fails with `BrokenPipeError` (seen once in a full run, on
+  2026-11-01; passed on the rerun). The server does the right thing: it
+  answers a stranger's POST with 403 and closes without reading the
+  100,000-byte body. But the test's `_raw` helper sends the whole body with
+  `sendall` before reading, so when the close arrives first, the send fails
+  and the 403 is never read. The fix belongs in `_raw`: catch errors from
+  the send, then still read what the server sent.
+
 ## Decided
 
 - Local first: every installation holds the matter and works offline.

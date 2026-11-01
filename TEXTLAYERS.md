@@ -85,12 +85,30 @@ passes, a .docx with tracked changes accepted and with them shown.
   without line numbers and page labels, made primary, so phrases read
   across lines.
 
+- A .docx's text outside the body comes after it, each piece separated by
+  a blank line: footnotes, endnotes, comments, then headers and footers,
+  each a segment of its own kind (`footnote`, `endnote`, `comment`,
+  `header-footer`) and the body a `body` segment. Replies to a comment
+  follow it, marked with the comment they answer. Text boxes and shapes
+  are lines after the paragraph they're anchored in (`text-box`). So a privilege legend in
+  a header, or a comment saying what the author really thought, is found
+  by search and can be quoted, and `search --in body` leaves them out.
+  Note numbers are in the text where Word shows them; a comment's author
+  and date are segment attributes, since they aren't the comment's words.
+  [`extract/docx.py`](src/adhocdocs/extract/docx.py) has the details.
+- GPL dependencies are fine: the project is open source, and will stay so
+  for the foreseeable future (as with MuPDF, see [VIEWER.md](VIEWER.md)).
+
 ## Not built yet
 
-`.msg` and PST (their Python readers are GPL; to decide), .docx footnotes/comments/headers/footers, sanitized
-presentations of the original HTML (presentations are currently generated
-from the layer text), and derived views other than OCR made in the
-workspace.
+Sanitized presentations of the original HTML (presentations are currently
+generated from the layer text), and derived views other than OCR made in
+the workspace.
+
+.docx, still: text in SmartArt diagrams and charts (they're parts of their
+own, not text boxes). Note numbers that restart each page follow the page
+breaks Word last saved, so a file no Word has laid out only restarts at
+explicit page breaks.
 
 *Built:* `layers ocr <doc> [--dpi] [--psm]` OCRs a document again into a
 new layer in the workspace (the store is read-only in the session). It
