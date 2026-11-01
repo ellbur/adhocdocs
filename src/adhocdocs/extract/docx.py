@@ -9,22 +9,36 @@ The body comes first, as a ``body`` segment. After it, each separated by a
 blank line, come what Word shows outside the body, so it can be searched
 and quoted too: footnotes, endnotes, comments, then headers and footers.
 
+- **Text boxes and shapes** (``w:txbxContent``, in a drawing or in VML)
+  are read where they're anchored: each box's paragraphs are lines after
+  the paragraph (or table) holding its anchor, as a ``text-box`` segment.
+  A box saved twice, as a drawing and as a VML fallback for older Word
+  (``mc:AlternateContent``), is read once, from the first choice.
 - **Footnote and endnote marks** are in the text where Word shows them: the
   number at the reference in the body (a ``sup`` style run, and a
   ``note-ref`` segment with the note's ``id``), and again at the start of
-  the note. Numbers follow the document's number format and start
-  (``w:footnotePr``/``w:endnotePr``; Word's defaults are 1, 2, 3 for
-  footnotes and i, ii, iii for endnotes), counting the references in that
-  view in order, so the ``original`` view numbers notes as they were. A
-  custom mark (``w:customMarkFollows``) is the reference's own text and gets
-  no number. Each note is a ``footnote`` or ``endnote`` segment with its
+  the note (a ``note-mark`` segment). Numbers follow each section's number
+  format, start and restart rule (``w:footnotePr``/``w:endnotePr`` in the
+  section, else in the settings; Word's defaults are 1, 2, 3 for footnotes
+  and i, ii, iii for endnotes, continuous), counting the references in that
+  view in order, so the ``original`` view numbers notes as they were.
+  Restarting each section is exact. Restarting each page uses the page
+  breaks Word recorded the last time it laid the document out
+  (``w:lastRenderedPageBreak``), with explicit page breaks and section
+  breaks that start a new page; a file no Word has laid out has only the
+  explicit ones, so its numbers can run on where Word's restart. A custom
+  mark (``w:customMarkFollows``) is the reference's own text and gets no
+  number. Each note is a ``footnote`` or ``endnote`` segment with its
   ``id`` and ``mark``, in the order referenced; notes no view references
   are left out.
 - **Comments** don't put text in the body. Each is a ``comment`` segment
   with its ``id``, ``author``, ``initials`` and ``date`` (attributes, not
-  text: Word shows them beside the comment, not in it), in the order of
-  their anchors, and the commented range of the body is a
-  ``comment-anchor`` segment with the same ``id``.
+  text: Word shows them beside the comment, not in it), and the commented
+  range of the body is a ``comment-anchor`` segment with the same ``id``.
+  Threads (``commentsExtended.xml``) are kept together: each thread's
+  first comment, in the order of the anchors, then its replies, each with
+  ``reply_to`` (the comment it answers) and ``thread`` (the first
+  comment's ``id``). A resolved thread's first comment has ``resolved``.
 - **Headers and footers:** each distinct part once, in the order sections
   reference them, as a ``header-footer`` segment with ``part`` (``header``
   or ``footer``) and ``type`` (``default``, ``first`` or ``even``). Empty
@@ -32,8 +46,8 @@ and quoted too: footnotes, endnotes, comments, then headers and footers.
   so a page number in a footer is whatever page it was last computed on.
 
 Note, comment and header-footer segments have a ``title`` ("Footnote 1",
-"Comment — J. Smith, 2026-03-02", "Header") for displays, which isn't in
-the text.
+"Comment — J. Smith, 2026-03-02", "Reply — …", "Header") for displays,
+which isn't in the text.
 """
 
 import io
@@ -55,7 +69,14 @@ W_FNMARK, W_ENMARK = qn("w:footnoteRef"), qn("w:endnoteRef")
 W_CUSTOM = qn("w:customMarkFollows")
 W_CMT_START, W_CMT_END, W_CMT_REF = qn("w:commentRangeStart"), qn("w:commentRangeEnd"), qn("w:commentReference")
 W_SDT, W_SDTCONTENT = qn("w:sdt"), qn("w:sdtContent")
+W_TXBX = qn("w:txbxContent")
+W_PAGEBREAK = qn("w:lastRenderedPageBreak")
+W_PPR, W_SECTPR = qn("w:pPr"), qn("w:sectPr")
 R_ID = qn("r:id")
+MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+MC_ALT, MC_CHOICE, MC_FALLBACK = MC + "AlternateContent", MC + "Choice", MC + "Fallback"
+W14_PARAID = "{http://schemas.microsoft.com/office/word/2010/wordml}paraId"
+W15 = "{http://schemas.microsoft.com/office/word/2012/wordml}"
 
 NOTE_DEFAULTS = {"footnote": "decimal", "endnote": "lowerRoman"}
 
@@ -93,17 +114,44 @@ def number_format(n: int, fmt: str) -> str:
 
 class Notes:
     """What a view's walk of the document finds outside the run text: note
-    references in order, with their marks, and comment anchors."""
+    references in order, with their marks, comment anchors, and text boxes
+    waiting to be written after the paragraph that holds them.
 
-    def __init__(self, fmts: dict, starts: dict):
-        self.fmts, self.starts = fmts, starts
+    ``sections``: per section, in order, ``{kind: (format, start, restart,
+    starts a new page)}``."""
+
+    def __init__(self, sections: list):
+        self.sections, self.section = sections, 0
         self.count = {"footnote": 0, "endnote": 0}
+        self.base = {k: self.props(k)[1] for k in self.count}
         self.refs = {"footnote": [], "endnote": []}      # (id, mark) in order
         self.marks = {}                                   # (kind, id) -> mark
         self.custom = set()                               # (kind, id) with a custom mark
         self.current = None                               # (kind, id) of the note being written
+        self.in_body = True                               # page breaks only count in the body
         self.anchor_open, self.anchors = {}, []           # comment id -> start; (id, start, end)
         self.comment_order = []
+        self.boxes = []                                   # text boxes (txbxContent) to write
+
+    def props(self, kind: str):
+        return self.sections[min(self.section, len(self.sections) - 1)][kind]
+
+    def _restart(self, kind):
+        self.count[kind], self.base[kind] = 0, self.props(kind)[1]
+
+    def next_section(self):
+        self.section += 1
+        for kind in self.count:
+            _, _, restart, new_page = self.props(kind)
+            if restart == "eachSect" or (restart == "eachPage" and new_page):
+                self._restart(kind)
+
+    def page_break(self):
+        if not self.in_body:
+            return
+        for kind in self.count:
+            if self.props(kind)[2] == "eachPage":
+                self._restart(kind)
 
     def reference(self, kind: str, nid: str, custom: bool) -> str:
         if (kind, nid) in self.marks:                       # referenced twice (rare): one note
@@ -113,9 +161,9 @@ class Notes:
             self.marks[(kind, nid)] = ""
             self.refs[kind].append((nid, ""))
             return ""
-        n = self.starts[kind] + self.count[kind]
+        n = self.base[kind] + self.count[kind]
         self.count[kind] += 1
-        mark = number_format(n, self.fmts[kind])
+        mark = number_format(n, self.props(kind)[0])
         self.marks[(kind, nid)] = mark
         self.refs[kind].append((nid, mark))
         return mark
@@ -181,7 +229,18 @@ def _runs_text(p, mode: str, b: TextBuilder, notes: Notes):
                     put(notes.reference(kind, nid, custom), change, style | {"sup"}, "note-ref", note=kind, id=nid)
             elif tag in (W_FNMARK, W_ENMARK):
                 if notes.current and kept(change):
-                    put(notes.marks.get(notes.current, ""), change, style | {"sup"})
+                    kind, nid = notes.current
+                    put(notes.marks.get(notes.current, ""), change, style | {"sup"}, "note-mark", note=kind, id=nid)
+            elif tag == W_TXBX:
+                if kept(change):
+                    notes.boxes.append(child)
+            elif tag == MC_ALT:
+                pick = child.find(MC_CHOICE)
+                pick = pick if pick is not None else child.find(MC_FALLBACK)
+                if pick is not None:
+                    walk(pick, change, style)
+            elif tag == W_PAGEBREAK:
+                notes.page_break()
             elif tag == W_CMT_START:
                 notes.anchor_open[child.get(W_ID)] = b.length
                 notes.comment(child.get(W_ID))
@@ -200,6 +259,8 @@ def _runs_text(p, mode: str, b: TextBuilder, notes: Notes):
             elif tag in (W_T, W_DELTEXT, W_TAB, W_BR):
                 if not kept(change):
                     continue
+                if tag == W_BR and child.get(W_TYPE) == "page":
+                    notes.page_break()
                 if tag in (W_T, W_DELTEXT):
                     s = child.text or ""
                 else:
@@ -230,7 +291,32 @@ def _blocks(container):
             yield el
 
 
-def _write_blocks(container, mode: str, b: TextBuilder, notes: Notes, first=True):
+def _own(el, tag):
+    """Descendants of ``el`` with ``tag`` that aren't in a text box or the
+    fallback copy of one (a nested table's rows and cells are its own)."""
+    for x in el.iter(tag):
+        a = x.getparent()
+        while a is not None and a is not el and a.tag not in (W_TXBX, MC_FALLBACK):
+            a = a.getparent()
+        if a is el:
+            yield x
+
+
+def _write_boxes(mode: str, b: TextBuilder, notes: Notes):
+    """The text boxes anchored in what was just written, each on lines of
+    its own (boxes in them come after them, the same way)."""
+    boxes, notes.boxes = notes.boxes, []
+    in_body, notes.in_body = notes.in_body, False
+    for box in boxes:
+        if not _has_text(box):
+            continue
+        start = b.length + 1
+        _write_blocks(box, mode, b, notes, first=False)
+        b.segment(start, b.length, "text-box")
+    notes.in_body = in_body
+
+
+def _write_blocks(container, mode: str, b: TextBuilder, notes: Notes, first=True, body=False):
     def newline():
         nonlocal first
         if not first:
@@ -245,17 +331,21 @@ def _write_blocks(container, mode: str, b: TextBuilder, notes: Notes, first=True
             style = _style(el).lower()
             kind = "heading" if style.startswith(("heading", "title")) else "list-item" if "list" in style else "paragraph"
             b.segment(s, b.length, kind)
+            _write_boxes(mode, b, notes)
+            ppr = el.find(W_PPR)
+            if body and ppr is not None and ppr.find(W_SECTPR) is not None:
+                notes.next_section()
         elif el.tag == W_TBL:
             ts = None
-            for r, tr in enumerate(el.iter(W_TR)):
+            for r, tr in enumerate(_own(el, W_TR)):
                 newline()
                 rs = b.length
                 ts = rs if ts is None else ts
-                for c, tc in enumerate(tr.iter(W_TC)):
+                for c, tc in enumerate(_own(tr, W_TC)):
                     if c:
                         b.add("\t")
                     cs = b.length
-                    for i, p in enumerate(tc.iter(W_P)):
+                    for i, p in enumerate(_own(tc, W_P)):
                         if i:
                             b.add(" ")
                         _runs_text(p, mode, b, notes)
@@ -263,6 +353,7 @@ def _write_blocks(container, mode: str, b: TextBuilder, notes: Notes, first=True
                 b.segment(rs, b.length, "row")
             if ts is not None:
                 b.segment(ts, b.length, "table")
+            _write_boxes(mode, b, notes)
         elif el.tag in (W_CMT_START, W_CMT_END):
             _runs_text([el], mode, b, notes)
 
@@ -273,9 +364,10 @@ def _has_text(el) -> bool:
 
 def _build(doc, mode: str) -> TextBuilder:
     b = TextBuilder()
-    notes = Notes(doc.fmts, doc.starts)
-    _write_blocks(doc.body, mode, b, notes)
+    notes = Notes(doc.sections)
+    _write_blocks(doc.body, mode, b, notes, body=True)
     b.segment(0, b.length, "body")
+    notes.in_body = False
 
     def section(kind, el, **extra):
         b.add("\n\n")
@@ -293,14 +385,34 @@ def _build(doc, mode: str) -> TextBuilder:
             section(kind, el, id=nid, mark=mark, title=title)
             notes.current = None
     order = notes.comment_order + [c for c in doc.comments if c not in notes.comment_order]
-    for cid in order:
-        if cid not in doc.comments:
-            continue
+    replies = {}
+    for cid in doc.comments:                    # in the file's order, which is the order written
+        if cid in doc.reply_to:
+            replies.setdefault(doc.reply_to[cid], []).append(cid)
+    written = set()
+
+    def comment(cid, root):
+        if cid in written:
+            return
+        written.add(cid)
         el = doc.comments[cid]
         info = {k: el.get(qn(f"w:{k}")) for k in ("author", "initials", "date")}
         info = {k: v for k, v in info.items() if v}
         who = ", ".join(x for x in (info.get("author"), (info.get("date") or "")[:10]) if x)
-        section("comment", el, id=cid, title="Comment" + (f" — {who}" if who else ""), **info)
+        extra = {"reply_to": doc.reply_to[cid], "thread": root} if cid != root else {}
+        resolved = cid == root and cid in doc.resolved
+        if resolved:
+            extra["resolved"] = True
+        title = ("Reply" if cid != root else "Comment") + (f" — {who}" if who else "") + (" (resolved)" if resolved else "")
+        section("comment", el, id=cid, title=title, **info, **extra)
+        for r in replies.get(cid, []):
+            comment(r, root)
+
+    for cid in order:
+        if cid in doc.comments and cid not in doc.reply_to:
+            comment(cid, cid)
+    for cid in doc.comments:                    # replies whose thread is missing
+        comment(cid, cid)
     for cid, start, end in notes.anchors:
         if cid in doc.comments:
             b.segment(start, end, "comment-anchor", id=cid)
@@ -308,6 +420,22 @@ def _build(doc, mode: str) -> TextBuilder:
         title = part.capitalize() + {"default": "", "first": " (first page)", "even": " (even pages)"}.get(typ, f" ({typ})")
         section("header-footer", el, part=part, type=typ, title=title)
     return b
+
+
+def _note_pr(where, kind: str) -> dict:
+    """What a w:footnotePr or w:endnotePr in ``where`` says, if anything."""
+    pr = where.find(qn(f"w:{kind}Pr")) if where is not None else None
+    if pr is None:
+        return {}
+    out = {}
+    fmt, start, restart = pr.find(qn("w:numFmt")), pr.find(qn("w:numStart")), pr.find(qn("w:numRestart"))
+    if fmt is not None and fmt.get(W_VAL):
+        out["fmt"] = fmt.get(W_VAL)
+    if start is not None and (start.get(W_VAL) or "").isdigit():
+        out["start"] = int(start.get(W_VAL))
+    if restart is not None and restart.get(W_VAL):
+        out["restart"] = restart.get(W_VAL)
+    return out
 
 
 class _Doc:
@@ -333,20 +461,52 @@ class _Doc:
         root = part("comments")
         self.comments = {} if root is None else {c.get(W_ID): c for c in root.findall(qn("w:comment"))}
 
-        # number format and start: the last section's, else the settings', else Word's defaults
-        settings = part("settings")
-        sect = self.body.find(qn("w:sectPr"))
-        self.fmts, self.starts = dict(NOTE_DEFAULTS), {"footnote": 1, "endnote": 1}
-        for kind in ("footnote", "endnote"):
-            for where in (settings, sect):
-                pr = where.find(qn(f"w:{kind}Pr")) if where is not None else None
-                if pr is None:
+        # threads: commentsExtended names each comment by its last paragraph's paraId
+        self.reply_to, self.resolved = {}, set()
+        ext = part("commentsExtended")
+        if ext is not None:
+            by_para = {}
+            for cid, c in self.comments.items():
+                ps = c.findall(W_P)
+                if ps and ps[-1].get(W14_PARAID):
+                    by_para[ps[-1].get(W14_PARAID)] = cid
+            for ex in ext.findall(W15 + "commentEx"):
+                cid = by_para.get(ex.get(W15 + "paraId"))
+                parent = by_para.get(ex.get(W15 + "paraIdParent"))
+                if cid is None:
                     continue
-                fmt, start = pr.find(qn("w:numFmt")), pr.find(qn("w:numStart"))
-                if fmt is not None and fmt.get(W_VAL):
-                    self.fmts[kind] = fmt.get(W_VAL)
-                if start is not None and (start.get(W_VAL) or "").isdigit():
-                    self.starts[kind] = int(start.get(W_VAL))
+                if parent is not None and parent != cid:
+                    self.reply_to[cid] = parent
+                if ex.get(W15 + "done") in ("1", "true"):
+                    self.resolved.add(cid)
+            for cid in list(self.reply_to):     # a loop of replies would never be written
+                seen, c = {cid}, self.reply_to[cid]
+                while c in self.reply_to and c not in seen:
+                    seen.add(c)
+                    c = self.reply_to[c]
+                if c in seen:
+                    del self.reply_to[cid]
+
+        # notes' number format, start and restart, per section: the
+        # section's own, else the settings', else Word's defaults
+        settings = part("settings")
+        doc_default = {}
+        for kind in ("footnote", "endnote"):
+            d = {"fmt": NOTE_DEFAULTS[kind], "start": 1, "restart": "continuous"}
+            d.update(_note_pr(settings, kind))
+            doc_default[kind] = d
+        sects = [sp for sp in self.body.iter(W_SECTPR)
+                 if sp.getparent() is self.body
+                 or (sp.getparent().tag == W_PPR and sp.getparent().getparent().tag == W_P)]
+        self.sections = []
+        for sp in sects or [None]:
+            typ = sp.find(W_TYPE) if sp is not None else None
+            new_page = (typ.get(W_VAL) if typ is not None else "nextPage") != "continuous"
+            sec = {}
+            for kind in ("footnote", "endnote"):
+                d = {**doc_default[kind], **_note_pr(sp, kind)}
+                sec[kind] = (d["fmt"], d["start"], d["restart"], new_page)
+            self.sections.append(sec)
 
         self.headers_footers, seen = [], set()
         for sp in self.body.iter(qn("w:sectPr")):

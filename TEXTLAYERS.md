@@ -88,7 +88,9 @@ passes, a .docx with tracked changes accepted and with them shown.
 - A .docx's text outside the body comes after it, each piece separated by
   a blank line: footnotes, endnotes, comments, then headers and footers,
   each a segment of its own kind (`footnote`, `endnote`, `comment`,
-  `header-footer`) and the body a `body` segment. So a privilege legend in
+  `header-footer`) and the body a `body` segment. Replies to a comment
+  follow it, marked with the comment they answer. Text boxes and shapes
+  are lines after the paragraph they're anchored in (`text-box`). So a privilege legend in
   a header, or a comment saying what the author really thought, is found
   by search and can be quoted, and `search --in body` leaves them out.
   Note numbers are in the text where Word shows them; a comment's author
@@ -103,12 +105,10 @@ Sanitized presentations of the original HTML (presentations are currently
 generated from the layer text), and derived views other than OCR made in
 the workspace.
 
-.docx, still: text boxes and shapes (`w:txbxContent`), replies to comments
-shown as threads (they come through as comments of their own), note
-numbering that restarts each section or page, and footnote marks shown as
-superscript in the flow presentation (rich quotes have them). Documents
-ingested before notes and comments were extracted keep their old layers;
-nothing extracts them again yet.
+.docx, still: text in SmartArt diagrams and charts (they're parts of their
+own, not text boxes). Note numbers that restart each page follow the page
+breaks Word last saved, so a file no Word has laid out only restarts at
+explicit page breaks.
 
 *Built:* `layers ocr <doc> [--dpi] [--psm]` OCRs a document again into a
 new layer in the workspace (the store is read-only in the session). It
