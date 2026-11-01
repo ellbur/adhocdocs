@@ -10,8 +10,10 @@ nothing here reads or relays what passes through it.
 Inside the session:
 
 ====================  ==================  ====================================
-/matter/store         read-only           originals, layers, provenance log
+/matter/store         read-only           originals, layers, provenance logs
 /matter/annotations   read-only           tags and notes (writes go through the API)
+/matter/work          read-only           published work product (publishing goes through the API)
+/matter/pool          read-only           the installations the matter syncs among, for ``adhoc status``
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
                                           sign-in (``<matter>/claude-home``)
@@ -22,7 +24,8 @@ Inside the session:
 ====================  ==================  ====================================
 
 ``<matter>/audit`` is not mounted: the host writes the session's audit log
-there (:mod:`adhocdocs.audit`).
+there (:mod:`adhocdocs.audit`). Nor is ``<matter>/sync``, this
+installation's keys and sync state (:mod:`adhocdocs.origin`, SYNC.md).
 
 adhocdocs never reads, copies or sends what Claude Code writes in
 ``claude-home``; it only provides the directory.
@@ -133,7 +136,8 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
     root = m.root
     bridged = volumes is not None
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
-           "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name}
+           "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name,
+           "ADHOC_MATTER_ID": m.id or "", "ADHOC_POOL_FOUNDER": m.config.get("founder", "")}
     tty = ["-it"] if sys.stdin.isatty() else ["-i"]
     args = ["run", "--rm", *tty, "--name", name, "--hostname", "adhoc",
             "--network", "none",          # loopback only: no route out, no DNS
@@ -141,6 +145,8 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
             "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
             *_bind(root / "store", "/matter/store", ro=True, bridged=bridged),
             *_bind(root / "annotations", "/matter/annotations", ro=True, bridged=bridged),
+            *_bind(root / "work", "/matter/work", ro=True, bridged=bridged),
+            *_bind(root / "pool", "/matter/pool", ro=True, bridged=bridged),
             *_bind(root / "workspace", "/matter/workspace", bridged=bridged),
             *_bind(root / "claude-home", "/home/adhoc/.claude", bridged=bridged)]
     if bridged:
@@ -222,6 +228,17 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         print("Building the session image (first run; this takes a few minutes)…", file=sys.stderr)
         build_image()
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
+    (m.root / "work").mkdir(exist_ok=True)
+    (m.root / "pool").mkdir(exist_ok=True)
+    from . import annotations, purge
+    annotations.hotkeys(m)          # this installation's own, written before the session can only read them
+    purge.enforce(m)
+    for n in purge.pending(m):
+        print(f"Documents were purged from this matter ({n['reason']}, by {n['by']}, {n['at'][:10]}): "
+              f"{len(n['documents'])} document(s)."
+              + (f" Workspace files that mention them: {', '.join(n['workspace_files'][:8])}"
+                 f"{'…' if len(n['workspace_files']) > 8 else ''}." if n["workspace_files"] else "")
+              + f" {n['steps']} When done: adhoc purges --ack {n['purge']} --user <you>", file=sys.stderr)
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)
@@ -252,6 +269,12 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
                                       "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
                                 m.root / "run" / "audit-api.log"))
+        from . import pool as poolmod
+        if poolmod.founded(m) and not os.environ.get("ADHOC_NO_SYNC"):
+            # keep in step with the matter's other installations while working (adhocdocs.watch);
+            # a watcher already running for this matter keeps it, and this one exits
+            started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "sync", "watch"],
+                                 m.root / "run" / "sync.log"))
         if viewer:
             from .view import annotate_command, viewer_binary
             started.append(spawn([viewer_binary(), "--matter", str(m.root), "--user", user,
@@ -330,4 +353,31 @@ def status() -> dict:
         "viewer": "running" if _socket_ok(os.environ.get("ADHOC_VIEW_SOCKET", "")) else "not running",
         "annotation_api": "running" if _socket_ok(os.environ.get("ADHOC_ANN_SOCKET", "")) else "not running",
         "audit_api": "running" if _socket_ok(os.environ.get("ADHOC_AUDIT_SOCKET", "")) else "not running",
+        "sync": _sync_status(Path("/matter/pool/logs")),
+        "purges": _purges(Path("/matter/pool/purges.json")),
     }
+
+
+def _purges(path: Path) -> list:
+    """Purges carried out on this matter, and whether the user has dealt with
+    what they leave in the workspace. Claude can help find and delete those
+    files, when the user asks."""
+    try:
+        import json
+        return [{k: n.get(k) for k in ("purge", "at", "by", "reason", "workspace_files", "published_work",
+                                       "acknowledged")} for n in json.loads(path.read_text(encoding="utf-8"))]
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _sync_status(logs: Path) -> dict:
+    """Who the matter syncs with, as the pool log says. Sync is the user's to
+    set up, on the host (Principle 2): nothing here can change it."""
+    from .matter import Feed
+    from .pool import Pool
+    p = Pool(os.environ.get("ADHOC_POOL_FOUNDER") or None)
+    for ev in Feed("pool", logs).read():
+        p.apply(ev)
+    return {"matter_id": os.environ.get("ADHOC_MATTER_ID") or None,
+            "members": [{k: x[k] for k in ("name", "role", "active")} for x in p.members.values()],
+            "note": "Syncing is set up by the user on the host, with adhoc sync; it can't be changed from here."}

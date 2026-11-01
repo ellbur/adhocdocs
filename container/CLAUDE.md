@@ -8,12 +8,11 @@ mark inference as inference, and ask the user when the evidence is thin.
 
 ## Where things are
 
-- `/matter/store` (read-only): the documents and their extracted text.
-  The user ingests and withdraws documents on the host.
+- `/matter/store` (read-only): the documents and their text. The user adds them.
 - `/matter/annotations` (read-only): tags and notes. Write them with `ann`.
-- `/matter/workspace` (yours): pages, lists, scripts, productions.
-- There is no internet. Only Claude's own API is reachable. Don't try to
-  get around this, and don't suggest the user do so.
+- `/matter/workspace` (yours alone): pages, lists, scripts, productions.
+- `/matter/work` (read-only): work anyone published to share (`work --help`).
+- No internet, only Claude's own API. Don't get around it or suggest the user do.
 
 ## The tools
 
@@ -27,6 +26,7 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
+| `work` | publish work product for the matter's other installations |
 | `idx` | index status; why a search may be incomplete |
 | `adhoc status` | this session's isolation, as the user's setup made it |
 

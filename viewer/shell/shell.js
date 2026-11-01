@@ -1473,7 +1473,7 @@ class HomePane {
         this.ask("Which documents matter most, and why?"),
         this.ask("Find anything about …")) : "");
 
-    const cards = [this.documents(d), this.entities(o.entities, d), this.people(o.people, d), this.pages(o.pages), this.lists(o.lists),
+    const cards = [this.documents(d), this.entities(o.entities, d), this.people(o.people, d), this.pages(o.pages), this.lists(o.lists), this.published(o.published),
                    this.tags(ann), this.productions(o.productions, o.exhibits)];
     this.body.replaceChildren(intro, el("div", { class: "cards" }, ...cards),
       el("p", { class: "home-foot" }, "Click a suggestion to copy it, then paste it into Claude. Documents open in a new pane. Press ? for keys."));
@@ -1553,6 +1553,24 @@ class HomePane {
         [x.key_set ? "key set" : "", plural(x.items, "item"), fmtAgo(x.modified)].filter(Boolean).join(" · "),
         () => askClaude(`Show me the list ${x.file}`), x.question || x.query || x.file))),
       this.more(lists.length, RECENT_ROWS, "list", "List the saved lists and key sets"));
+  }
+
+  // work product published from any installation of this matter (SYNC.md)
+  published(p) {
+    if (!p) return "";
+    const items = [...p.pages.map((x) => ({ ...x, what: "page" })), ...p.lists.map((x) => ({ ...x, what: "list" }))]
+      .sort((a, b) => b.modified - a.modified);
+    if (!items.length) return this.section("Published", 0,
+      this.empty("Pages and lists published to share with this matter's other installations appear here. Your workspace stays yours until you publish.",
+        "Publish the chronology so the rest of the team has it"));
+    return this.section("Published", items.length,
+      el("ul", { class: "rows" }, ...items.slice(0, RECENT_ROWS).map((x) => this.row(x.title || x.question || x.file,
+        [x.what === "page" && x.refs ? plural(x.refs, "quotation") : x.what === "list" ? plural(x.items, "item") : "", fmtAgo(x.modified)]
+          .filter(Boolean).join(" · "),
+        () => askClaude(`Show me the published ${x.what} work/${x.file}`), "work/" + x.file))),
+      p.forks ? el("p", { class: "muted" }, `${plural(p.forks, "item")} revised on two installations at once. `,
+        el("a", { onclick: () => askClaude("Which published work has forks? Show me the differences.") }, "Ask Claude to compare them")) : "",
+      this.more(items.length, RECENT_ROWS, "item", "List the published work"));
   }
 
   tags(a) {

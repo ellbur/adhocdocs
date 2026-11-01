@@ -32,9 +32,10 @@ delete tags and notes directly. Everything else stays programmable.
   duplicates. `ann tag --dupes` and `--family` apply a tag to them
   explicitly.
 - **Tag definitions** form the matter's vocabulary: name, description (the
-  review criterion), color, hotkey, and optional exclusive group. A tag must
-  be defined before use, so a typo can't start a new tag, and hotkeys are
-  unique. Applying a tag in a group replaces the group's other tag on that
+  review criterion), color, and optional exclusive group. A tag must be
+  defined before use, so a typo can't start a new tag. **Hotkeys** are
+  unique, and each installation's own: they're kept in
+  `annotations/hotkeys.json`, which isn't synced ([SYNC.md](SYNC.md)). Applying a tag in a group replaces the group's other tag on that
   target, as recorded untag events.
 - **Notes** are Markdown and can reply to other notes, making threads
   anchored in documents. **Claude's notes follow Principle 5**: quotations
@@ -48,11 +49,14 @@ delete tags and notes directly. Everything else stays programmable.
 
 ## Storage
 
-`annotations/log.jsonl` is an append-only event log, and the current state
-is a replay. That gives no write conflicts between the viewer and Claude,
-full history ("who tagged this privileged, and when?"), a change feed (`ann
-log --since <id> --author user`: "what did the user tag since I last
-looked?"), and plain data. Writers hold `annotations/.lock` while they
+`annotations/logs/` holds append-only event logs, one per installation of
+the matter ([SYNC.md](SYNC.md)), and the current state is a replay of them
+merged. That gives no write conflicts between the viewer and Claude, full
+history ("who tagged this privileged, and when?"), a change feed (`ann log
+--since <cursor> --author user`: "what did the user tag since I last
+looked?", with `ann log --cursor` marking where you are), and plain data. Replay
+holds every event to the rules again, so events from different
+installations that clash resolve the same way everywhere (SYNC.md). Writers hold `annotations/.lock` while they
 validate and append, so the viewer must too.
 
 ## Authorship doesn't depend on Claude

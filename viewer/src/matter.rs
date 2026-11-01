@@ -26,14 +26,94 @@ pub struct State {
     pub metadata: HashMap<String, String>,   // doc -> metadata object
     pub children: HashMap<String, Vec<String>>,
     pub parent: HashMap<String, String>,
+    pub purged: HashSet<String>,
 }
 
 pub struct Matter {
     pub root: PathBuf,
     roots: Vec<PathBuf>,
-    logs: Vec<PathBuf>,
-    log_sizes: Vec<u64>,
+    log_sizes: Vec<(PathBuf, u64)>,
     pub state: State,
+}
+
+/// A feed's logs: one per installation (`<dir>/<origin>.jsonl`), plus the
+/// single log of a matter made before that (`legacy`), in the order merging
+/// breaks ties: by origin, the legacy log counting as origin "legacy". This
+/// must match `Feed.logs` in adhocdocs/matter.py.
+pub fn feed_logs(dir: &Path, legacy: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<(String, PathBuf)> = fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+                .filter_map(|p| Some((p.file_stem()?.to_string_lossy().to_string(), p)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if legacy.exists() {
+        found.push(("legacy".to_string(), legacy.to_path_buf()));
+    }
+    found.sort();
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+fn read_log(p: &Path) -> Vec<Value> {
+    let Ok(text) = fs::read_to_string(p) else { return vec![] };
+    text.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
+/// How many of each removed installation's events count, in one feed
+/// (`pool/cutoffs.json`, written by adhocdocs.pool): what it wrote after its
+/// removal is set aside, as `Feed.read` does.
+pub fn cutoffs(root: &Path, feed: &str) -> HashMap<String, usize> {
+    let v: Value = fs::read(root.join("pool/cutoffs.json")).ok()
+        .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    v["feeds"][feed].as_object().map(|o| o.iter()
+        .filter_map(|(k, n)| Some((k.clone(), n.as_u64()? as usize))).collect()).unwrap_or_default()
+}
+
+/// A feed's logs merged, each removed installation's cut where it was removed.
+pub fn feed_events(root: &Path, feed: &str, dir: &Path, legacy: &Path) -> Vec<Value> {
+    let cut = cutoffs(root, feed);
+    let paths = feed_logs(dir, legacy);
+    let limits: Vec<Option<usize>> = paths.iter()
+        .map(|p| p.file_stem().and_then(|s| cut.get(s.to_string_lossy().as_ref()).copied())).collect();
+    merged_limited(&paths, &limits)
+}
+
+/// Several logs' events in the order every installation replays them: at
+/// each step, the earliest of the logs' next events by ID, ties going to the
+/// earlier log. Each log keeps its own file order. (`heapq.merge` in
+/// adhocdocs/matter.py makes the same choices.)
+pub fn merged(paths: &[PathBuf]) -> Vec<Value> {
+    merged_limited(paths, &vec![None; paths.len()])
+}
+
+fn merged_limited(paths: &[PathBuf], limits: &[Option<usize>]) -> Vec<Value> {
+    let logs: Vec<Vec<Value>> = paths.iter().zip(limits)
+        .map(|(p, l)| { let mut v = read_log(p); if let Some(n) = l { v.truncate(*n); } v }).collect();
+    let mut pos = vec![0usize; logs.len()];
+    let mut out = Vec::with_capacity(logs.iter().map(|l| l.len()).sum());
+    loop {
+        let mut best: Option<(usize, &str)> = None;
+        for (i, log) in logs.iter().enumerate() {
+            if let Some(ev) = log.get(pos[i]) {
+                let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if best.map(|(_, b)| id < b).unwrap_or(true) {
+                    best = Some((i, id));
+                }
+            }
+        }
+        let Some((i, _)) = best else { break };
+        out.push(logs[i][pos[i]].clone());
+        pos[i] += 1;
+    }
+    out
+}
+
+/// The annotation feed's events, merged.
+pub fn annotation_events(root: &Path) -> Vec<Value> {
+    feed_events(root, "annotations", &root.join("annotations/logs"), &root.join("annotations/log.jsonl"))
 }
 
 fn hex(h: &str) -> &str {
@@ -48,7 +128,6 @@ impl Matter {
         }
         let mut m = Matter {
             roots: vec![root.join("store/objects"), root.join("workspace/.adhoc/objects")],
-            logs: vec![root.join("store/log.jsonl"), root.join("workspace/.adhoc/log.jsonl")],
             log_sizes: vec![],
             root,
             state: State::default(),
@@ -57,28 +136,34 @@ impl Matter {
         Ok(m)
     }
 
-    /// Replay the logs if either has grown since the last look.
+    /// Replay the logs if any has grown, or a new one appeared, since the
+    /// last look. The store feed (every installation's log, merged), then the
+    /// workspace's.
     pub fn refresh(&mut self) {
-        let sizes: Vec<u64> = self.logs.iter().map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).collect();
+        let store = feed_logs(&self.root.join("store/logs"), &self.root.join("store/log.jsonl"));
+        let workspace = self.root.join("workspace/.adhoc/log.jsonl");
+        let cutoffs = self.root.join("pool/cutoffs.json");
+        let sizes: Vec<(PathBuf, u64)> = store
+            .iter()
+            .chain(std::iter::once(&workspace))
+            .chain(std::iter::once(&cutoffs))
+            .map(|p| (p.clone(), fs::metadata(p).map(|m| m.len()).unwrap_or(0)))
+            .collect();
         if sizes == self.log_sizes {
             return;
         }
         let mut s = State::default();
-        for log in &self.logs {
-            let Ok(text) = fs::read_to_string(log) else { continue };
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                if let Ok(ev) = serde_json::from_str::<Value>(line) {
-                    apply(&mut s, &ev);
-                }
-            }
+        let store_events = feed_events(&self.root, "store", &self.root.join("store/logs"), &self.root.join("store/log.jsonl"));
+        for ev in store_events.iter().chain(read_log(&workspace).iter()) {
+            apply(&mut s, ev);
         }
         self.state = s;
         self.log_sizes = sizes;
     }
 
-    /// Changes whenever either log does.
+    /// Changes whenever any log does.
     pub fn generation(&self) -> Vec<u64> {
-        self.log_sizes.clone()
+        self.log_sizes.iter().map(|(_, n)| *n).collect()
     }
 
     fn path(&self, h: &str) -> Option<PathBuf> {
@@ -219,13 +304,17 @@ fn apply(s: &mut State, ev: &Value) {
     match ev.get("op").and_then(|v| v.as_str()).unwrap_or("") {
         "add-document" => {
             let doc = str_("doc");
-            if !s.documents.contains_key(&doc) {
+            let new = !s.documents.contains_key(&doc);
+            if new {
                 s.order.push(doc.clone());
             }
             s.documents.insert(doc.clone(), str_("content"));
-            s.withdrawn.remove(&doc);
+            if !s.purged.contains(&doc) {
+                s.withdrawn.remove(&doc); // ingesting a purged document again doesn't bring it back
+            }
             let parent = str_("parent");
-            if !parent.is_empty() {
+            // the same document ingested on two installations is one document
+            if new && !parent.is_empty() {
                 s.children.entry(parent.clone()).or_default().push(doc.clone());
                 s.parent.insert(doc, parent);
             }
@@ -250,6 +339,57 @@ fn apply(s: &mut State, ev: &Value) {
         "withdraw" => {
             s.withdrawn.insert(str_("doc"));
         }
+        // gone for good (adhocdocs.purge): its objects are deleted too
+        "purge" if str_("author").starts_with("user:") => {
+            for d in ev["docs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
+                s.purged.insert(d.to_string());
+                s.withdrawn.insert(d.to_string());
+            }
+        }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(id: &str, op: &str, doc: &str) -> String {
+        format!("{{\"id\": \"{}\", \"op\": \"{}\", \"doc\": \"{}\", \"content\": \"c-{}\"}}\n", id, op, doc, doc)
+    }
+
+    #[test]
+    fn logs_of_every_installation_merge_by_id() {
+        let dir = std::env::temp_dir().join(format!("adhoc-merge-{}", std::process::id()));
+        let logs = dir.join("store/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::create_dir_all(dir.join("store/objects")).unwrap();
+        // two installations; B's withdraw sorts between A's adds
+        fs::write(logs.join("o_B.jsonl"), ev("ev_2", "withdraw", "x")).unwrap();
+        fs::write(logs.join("o_A.jsonl"), ev("ev_1", "add-document", "x") + &ev("ev_3", "add-document", "y")).unwrap();
+        fs::write(logs.join("notes.txt"), "not a log").unwrap();
+        let paths = feed_logs(&logs, &dir.join("store/log.jsonl"));
+        assert_eq!(paths.len(), 2);
+        let ids: Vec<String> = merged(&paths).iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, ["ev_1", "ev_2", "ev_3"]);
+        let mut m = Matter::open(&dir).unwrap();
+        assert!(!m.live("x") && m.live("y"));
+        // a log arriving from a third installation is picked up
+        fs::write(logs.join("o_C.jsonl"), ev("ev_4", "add-document", "x")).unwrap();
+        m.refresh();
+        assert!(m.live("x"));
+        assert_eq!(m.state.order, ["x", "y"]);
+        // C is removed from the pool, having written nothing that counts
+        fs::create_dir_all(dir.join("pool")).unwrap();
+        fs::write(dir.join("pool/cutoffs.json"), r#"{"v": 1, "feeds": {"store": {"o_C": 0}}}"#).unwrap();
+        m.refresh();
+        assert!(!m.live("x"));
+        // a purge, and the same document added again: still gone
+        fs::write(dir.join("pool/cutoffs.json"), "{}").unwrap();
+        fs::write(logs.join("o_D.jsonl"), r#"{"id": "ev_5", "op": "purge", "author": "user:a", "docs": ["y"]}"#.to_string() + "\n"
+            + &ev("ev_6", "add-document", "y")).unwrap();
+        m.refresh();
+        assert!(!m.live("y") && m.live("x"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

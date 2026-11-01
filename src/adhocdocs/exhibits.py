@@ -111,22 +111,35 @@ def exhibits(m: Matter, list_file: Path, name: str, prefix: str = "Exhibit ", st
     out = m.workspace / "exhibits" / name
     if out.exists():
         raise ProductionError(f"exhibit set {name} exists; choose another name")
+    from . import numbers
+    from .annotations import Refused
+    held = []
     try:
-        return _exhibits(m, out, list_file, name, prefix, start, witness, when, originals)
-    except BaseException:
+        return _exhibits(m, out, list_file, name, prefix, start, witness, when, originals, held)
+    except BaseException as e:
         import shutil
         shutil.rmtree(out, ignore_errors=True)        # all or nothing: no half-made set to trip over
+        for r in held:
+            try:
+                numbers.release_here(m, r)
+            except Exception:
+                pass
+        if isinstance(e, Refused):
+            raise ProductionError(str(e)) from None
         raise
 
 
-def _exhibits(m, out, list_file, name, prefix, start, witness, when, originals) -> dict:
-    used = sorted(r["number"] for s in _sets(m) if s["prefix"] == prefix for r in s["records"])
-    if start is None:
-        start = (used[-1] + 1) if used else 1
+def _exhibits(m, out, list_file, name, prefix, start, witness, when, originals, held) -> dict:
+    from . import numbers
     _, items = lists.read(list_file)
-    clash = [n for n in range(start, start + len(items)) if n in used]
-    if clash:
-        raise ProductionError(f"{prefix}{clash[0]} is already used; start at {used[-1] + 1}")
+    # numbers are reserved first, so no other installation of the matter uses them (adhocdocs.numbers)
+    local = [(min(r["number"] for r in s["records"]), max(r["number"] for r in s["records"]), s["name"])
+             for s in _sets(m) if s["prefix"] == prefix and s["records"]]
+    r = numbers.reserve_here(m, numbers.exhibit_series(prefix), len(items), start, name, local) if items else None
+    if r:
+        held.append(r["reservation"])
+        start = r["first"]
+    start = start or 1
     state = m.state
     fields = _fields(m)
     (out / "PDF").mkdir(parents=True)
@@ -178,12 +191,15 @@ def _exhibits(m, out, list_file, name, prefix, start, witness, when, originals) 
             "file": file, "sha256": "sha256:" + hashlib.sha256((out / file).read_bytes()).hexdigest(),
         })
     header = {"type": "exhibits", "v": 1, "name": name, "prefix": prefix, "witness": witness, "date": when,
+              "reservation": r["reservation"] if r else None,
               "first": records[0]["label"] if records else None, "last": records[-1]["label"] if records else None,
               "exhibits": len(records), "list": str(list_file), "made": Date.today().isoformat()}
     (out / "exhibits.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [header, *records]), encoding="utf-8", newline="\n")
     _exhibit_list(out, header, records)
     ev = m.logs["workspace"].append(op="export", kind="exhibits", name=name, first=header["first"], last=header["last"],
                                     record="sha256:" + hashlib.sha256((out / "exhibits.jsonl").read_bytes()).hexdigest())
+    if r:
+        numbers.use_here(m, r["reservation"])     # stamped: the numbers can't be given back now
     return {**header, "path": str(out), "event": ev["id"]}
 
 

@@ -60,7 +60,7 @@ def test_exhibits(m, tmp_path):
     # numbers run on, and are never reused
     second = exhibits.exhibits(m, list_of(tmp_path / "b.list.jsonl", [{"loc": "doc:" + letter}]), "dep-b")
     assert second["first"] == "Exhibit 5"
-    with pytest.raises(ProductionError, match="already used"):
+    with pytest.raises(ProductionError, match="reserved already"):
         exhibits.exhibits(m, list_of(tmp_path / "c.list.jsonl", [{"loc": "doc:" + letter}]), "dep-c", start=2)
     assert not (m.workspace / "exhibits" / "dep-c").exists()
     dx = exhibits.exhibits(m, list_of(tmp_path / "d.list.jsonl", [{"loc": "doc:" + msa}]), "dep-d", prefix="DX-")

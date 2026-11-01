@@ -45,7 +45,17 @@ def run(fn):
             sys.exit(1)
         except BrokenPipeError:
             sys.exit(0)
+        except Exception as e:
+            # sync's errors (adhocdocs.peer, pool, invite, hub, signing, work), said plainly
+            if type(e).__name__ in SYNC_ERRORS:
+                print(json.dumps({"error": str(e)}), file=sys.stderr)
+                sys.exit(1)
+            raise
     return wrapper
+
+
+SYNC_ERRORS = {"SyncError", "PoolError", "InviteError", "HubError", "BadLog", "PermissionError", "ConnectionRefusedError",
+               "TimeoutError", "SSLError"}
 
 
 # -- adhoc: host-side matter administration -------------------------------------------
@@ -94,6 +104,88 @@ def adhoc(argv=None):
     s.add_argument("--kind", action="append", help="show: only these kinds (session-start, session-end, prompt, "
                                                    "tool, connection, claude); repeatable")
     s.add_argument("--full", action="store_true", help="show: whole tool results instead of previews")
+    s = sub.add_parser("publish", help="publish a workspace file or directory as yours, for the matter's other "
+                                       "installations (see `work --help`)")
+    s.add_argument("path")
+    s.add_argument("--user", required=True)
+    s.add_argument("--merge", action="store_true", help="revise every current version: resolves a fork")
+    s.add_argument("--revises", action="append")
+    s = sub.add_parser("retire", help="take published work out of work/ (the history stays)")
+    s.add_argument("name")
+    s.add_argument("--user", required=True)
+    s = sub.add_parser("purge", help="delete documents from the matter, here and on every installation (irreversible)",
+                       description=PURGE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    s.add_argument("docs", nargs="+", help="document IDs (or doc: locators)")
+    s.add_argument("--user", required=True)
+    s.add_argument("--reason", required=True, help='e.g. "clawback: produced in error"')
+    s.add_argument("--with-duplicates", action="store_true", help="also the documents that share their original")
+    s.add_argument("--yes", action="store_true", help="don't ask first")
+    s = sub.add_parser("purges", help="purges this installation has carried out, and what they leave for you to do")
+    s.add_argument("--ack", metavar="PURGE", help="mark a purge's notice as dealt with")
+    s.add_argument("--user")
+    s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)",
+                       description=SYNC_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ss = s.add_subparsers(dest="action", required=True)
+    ss.add_parser("status", help="this matter's ID, this installation's origin, the members, and the events held "
+                                 "from each origin")
+    ss.add_parser("conflicts", help="events from different installations that clashed, how each was resolved, "
+                                    "and published work that forked")
+    x = ss.add_parser("invite", help="an invitation for another installation to join (founds the pool if needed)")
+    x.add_argument("--user", required=True)
+    x.add_argument("--address", action="append", default=[],
+                   help="host:port where this installation listens (adhoc sync serve); repeatable")
+    x.add_argument("--role", choices=["member", "hub"], default="member")
+    x.add_argument("--hours", type=float, default=72, help="how long the invitation works (default 72)")
+    x.add_argument("--name", help="this installation's name, if this founds the pool (default: the host name)")
+    x.add_argument("--same-person", action="store_true",
+                   help="the one joining is yours too (your desktop, say): it may write as --user")
+    x = ss.add_parser("join", help="join a matter's pool with an invitation, into a new matter directory")
+    x.add_argument("code")
+    x.add_argument("path", help="a new, empty directory for the matter")
+    x.add_argument("--name", help="this installation's name (default: the host name)")
+    x.add_argument("--address", action="append", default=[], help="host:port where this one will listen, if it will")
+    x = ss.add_parser("serve", help="listen for the pool's other members (runs until stopped)")
+    x.add_argument("--listen", default=f"0.0.0.0:7480", help="host:port to listen on (default 0.0.0.0:7480)")
+    x.add_argument("--advertise", action="append", default=[],
+                   help="host:port the others should use to reach this one, recorded in the pool; repeatable")
+    x.add_argument("--user", help="who is advertising the address (needed with --advertise)")
+    x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
+    x.add_argument("--no-watch", action="store_true", help="only serve: don't sync as things change")
+    x.add_argument("--no-lan", action="store_true", help="don't announce this, or look for members, on the local network")
+    x = ss.add_parser("watch", help="sync as things change, here or on the members it can reach (runs until stopped)")
+    x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
+    x.add_argument("--no-lan", action="store_true", help="don't look for members on the local network")
+    ss.add_parser("now", help="sync with every member that says where it listens")
+    x = ss.add_parser("push", help="put this matter on a hub (with a code from its administrator), then sync")
+    x.add_argument("code", help="the hub code from adhoc hub enroll")
+    x.add_argument("--user", required=True)
+    ss.add_parser("members", help="the pool's members")
+    x = ss.add_parser("vouch", help="say another member writes for you too (from an installation that writes for you)")
+    x.add_argument("origin")
+    x.add_argument("--user", required=True)
+    x = ss.add_parser("remove", help="remove a member: no one syncs with it again (it keeps what it has)")
+    x.add_argument("origin")
+    x.add_argument("--user", required=True)
+    s = sub.add_parser("hub", help="run a hub: an always-on member that holds many matters (SYNC.md)",
+                       description=HUB_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    hs = s.add_subparsers(dest="action", required=True)
+    x = hs.add_parser("init", help="make a hub in a directory")
+    x.add_argument("dir")
+    x.add_argument("--name", required=True, help="what members will see, e.g. \"Firm hub\"")
+    x.add_argument("--address", action="append", default=[], help="host:port members reach it at; repeatable")
+    x.add_argument("--plain", action="store_true",
+                   help="hold matters readably (by default a hub holds them sealed: it can't read them)")
+    x = hs.add_parser("enroll", help="a hub code for a person, to push matters here")
+    x.add_argument("dir")
+    x.add_argument("--person", required=True)
+    x = hs.add_parser("revoke", help="stop a person's hub codes working (matters already here stay)")
+    x.add_argument("dir")
+    x.add_argument("--person", required=True)
+    x = hs.add_parser("serve", help="serve every matter here (runs until stopped)")
+    x.add_argument("dir")
+    x.add_argument("--listen", default="0.0.0.0:7480")
+    x = hs.add_parser("matters", help="the matters this hub holds")
+    x.add_argument("dir")
     s = sub.add_parser("audit-api", help=argparse.SUPPRESS)
     s.add_argument("--socket", required=True)
     s.add_argument("--session", required=True)
@@ -103,6 +195,12 @@ def adhoc(argv=None):
     if a.cmd == "init":
         m = Matter.create(a.path)
         out({"matter": str(m.root)})
+        return
+    if a.cmd == "hub":
+        return _hub(a)
+    if a.cmd == "sync" and a.action == "join":
+        from . import invite
+        out(invite.join(a.code, a.path, a.name, a.address))
         return
     if a.cmd == "setup":
         from . import setup
@@ -166,6 +264,34 @@ def adhoc(argv=None):
             out(report)
             if not report["ok"]:
                 sys.exit(1)
+    elif a.cmd == "purge":
+        from . import purge
+        docs = [locators.parse("doc:" + d.removeprefix("doc:"), m.objects)["doc"] for d in a.docs]
+        p = purge.preview(m, docs, a.with_duplicates)
+        if not a.yes:
+            print(f"This deletes {len(p['docs'])} document(s) (with attachments), {len(p['objects'])} stored "
+                  f"object(s), and redacts {p['events']} tag/note event(s), on this installation and every "
+                  "installation of the matter. It can't be undone. Type PURGE to go on: ", end="", file=sys.stderr)
+            if input().strip() != "PURGE":
+                raise ValueError("not purged")
+        out(purge.purge(m, f"user:{a.user}", docs, a.reason, a.with_duplicates))
+    elif a.cmd == "purges":
+        from . import purge
+        if a.ack:
+            if not a.user:
+                raise ValueError("--ack needs --user")
+            out(purge.acknowledge(m, a.ack, f"user:{a.user}"))
+        else:
+            for n in purge.notices(m):
+                out(n)
+    elif a.cmd in ("publish", "retire"):
+        from . import work
+        if a.cmd == "publish":
+            out(work.publish(m, f"user:{a.user}", work.name_of(m, a.path), a.revises, a.merge))
+        else:
+            out(work.retire(m, f"user:{a.user}", a.name))
+    elif a.cmd == "sync":
+        _sync(m, a)
     elif a.cmd == "audit-api":
         from . import audit
         print(json.dumps({"serving": a.socket, "session": a.session}), file=sys.stderr, flush=True)
@@ -178,6 +304,136 @@ def adhoc(argv=None):
         print(json.dumps({"serving": str(path)}), file=sys.stderr, flush=True)
         try:
             annapi.serve(m, path)
+        except KeyboardInterrupt:
+            pass
+
+
+PURGE_HELP = """\
+Delete documents from the matter for good: a clawback, or destruction under
+a protective order. On this installation, and on every installation of the
+matter (and the hub) as they sync: originals, text, metadata, the
+documents' attachments, layers made from them, index entries, and the tags
+and notes on them (their events are redacted). A record of the purge stays:
+who, when, why, which document IDs.
+
+What adhocdocs doesn't track it can't purge: the workspace (drafts, exports,
+productions), Claude's transcripts, copies made elsewhere. Every
+installation gets a notice listing what it found there (adhoc purges).
+
+Only a person can purge, on the host."""
+
+
+SYNC_HELP = """\
+Sync this matter with its other installations: laptops, desktops, a hub.
+Every installation keeps a full copy and works offline. Documents, tags,
+notes, entities and published work sync; the workspace doesn't. See SYNC.md.
+
+  adhoc sync invite --user me --address myhost:7480   (on a member) prints a code
+  adhoc sync serve --listen 0.0.0.0:7480              (on a member) to be reached
+  adhoc sync join <code> ~/matters/smith --name "Bob's desktop"   (the new one)
+  adhoc sync now                                      sync with every member
+  adhoc sync status | members | conflicts
+
+An invitation is a password: send it the way you'd send one."""
+
+
+def _sync(m, a):
+    from . import invite, lan as lanmod, peer, pool, sync
+    if a.action == "status":
+        st = sync.status(m)
+        st["members"] = pool.Pool.load(m).summary(st["origin"])
+        out(st)
+    elif a.action == "conflicts":
+        for c in sync.conflicts(m):
+            out(c)
+    elif a.action == "members":
+        for row in pool.Pool.load(m).summary(m.origin):
+            out(row)
+    elif a.action == "invite":
+        out(invite.create(m, f"user:{a.user}", a.address, a.role, a.hours, a.name, a.same_person))
+    elif a.action == "vouch":
+        out(pool.vouch(m, f"user:{a.user}", a.origin))
+    elif a.action == "remove":
+        out({**pool.remove_member(m, f"user:{a.user}", a.origin),
+             "note": "No member will sync with it once they have this removal (run adhoc sync now). It keeps "
+                     "what it already has: removal can't recall copies."})
+    elif a.action == "now":
+        for row in peer.sync_all(m):
+            out(row)
+    elif a.action == "push":
+        from . import hub
+        out(hub.push(m, a.code, f"user:{a.user}"))
+    elif a.action == "serve":
+        if a.advertise:
+            if not a.user:
+                raise ValueError("--advertise needs --user")
+            if not pool.founded(m):
+                pool.found(m, f"user:{a.user}", __import__("socket").gethostname(), a.advertise)
+            else:
+                pool.set_addresses(m, f"user:{a.user}", a.advertise)
+        host, port = peer.split_address(a.listen)
+        srv = peer.Server([m], host, port)
+        print(json.dumps({"serving": m.id, "origin": m.origin, "listen": f"{host}:{srv.address[1]}"}),
+              file=sys.stderr, flush=True)
+        lan_port = None if a.no_lan else lanmod.PORT
+        if not a.no_lan:
+            lanmod.Announcer(srv).start()
+        if not a.no_watch:
+            import threading
+            from . import watch
+            threading.Thread(target=watch.run, args=(m, a.every * 60, lan_port), daemon=True).start()
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            pass
+    elif a.action == "watch":
+        from . import watch
+        sys.exit(watch.run(m, a.every * 60, None if a.no_lan else lanmod.PORT))
+
+
+HUB_HELP = """\
+A hub is an always-on member with a stable address: a firm server, say. It
+holds every matter pushed to it, so members can sync while each other's
+machines are off, and invitations made on a member are left there. It runs
+no sessions, and it can't read the matters it holds: members send it
+everything encrypted with a key only they have (adhocdocs.seal; --plain
+turns that off).
+
+  adhoc hub init /srv/adhoc-hub --name "Firm hub" --address hub.firm.example:7480
+  adhoc hub enroll /srv/adhoc-hub --person alice     prints a code for Alice
+  adhoc hub serve /srv/adhoc-hub                     (keep it running)
+
+Alice, on her machine:  adhoc --matter ~/matters/smith sync push <code> --user alice
+
+A hub code lets its holder put matters on the hub; it's a password.
+Matters already on the hub are governed by their own pools."""
+
+
+def _hub(a):
+    from . import hub, peer
+    if a.action == "init":
+        h = hub.Hub.init(a.dir, a.name, a.address, sealed=not a.plain)
+        out({"hub": str(h.root), "name": a.name, "addresses": a.address, "origin": h.identity.origin,
+             "sealed": not a.plain})
+        return
+    h = hub.Hub(a.dir)
+    if a.action == "enroll":
+        out(h.enroll(a.person))
+    elif a.action == "revoke":
+        out({"person": a.person, "revoked": h.revoke(a.person)})
+    elif a.action == "matters":
+        for m in h.matters():
+            from . import sync
+            st = sync.status(m)
+            out({"matter": m.id, "path": str(m.root), "adopted_by": m.config.get("adopted_by"),
+                 "origins": len(st["origins"])})
+    elif a.action == "serve":
+        host, port = peer.split_address(a.listen)
+        srv = peer.Server(h.matters(), host, port, hub=h)
+        print(json.dumps({"hub": h.config["name"], "listen": f"{host}:{srv.address[1]}",
+                          "matters": len(srv.matters)}), file=sys.stderr, flush=True)
+        try:
+            srv.serve_forever()
         except KeyboardInterrupt:
             pass
 
@@ -295,10 +551,12 @@ def idx(argv=None):
         if name == "verify":
             s.add_argument("--repair", action="store_true")
     s = sub.add_parser("changes", help="print the change feed")
-    s.add_argument("--since", help='cursor JSON, e.g. \'{"store": "ev_…"}\'')
+    s.add_argument("--since", help='cursor JSON, e.g. \'{"store/o_…": "ev_…", "workspace": "ev_…"}\': '
+                   'the last event read in each log. Each event names its log ("log")')
     s = sub.add_parser("new", help="register a custom index updated by your own command")
     s.add_argument("name")
-    s.add_argument("--updater", required=True, help="command that reads change events on stdin")
+    s.add_argument("--updater", required=True, help='command that reads change events on stdin, applies them, and writes the manifest\'s "cursor": '
+                   'cursor[ev["log"]] = ev["id"] for each event. Skip events marked "stale" (overtaken by later ones)')
     s.add_argument("--kind", default="custom")
     s.add_argument("--settings", default="{}", help="JSON")
     matter_everywhere(sub)
@@ -314,7 +572,7 @@ def idx(argv=None):
         d.mkdir(parents=True, exist_ok=False)
         (d / "manifest.json").write_text(json.dumps(
             {"type": "index", "v": 1, "name": a.name, "kind": a.kind, "settings": json.loads(a.settings),
-             "cursor": {"store": None, "workspace": None}, "updater": a.updater}, indent=2) + "\n", encoding="utf-8", newline="\n")
+             "cursor": {}, "updater": a.updater}, indent=2) + "\n", encoding="utf-8", newline="\n")
         out({"created": str(d)})
         return
     names = getattr(a, "names", None) or all_names(m)
@@ -693,8 +951,10 @@ def ann(argv=None):
     s = sub.add_parser("find", help="documents by tags: --tag hot --tag -privileged")
     s.add_argument("--tag", action="append", required=True)
     s.add_argument("--list", dest="list_file", help="also write a list file")
-    s = sub.add_parser("log", help="the event log")
-    s.add_argument("--since", help="event ID")
+    s = sub.add_parser("log", help="the event log, all installations' logs merged")
+    s.add_argument("--since", help="a cursor from --cursor (JSON), or an event ID. Events synced from other "
+                   "installations can sort before ones you've read; a cursor still catches them, an ID doesn't")
+    s.add_argument("--cursor", action="store_true", help="print only the cursor for the log's end")
     s.add_argument("--author", help="user, claude, or user:<id>")
     s = sub.add_parser("check", help="check a note's references and quotations (note ID, or - for a body on stdin)")
     s.add_argument("note")
@@ -811,7 +1071,11 @@ def ann(argv=None):
             lists.write(a.list_file, *lists.new(" ".join(a.tag), ["doc:" + d for d in docs],
                                                 query=" ".join(f"tag:{t}" for t in a.tag)))
     elif a.cmd == "log":
-        for ev in m.annotation_log.read(a.since):
+        if a.cursor:
+            out(m.annotation_log.cursor())
+            return
+        since = json.loads(a.since) if a.since and a.since.lstrip().startswith("{") else a.since
+        for ev in m.annotation_log.read(since):
             if who(a.author, ev["author"]):
                 out(ev)
     elif a.cmd == "check":
@@ -1351,7 +1615,8 @@ def produce(argv=None):
     p.add_argument("list_file", help="the documents to produce, in order")
     p.add_argument("--name", required=True, help="e.g. vol001")
     p.add_argument("--prefix", required=True, help="Bates prefix, e.g. HFS")
-    p.add_argument("--start", type=int, default=1)
+    p.add_argument("--start", type=int, help="first number (default: the next not reserved in this matter, "
+                                             "on any installation)")
     p.add_argument("--digits", type=int, default=6)
     p.add_argument("--legend", help='e.g. "CONFIDENTIAL"')
     p.add_argument("--no-families", action="store_true", help="don't add each document's attachments after it")
@@ -1374,7 +1639,8 @@ def produce_exhibits(argv):
     p.add_argument("list_file", help="the exhibits, in order: one per item")
     p.add_argument("--name", required=True, help="the set, e.g. kettering-dep")
     p.add_argument("--prefix", default="Exhibit ", help='label before the number: "Exhibit " (default), "DX-", "PX "')
-    p.add_argument("--start", type=int, help="first number (default: after the last used with this prefix)")
+    p.add_argument("--start", type=int, help="first number (default: the next not reserved in this matter, "
+                                             "on any installation)")
     p.add_argument("--witness", help="on the sticker, e.g. Kettering")
     p.add_argument("--date", help="on the sticker, e.g. 2026-04-28")
     p.add_argument("--originals", action="store_true", help="use originals even for documents that were produced")
@@ -1387,9 +1653,69 @@ def produce_exhibits(argv):
         sys.exit(1)
 
 
+# -- work --------------------------------------------------------------------------------------
+
+WORK_HELP = """\
+Published work product, shared with this matter's other installations.
+
+The workspace is yours alone. To share a page, chronology, key set, list or
+production with the matter's other installations, publish it: a snapshot
+goes into the store and appears in work/ (read-only here) on every
+installation. Publish when a draft is ready to share, or when the user asks.
+
+  work ls                          what's published, and any forks
+  work publish <path> [--merge]    publish a file or directory in the workspace
+  work checkout <name>             copy a published version into the workspace
+  work log <name>                  a name's versions
+  work retire <name>               take it out of work/ (the history stays)
+
+To revise someone else's page: work checkout memo.md, edit it in the
+workspace, then work publish memo.md. If two installations revised the same
+version, it forks: work ls shows both, the other is in work/.forks/; check
+both out, merge them, and publish with --merge."""
+
+
+@run
+def work(argv=None):
+    from . import work as w
+    p = parser("work", WORK_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("ls", help="published work, with forks")
+    s = sub.add_parser("publish", help="publish a workspace file or directory (through the annotation API)")
+    s.add_argument("path")
+    s.add_argument("--merge", action="store_true", help="revise every current version: resolves a fork")
+    s.add_argument("--revises", action="append", help="the version this revises (default: the one checked out)")
+    s.add_argument("--requested-by", help="user, when the user asked for this")
+    s = sub.add_parser("checkout", help="copy a published version into the workspace")
+    s.add_argument("name")
+    s.add_argument("--version", help="default: the current one")
+    s.add_argument("--force", action="store_true", help="replace workspace changes that aren't published")
+    s = sub.add_parser("log", help="a name's versions")
+    s.add_argument("name")
+    s = sub.add_parser("retire", help="take a name out of work/ (through the annotation API)")
+    s.add_argument("name")
+    s.add_argument("--requested-by")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    if a.cmd == "ls":
+        for row in w.listing(m):
+            out(row)
+    elif a.cmd == "log":
+        for row in w.history(m, a.name):
+            out(row)
+    elif a.cmd == "checkout":
+        out(w.checkout(m, a.name, a.version, a.force))
+    elif a.cmd == "publish":
+        req = {"name": w.name_of(m, a.path), "merge": a.merge, "revises": a.revises, "requested_by": a.requested_by}
+        out(annapi.request(m, {k: v for k, v in req.items() if v}, "/publish"))
+    elif a.cmd == "retire":
+        out(annapi.request(m, {"name": a.name, **({"requested_by": a.requested_by} if a.requested_by else {})}, "/retire"))
+
+
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

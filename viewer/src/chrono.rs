@@ -255,10 +255,12 @@ impl Chrono {
         };
         let resolve = |s: Option<String>| s.and_then(|d| m.resolve_doc(&d)).filter(|d| m.live(d));
 
-        // chronologies, key sets and pages in the workspace
-        let ws = m.root.join("workspace");
+        // chronologies, key sets and pages in the workspace, and those published
+        // from any installation (work/: SYNC.md)
         let mut files = vec![];
-        walk(&ws, &ws, 0, &mut files);
+        for dir in [m.root.join("workspace"), m.root.join("work")] {
+            walk(&dir, &dir, 0, &mut files);
+        }
         files.sort_by(|a, b| b.1.cmp(&a.1));
         for (rel, _, path) in files {
             let text = fs::read_to_string(&path).unwrap_or_default();

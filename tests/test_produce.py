@@ -48,8 +48,12 @@ def test_production(m, tmp_path):
     dat = (out / "vol001.dat").read_text(encoding="utf-8").splitlines()
     assert len(dat) == 4 and "þBEGBATESþ" in dat[0]
     assert len((out / "vol001.opt").read_text(encoding="utf-8").splitlines()) == r["pages"]
-    with pytest.raises(produce.ProductionError, match="already used"):
-        produce.produce(m, p, "vol002", "HFS")
+    with pytest.raises(produce.ProductionError, match="reserved already"):
+        produce.produce(m, p, "vol002", "HFS", start=1)
+    assert not (m.workspace / "productions/vol002").exists()
+    # without a start, the next production carries on from the last
+    r2 = produce.produce(m, p, "vol002", "HFS")
+    assert r2["begin"] == f"HFS{int(r['end'][3:]) + 1:06d}"
 
 
 def test_bates_resolution_and_citation(m, tmp_path):
