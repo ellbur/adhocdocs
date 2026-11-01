@@ -63,7 +63,13 @@ Adding documents works for these formats:
 - email (`.eml`, `.mbox`, Outlook `.msg` and `.pst`/`.ost`), with attachments
 - `.docx` and `.xlsx`
 - CSV, HTML and text
+- JSON, JSON Lines and XML, kept as their text
 - zip archives
+
+Files in any other format go in too. Nothing extracts text from them, but
+Claude can inspect their bytes, quote them as hex, and work out and show
+its own reading of them, always marked as its reading
+([DATA.md](DATA.md)).
 
 Originals are kept exactly as given, and identical files are stored once.
 Zip archives and mailboxes (`.mbox`, `.pst`) are read a member at a
@@ -171,6 +177,7 @@ to try on the sample matter:
 - *"Show me a timeline of the emails, one lane per thread."* Or: *"…of the chronology entries."*
 - *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
 - *"In the memo, show the signature line of the delivery receipt as a picture, and the aging report rows as a table."*
+- *"What is this .dat file? If you can decode it, show me the records as a table, and chart the amounts by month."*
 
 Claude's quotations in pages are references to the documents, not retyped
 text. So an export can show where every quote came from, and a quote that

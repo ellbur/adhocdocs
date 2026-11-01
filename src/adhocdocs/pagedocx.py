@@ -97,11 +97,65 @@ class Writer:
         for text, italic in _strip_tags(html_cite):
             para.add_run(text).italic = italic or None
 
+    def mono(self, para, text):
+        for i, line in enumerate(text.split("\n")):
+            if i:
+                para.add_run().add_break()
+            run = para.add_run(line)
+            run.font.name, run.font.size = "Courier New", Pt(8)
+
+    def interpretation(self, para, d, r):
+        """Claude's reading: labeled as such, never set like a quotation."""
+        from . import interp
+        from .pages import _doc_only
+        want, err = literate.shown_as(self.page.m, d, r)
+        if err:
+            raise ValueError(f"reference {d.id}: {err}")
+        rec = r.interp
+        value = interp.value_of(self.page.m, rec, r.ptr)
+        source = "".join(t for t, _ in _strip_tags(self.page.cite(_doc_only(r))))
+        if d.kind == "interp":
+            para.add_run(interp.as_text(self.page.m, rec, value, want))
+            if d.opts.get("cite", "inline") != "none":
+                para.add_run(f" (Claude’s reading of {source})").italic = True
+            return
+        label = para.add_run(f"Interpretation by Claude, not the document’s own content: {rec['title']}. "
+                             f"Decoded from {source}; output {rec['output']['sha256'][7:15]}.")
+        label.italic, label.font.size = True, Pt(8)
+        if want == "image":
+            if rec["output"]["type"] != "png":
+                raise ValueError(f"reference {d.id}: Word can't hold an SVG picture; have the decoder print PNG, "
+                                 "or export html or pdf")
+            para.add_run().add_break()
+            para.add_run().add_picture(io.BytesIO(interp.output_bytes(self.page.m, rec)), width=Inches(6.0))
+        elif want == "table":
+            header, rows, _, more = interp.table_rows(rec, value)
+            allrows = ([header] if header else []) + rows
+            width = max(len(x) for x in allrows) if allrows else 1
+            t = self.doc.add_table(rows=len(allrows), cols=width)
+            t.style = "Table Grid"
+            for i, row in enumerate(allrows):
+                for j, cell in enumerate(row):
+                    t.cell(i, j).text = str(cell)
+                    if header and i == 0:
+                        for run in t.cell(i, j).paragraphs[0].runs:
+                            run.bold = True
+            if more:
+                self.doc.add_paragraph(f"[{more} more rows not shown]")
+        else:
+            para.add_run().add_break()
+            self.mono(para, interp.as_text(self.page.m, rec, value, want))
+
     def fill(self, para, token, style):
         self.written.add(token)
         kind, d, r = self.fills[token]
         if r.status == "broken":
             raise ValueError(f"broken reference {d.id}")
+        if d.kind in ("interp", "interp-block"):
+            if d.kind == "interp-block":
+                para.paragraph_format.left_indent = Inches(0.25)
+            self.interpretation(para, d, r)
+            return
         citation = self.page.cite(r, d.opts.get("signal"))
         if d.kind == "cite":
             self.cite_runs(para, citation)
@@ -113,7 +167,10 @@ class Writer:
         if d.kind == "block":
             para.paragraph_format.left_indent = Inches(0.5)
             para.paragraph_format.right_indent = Inches(0.5)
-            if shown["as"] == "image":
+            if shown["as"] == "hex":
+                from .raw import hexdump_text
+                self.mono(para, hexdump_text(r.data, r.select["bytes"][0]))
+            elif shown["as"] == "image":
                 self.picture(para, shown["crops"])
             elif shown["as"] == "table":
                 self.table(r)
@@ -121,6 +178,9 @@ class Writer:
                 self.quote_runs(para, d, r, True, styles)
         elif r.kind == "cells":
             para.add_run("“" + cells_text(r) + "”")
+        elif r.kind == "bytes":
+            run = para.add_run(r.data.hex(" "))
+            run.font.name = "Courier New"
         else:
             para.add_run("“")
             self.quote_runs(para, d, r, False, styles)
@@ -189,7 +249,7 @@ class Writer:
             elif t.type == "paragraph_open":
                 inl = tokens[i + 1]
                 content = inl.content.strip()
-                if TOKEN.fullmatch(content) and self.fills[content][1].kind == "block":
+                if TOKEN.fullmatch(content) and self.fills[content][1].kind in ("block", "interp-block"):
                     self.fill(self.doc.add_paragraph(), content, None)
                 else:
                     p = self.doc.add_paragraph(style=lists[-1] if lists else None)

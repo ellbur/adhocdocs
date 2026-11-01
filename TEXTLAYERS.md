@@ -96,6 +96,14 @@ passes, a .docx with tracked changes accepted and with them shown.
   Note numbers are in the text where Word shows them; a comment's author
   and date are segment attributes, since they aren't the comment's words.
   [`extract/docx.py`](src/adhocdocs/extract/docx.py) has the details.
+- JSON, JSON Lines and XML (by name, or by content: text that parses as
+  one) are kinds `json`, `ndjson` and `xml`. Their layer is their literal
+  text, as for any text file; metadata adds `format`, `valid`, `shape` and
+  (JSON Lines) `records`. `ptr=` locators name values in them.
+- A file with NUL bytes in its first 2,000 is binary, not text. A file
+  nothing reads (kind `other`) has no layer; its metadata records the
+  signature its first bytes match (`signature`), if any. Its bytes can
+  still be quoted (`bytes=` locators) and interpreted ([DATA.md](DATA.md)).
 - GPL dependencies are fine: the project is open source, and will stay so
   for the foreseeable future (as with MuPDF, see [VIEWER.md](VIEWER.md)).
 

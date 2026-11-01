@@ -50,6 +50,20 @@ them.
   Fields, keyword (Boolean, proximity, exhaustive), semantic (local model),
   hybrid, and grep.
 
+## Unknown formats and schemas
+
+*Built:* [DATA.md](DATA.md).
+- **Bytes.** `raw info` (size, signature, entropy, text-likeness, format),
+  `raw strings`, `raw hex`; `bytes=` locators quote an original's bytes,
+  shown as hex.
+- **Structured data.** JSON, JSON Lines and XML are recognized at ingest.
+  `raw schema` lists every path with its types, counts and examples, and
+  `ptr=` locators quote a JSON value's own text.
+- **Interpretations.** `interp run` records Claude's own decoder and its
+  reading (a table, tree, value, text or chart), reproducibly; `interp
+  check`, `render`, `view`. Pages show them with `:interp`, captioned as
+  Claude's, never as quotations.
+
 ## Annotation
 
 - **Tags and notes.** *Built*: `ann` and the annotation API for Claude, and

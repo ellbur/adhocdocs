@@ -125,6 +125,10 @@ because Claude never typed it.
 - When a page is exported to a format that must hold literal text (e.g. a
   brief as .docx), the export resolves each reference into text and keeps a
   record of where every quotation came from.
+- A file of unknown format has no text to quote. Its bytes can be quoted
+  (as hex), and Claude's reading of them is an **interpretation**: made by
+  a recorded, reproducible decoder, always labeled as Claude's, and never
+  shown as a quotation ([DATA.md](DATA.md)).
 
 ## Open questions
 

@@ -76,7 +76,9 @@ def _extractors(m: Matter, content: str, name, data):
         if kind in STREAMED:
             return extract_file(stored, kind)
         if kind == "other" and data is None and not _maybe_msg(stored):
-            return Extraction(kind="other")         # nothing reads it, so don't load it
+            from .extract import binary_metadata
+            with open(stored, "rb") as f:            # nothing reads it, so don't load it
+                return Extraction(kind="other", metadata=binary_metadata(f.read(4096)))
         return extract(name, data if data is not None else stored.read_bytes())
 
     def failed():

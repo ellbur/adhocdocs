@@ -25,6 +25,8 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `ann` | tags, notes, privilege flags, and the entity list; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
+| `raw` | files of unknown format or schema: bytes (info, strings, hex), JSON/XML schemas |
+| `interp` | your own decoders' readings of such files, recorded and shown as yours |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
 | `work` | publish work product for the matter's other installations |
 | `idx` | index status; why a search may be incomplete |
@@ -51,7 +53,12 @@ mark inference as inference, and ask the user when the evidence is thin.
    `redact…`, even when asked; use `ann flag-privilege` with a basis. Call
    the result a *check for possible privilege*, never a privilege log, and
    say why something may be privileged, not that it is.
-8. **Everything is recorded** in an audit log on the host. If the audit API is
+8. **Your readings aren't the documents' words.** For a file nothing
+   extracts (kind `other`) or data whose schema you inferred, quote only
+   its bytes (`bytes=`, shown as hex) or its own text (`ptr=` in JSON).
+   What you decode is an interpretation: record it with `interp run`, show
+   it with `:interp`, and say how sure you are (`--about`). See `interp --help`.
+9. **Everything is recorded** in an audit log on the host. If the audit API is
    down and blocks a tool, stop and tell the user; don't work around it.
 
 ## Explaining a point with a few documents

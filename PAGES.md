@@ -71,6 +71,15 @@ through to its source.
   - **spreadsheet cells** (`sheet=…&cells=…`, a grid selection): a table in
     a block quotation, the cells joined by semicolons inline. The cells'
     text is the quote fingerprint, so a changed cell breaks the reference.
+  - **bytes** (`bytes=…`, for files nothing reads): a hex dump in a block,
+    hex digits inline (`as=hex`), cited "ledger at bytes 8–31". A value in
+    JSON is quoted by its `ptr=` locator, as ordinary text.
+- **Interpretations are not quotations.** `:interp{#id}` and
+  `::interp{#id}` show Claude's own reading of a file of unknown format or
+  schema (a table, tree, value, text or chart made by a recorded decoder),
+  captioned as Claude's, never as the document's. A `:q` of one is a
+  broken reference, and export lists them apart from quotations
+  (`interpretations` in the provenance). See [DATA.md](DATA.md).
 
   Formatting and pictures aren't stored with the text layers. They're
   recomputed from the original, so documents ingested before this existed

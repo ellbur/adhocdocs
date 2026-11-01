@@ -8,6 +8,9 @@ naming entries in a fenced ``refs`` block at the end of the text:
 ``::q{#id}``           (own line) block quotation plus citation
 ``:cite{#id}``         citation only
 ``[text](ref:id)``     link that opens the viewer at the reference
+``:interp{#id}``       an interpretation's value, inline, marked as one
+``::interp{#id}``      (own line) an interpretation as a table, tree,
+                       text or picture, captioned as Claude's reading
 =====================  ==================================================
 
 Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``, and
@@ -23,13 +26,21 @@ Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``, and
               their text set as pages, captioned as such
 ``as=table``  (block only) spreadsheet cells as a table (the default for a
               cells reference in a block)
+``as=hex``    a byte reference's bytes, as a hex dump in a block or as hex
+              digits inline (the default, and only, way to quote bytes)
 
 The ``refs`` block holds one JSON object per line: a locator plus an ``id``
 (lowercase letters, digits, hyphens). A quoted reference needs ``layer``
 and ``quote``; an elided one has ``parts`` (each a ``select`` and
 ``quote``, same layer, in order, not overlapping). A cells reference has
 ``layer``, ``select`` (``sheet``, ``cells``) and ``quote`` (the cells'
-text); a region reference has ``select`` (``page``, ``xywh``). ``alter`` lists
+text); a region reference has ``select`` (``page``, ``xywh``); a byte
+reference has ``select`` (``bytes``) and ``quote`` (``sha256``, ``hex``).
+An interpretation reference has ``interp`` (its name), ``output`` (the
+output's sha256, so a changed interpretation breaks the reference) and
+optionally ``ptr`` (a JSON pointer into the output); it can only be shown
+with ``:interp``/``::interp`` (``as=table|tree|value|text|image``), never
+quoted. ``alter`` lists
 alterations, positioned by layer offsets inside the quoted parts:
 
 ``{"replace": [a, b], "with": "T"}``  ``{"insert": p, "text": "…"}``
@@ -44,7 +55,7 @@ from dataclasses import dataclass, field
 from . import locators
 
 REFS_BLOCK = re.compile(r"^```refs[ \t]*\n(.*?)^```[ \t]*\n?", re.S | re.M)
-DIRECTIVE = re.compile(r"(?P<colons>:{1,2})(?P<name>q|cite)\{#(?P<id>[a-z0-9-]+)(?P<opts>[^}]*)\}")
+DIRECTIVE = re.compile(r"(?P<colons>:{1,2})(?P<name>q|cite|interp)\{#(?P<id>[a-z0-9-]+)(?P<opts>[^}]*)\}")
 REF_LINK = re.compile(r"\]\(ref:(?P<id>[a-z0-9-]+)\)")
 OPTION = re.compile(r'([a-z]+)=(?:"([^"]*)"|(\S+))')
 QUOTED = re.compile(r"“[^”]*”|\"[^\"\n]*\"")
@@ -72,7 +83,8 @@ def directives(prose: str) -> list[Directive]:
         if block and not alone:
             block = False
         opts = {k: a if a else b for k, a, b in OPTION.findall(m.group("opts"))}
-        kind = "cite" if m.group("name") == "cite" else ("block" if block else "q")
+        name = m.group("name")
+        kind = {"cite": "cite", "interp": "interp-block" if block else "interp"}.get(name) or ("block" if block else "q")
         out.append(Directive(kind, m.group("id"), opts, m.start(), m.end()))
     for m in REF_LINK.finditer(prose):
         out.append(Directive("link", m.group("id"), {}, m.start(), m.end()))
@@ -140,6 +152,9 @@ class Resolved:
     select: dict | None = None      # a cells or region reference's selector
     region: dict | None = None      # a region reference: page and xywh
     span: list | None = None        # a cells reference: the char range it covers
+    data: bytes | None = None       # a byte reference: the bytes
+    interp: dict | None = None      # an interpretation reference: its record
+    ptr: str | None = None          # … and the pointer into its output
 
     @property
     def quoted(self) -> bool:
@@ -147,6 +162,10 @@ class Resolved:
 
     @property
     def kind(self) -> str:
+        if self.interp is not None:
+            return "interp"
+        if self.data is not None:
+            return "bytes"
         return "text" if self.parts else "cells" if self.cells is not None else "region" if self.region else "document"
 
     def result(self) -> dict:
@@ -192,9 +211,49 @@ def _resolve_selection(m, ref: dict) -> Resolved:
     return res
 
 
+def _resolve_interp(m, ref: dict) -> Resolved:
+    """An interpretation reference: the interpretation must exist, still
+    hold (inputs live, files unchanged) and have the output it was given."""
+    from . import interp
+    rid = ref.get("id", "?")
+    try:
+        rec = interp.load(m, ref["interp"])
+    except (interp.InterpError, KeyError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    if ref.get("output") and ref["output"] != rec["output"]["sha256"]:
+        return Resolved(rid, "broken", error=f"interpretation {rec['name']} was made again since this reference; "
+                                              "check it still says this, then page ref add --interp --replace")
+    held = interp.check(m, rec["name"], rerun=False)
+    if not held["ok"]:
+        return Resolved(rid, "broken", error="; ".join(held["problems"]))
+    try:
+        interp.value_of(m, rec, ref.get("ptr"))
+    except (interp.InterpError, ValueError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    return Resolved(rid, "exact", doc=rec["inputs"][0]["doc"], interp=rec, ptr=ref.get("ptr"))
+
+
+def _resolve_bytes(m, ref: dict) -> Resolved:
+    rid = ref.get("id", "?")
+    try:
+        r = locators.resolve(m, {k: ref[k] for k in ("doc", "select", "quote") if k in ref})
+    except (locators.LocatorError, KeyError, ValueError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    if r["status"] == "broken":
+        return Resolved(rid, "broken", error=r.get("error"))
+    res = Resolved(rid, r["status"], doc=r["loc"]["doc"], select=r["loc"]["select"], data=r.data)
+    if r["status"] == "re-anchored":
+        res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "doc": r["loc"]["doc"]}
+    return res
+
+
 def resolve(m, ref: dict) -> Resolved:
     rid = ref.get("id", "?")
     sel = ref.get("select") or {}
+    if "interp" in ref:
+        return _resolve_interp(m, ref)
+    if "bytes" in sel:
+        return _resolve_bytes(m, ref)
     if "parts" not in ref and ("cells" in sel or "xywh" in sel):
         return _resolve_selection(m, ref)
     try:
@@ -381,7 +440,8 @@ def check(m, text: str) -> list[dict]:
         res = r.result()
         if r.status != "broken":
             # every use of the reference must be one it can be shown as
-            err = next((e for d in used.get(ref["id"], []) if d.kind in ("q", "block") for e in [shown_as(m, d, r)[1]] if e), None)
+            err = next((e for d in used.get(ref["id"], []) if d.kind in ("q", "block", "interp", "interp-block")
+                        for e in [shown_as(m, d, r)[1]] if e), None)
             if err:
                 res.update(status="broken", error=err)
         out.append(res)
@@ -405,13 +465,25 @@ def check(m, text: str) -> list[dict]:
 
 
 def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
-    """How a quotation directive shows its reference (``as=``), or why it can't."""
+    """How a quotation or interpretation directive shows its reference
+    (``as=``), or why it can't."""
+    if d.kind in ("interp", "interp-block"):
+        if r.kind != "interp":
+            return d.opts.get("as") or "", "not an interpretation: quote the document with :q, or make an interpretation (interp run)"
+        from . import interp
+        return interp.shown_as(r.interp, interp.value_of(m, r.interp, r.ptr), d.opts.get("as"), d.kind == "interp-block")
+    if r.kind == "interp":
+        return d.opts.get("as") or "", ("an interpretation is Claude's reading, not the document's content, so it "
+                                        "can't be quoted; show it with :interp or ::interp")
     block = d.kind == "block"
+    if r.kind == "bytes":
+        want = d.opts.get("as") or "hex"
+        return want, None if want == "hex" else f"as={want}: bytes are quoted as hex (as=hex)"
     want = d.opts.get("as") or {"region": "image", "cells": "table" if block else "text"}.get(r.kind, "text")
     if r.kind == "document":
         return want, "quoted, but the reference has no quoted text (layer, select.char, quote), cells or region"
     if want not in ("text", "rich", "image", "table"):
-        return want, f"as={want}: use text, rich, image or table"
+        return want, f"as={want}: use text, rich, image or table" + (" (hex is for byte references)" if want == "hex" else "")
     if want in ("image", "table") and not block:
         return want, f"as={want} is for block quotations (::q)"
     if r.kind == "region" and want != "image":
