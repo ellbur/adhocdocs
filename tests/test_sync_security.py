@@ -128,7 +128,12 @@ def _raw(addr, sni, request: bytes) -> bytes:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
     s = ctx.wrap_socket(socket.create_connection((host, port), 5), server_hostname=sni)
-    s.sendall(request)
+    try:
+        s.sendall(request)
+    except (ssl.SSLError, ConnectionError):
+        # The server may answer and close before taking the whole body (as it
+        # should, for a stranger); its reply is still there to read.
+        pass
     s.settimeout(5)
     data = b""
     try:

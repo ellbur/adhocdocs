@@ -220,8 +220,6 @@ whether the user, Claude or a pane went there.
 
 ## Not built yet
 
-- `cid:` inline images in email. Remote images are not loaded; each shows a
-  placeholder with its URL, since its presence may be evidence.
 - A marker on literate-page quotes that opens the page image (shading
   low-confidence OCR words exists).
 - The 100 ms target is met most of the time, not always. `view state`

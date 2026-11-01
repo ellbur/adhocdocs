@@ -50,6 +50,19 @@ passes, a .docx with tracked changes accepted and with them shown.
 - A PDF page with almost no text and an image on it is OCRed; the document
   then gets an `ocr` layer as primary, alongside the (near-empty) `native`
   one.
+- An email's inline images (`Content-ID` parts) are child documents, like
+  its attachments, even nested inside a `multipart/related` that Python's
+  `iter_attachments` skips; they're numbered after the attachments. Where
+  the body shows one, the layer has an `image` segment naming its `cid`
+  and, if the message holds it, its `content` hash: zero-width where an
+  HTML `<img src="cid:…">` was, or over Outlook's `[cid:…]` marker in a
+  plain body. Images add no text. The presentation shows each image in
+  place (the viewer serves it at `/image/<content>` only while a live
+  image document has that content), and says so when the message doesn't
+  hold it. Remote images are never loaded; each shows its URL.
+  Images are known by their bytes (PNG, JPEG, GIF, TIFF) as well as their
+  names, since inline ones often have none. Outlook attachments keep their
+  Content-ID in the converted email.
 - Zip members and mbox messages are child documents (`part` is the member
   path or message number), so families, custodians and duplicates work as
   for attachments. The container's own layer is empty: extracted, no text.

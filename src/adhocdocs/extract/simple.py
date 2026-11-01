@@ -119,21 +119,68 @@ def _html_styles(soup, text: str) -> list:
     return [(a, e, st) for a, e, st in styles if st]
 
 
-def html_to_text(markup: str, b: TextBuilder):
-    """Rendered text of HTML: one line per block element, scripts and styles
-    dropped. Its formatting (bold, italic, …) goes to ``b.styles``."""
+def _soup(markup: str):
     soup = BeautifulSoup(markup, "lxml")
     for tag in soup(["script", "style", "head", "noscript", "template"]):
         tag.decompose()
-    lines = [line.strip() for line in soup.get_text("\n").split("\n")]
-    out = []
-    for line in lines:
+    return soup
+
+
+def _lines(soup, mark: str | None = None) -> tuple[list[str], dict[int, list[str]]]:
+    """The output lines, and for text with markers (``mark`` + key + ``mark``,
+    each a string of its own), the keys before each output line."""
+    out, before = [], {}
+    pending = []
+    for line in soup.get_text("\n").split("\n"):
+        line = line.strip()
+        if mark and line.startswith(mark) and line.endswith(mark) and len(line) > 1:
+            pending.append(line[1:-1])
+            continue
         if line or (out and out[-1]):
+            if pending:
+                before[len(out)], pending = pending, []
             out.append(line)
+    if pending:
+        before[len(out)] = pending
+    return out, before
+
+
+IMAGE_MARK = ""      # private use: never in a message's own text
+
+
+def html_to_text(markup: str, b: TextBuilder, images: list | None = None):
+    """Rendered text of HTML: one line per block element, scripts and styles
+    dropped. Its formatting (bold, italic, …) goes to ``b.styles``.
+
+    With ``images``, each ``<img src="cid:…">`` adds ``(offset, cid)`` to it:
+    where the image was, at the start of the line after it. Images add no
+    text."""
+    soup = _soup(markup)
+    out, _ = _lines(soup)
     text = "\n".join(out).strip("\n")
     start, end = b.add(text)
-    if b.text[start:end] == text:            # add() cleans; offsets only hold if it changed nothing
+    exact = b.text[start:end] == text        # add() cleans; offsets only hold if it changed nothing
+    if exact:
         b.styles += [(start + a, start + e, st) for a, e, st in _html_styles(soup, text)]
+    if images is not None:
+        marked = _soup(markup)
+        cids = []
+        for img in marked.find_all("img"):
+            src = (img.get("src") or "").strip()
+            if src[:4].lower() == "cid:" and src[4:]:
+                img.replace_with(NavigableString(f"{IMAGE_MARK}{len(cids)}{IMAGE_MARK}"))
+                cids.append(src[4:])
+        if cids:
+            lines, before = _lines(marked, IMAGE_MARK)
+            offsets, pos = [], 0
+            for line in lines:
+                offsets.append(pos)
+                pos += len(line) + 1
+            offsets.append(pos)
+            same = exact and lines == out
+            for k, keys in sorted(before.items()):
+                at = start + min(offsets[k], len(text)) if same else end
+                images += [(at, cids[int(key)]) for key in keys]
     return start, end
 
 
