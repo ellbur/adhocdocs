@@ -828,16 +828,19 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
 
 def sync_all(m: Matter) -> list[dict]:
     """Sync with every active member that says where it listens."""
+    from . import lan
     p = poolmod.Pool.load(m)
+    near = lan.found(m)                 # found on the local network (adhocdocs.lan)
     out = []
     for x in p.active():
         if x["origin"] == m.origin:
             continue
-        if not x["addresses"]:
+        addresses = list(dict.fromkeys([*x["addresses"], *([near[x["origin"]]] if x["origin"] in near else [])]))
+        if not addresses:
             out.append({"peer": x["origin"], "name": x["name"], "skipped": "it doesn't say where it listens"})
             continue
         errors = []
-        for address in x["addresses"]:
+        for address in addresses:
             try:
                 out.append({**sync_with(m, address, x["origin"]), "name": x["name"]})
                 break

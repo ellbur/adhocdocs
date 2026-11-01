@@ -1,8 +1,10 @@
 # Syncing a Matter Across Installations
 
 *Status: built, in the five steps under "Order of building", with tests for
-each. What isn't built yet is marked *Not built yet* where it comes up.
-Decisions still open are at the end.*
+each, and since then: hotkeys kept local, Bates and exhibit numbers
+reserved before use, people bound to installations, removed members' later
+events set aside, syncing as things change, and finding members on the
+local network. Decisions still open are at the end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
 desktop, a firm server. Cloud document platforms solve this by keeping the
@@ -371,9 +373,17 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   count with different last events, or a next event that doesn't follow) is
   reported under `refused`, and the other logs still sync.
 - **Discovery:** the addresses members record in the pool log (`adhoc sync
-  serve --advertise`). No public discovery servers: they would tell a third
-  party which machines share a matter. *Not built yet:* finding members on
-  the local network.
+  serve --advertise`), and the local network
+  ([`lan.py`](src/adhocdocs/lan.py)). No public discovery servers: they
+  would tell a third party which machines share a matter. An installation
+  that serves broadcasts a small packet on the local network every half
+  minute: its port, and a tag that changes every ten minutes and names
+  neither the matter nor the installation. A watcher that recognises its
+  matter's tag connects, checks the certificate is an active member's, and
+  syncs with it there. Someone on the network who already knows a matter's
+  ID and founder could recognise the tag, which tells them no more than
+  TLS's SNI does when members sync on that network. `--no-lan` turns it
+  off.
 - **Relaying:** when two members can't reach each other, they don't need
   to; the logs reach each one through anyone they can reach (usually the
   hub).

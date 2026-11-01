@@ -141,8 +141,10 @@ def adhoc(argv=None):
     x.add_argument("--user", help="who is advertising the address (needed with --advertise)")
     x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
     x.add_argument("--no-watch", action="store_true", help="only serve: don't sync as things change")
+    x.add_argument("--no-lan", action="store_true", help="don't announce this, or look for members, on the local network")
     x = ss.add_parser("watch", help="sync as things change, here or on the members it can reach (runs until stopped)")
     x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
+    x.add_argument("--no-lan", action="store_true", help="don't look for members on the local network")
     ss.add_parser("now", help="sync with every member that says where it listens")
     x = ss.add_parser("push", help="put this matter on a hub (with a code from its administrator), then sync")
     x.add_argument("code", help="the hub code from adhoc hub enroll")
@@ -289,7 +291,7 @@ An invitation is a password: send it the way you'd send one."""
 
 
 def _sync(m, a):
-    from . import invite, peer, pool, sync
+    from . import invite, lan as lanmod, peer, pool, sync
     if a.action == "status":
         st = sync.status(m)
         st["members"] = pool.Pool.load(m).summary(st["origin"])
@@ -326,17 +328,20 @@ def _sync(m, a):
         srv = peer.Server([m], host, port)
         print(json.dumps({"serving": m.id, "origin": m.origin, "listen": f"{host}:{srv.address[1]}"}),
               file=sys.stderr, flush=True)
+        lan_port = None if a.no_lan else lanmod.PORT
+        if not a.no_lan:
+            lanmod.Announcer(srv).start()
         if not a.no_watch:
             import threading
             from . import watch
-            threading.Thread(target=watch.run, args=(m, a.every * 60), daemon=True).start()
+            threading.Thread(target=watch.run, args=(m, a.every * 60, lan_port), daemon=True).start()
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
             pass
     elif a.action == "watch":
         from . import watch
-        sys.exit(watch.run(m, a.every * 60))
+        sys.exit(watch.run(m, a.every * 60, None if a.no_lan else lanmod.PORT))
 
 
 HUB_HELP = """\

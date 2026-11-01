@@ -59,7 +59,7 @@ def wait_for_change(m: Matter, seen: str | None, timeout: float) -> str:
 
 class Watcher:
     def __init__(self, m: Matter, every: float = 300, debounce: float = 1.0, poll: float = 1.0, wait: float = 50,
-                 log=None):
+                 log=None, lan_port: int | None = None):
         self.root = m.root
         self.every, self.debounce, self.poll, self.wait = every, debounce, poll, wait
         self.lock = threading.Lock()          # one sync at a time
@@ -67,6 +67,8 @@ class Watcher:
         self.listeners: dict[str, threading.Thread] = {}
         self.log = log or (lambda row: print(json.dumps(row), file=sys.stderr, flush=True))
         self.synced = 0
+        self.lan_port = lan_port          # listen for members on the local network (adhocdocs.lan); None: don't
+        self.lan = None
 
     def m(self) -> Matter:
         return Matter(self.root)
@@ -98,7 +100,9 @@ class Watcher:
                 p = poolmod.Pool.load(self.m())
                 if not p.is_member(x["origin"]) or not p.is_member(self.m().origin):
                     return
-                for address in p.members[x["origin"]]["addresses"]:
+                from . import lan
+                near = lan.found(self.m()).get(x["origin"])
+                for address in list(dict.fromkeys(p.members[x["origin"]]["addresses"] + ([near] if near else []))):
                     conn = peer.Peer(self.m(), address, x["origin"], timeout=self.wait + 15)
                     try:
                         q = f"wait?timeout={int(self.wait)}" + (f"&seen={seen}" if seen else "")
@@ -122,8 +126,10 @@ class Watcher:
         except Exception:
             return
         me = self.m().origin if (self.root / "sync" / "origin.json").exists() else None
+        from . import lan
+        near = lan.found(self.m())
         for x in p.active():
-            if x["origin"] == me or not x["addresses"]:
+            if x["origin"] == me or not (x["addresses"] or x["origin"] in near):
                 continue
             t = self.listeners.get(x["origin"])
             if t is None or not t.is_alive():
@@ -131,7 +137,17 @@ class Watcher:
                 t.start()
                 self.listeners[x["origin"]] = t
 
+    def _found_nearby(self, member: dict, address: str):
+        self.log({"found": member["origin"], "name": member["name"], "address": address, "on": "the local network"})
+        self.sync_one({**member, "addresses": [address]}, f"found {member['name']} on the local network")
+
     def run(self):
+        if self.lan_port is not None and self.lan is None:
+            from . import lan
+            try:
+                self.lan = lan.Listener(self.m(), self._found_nearby, self.lan_port).start()
+            except OSError as e:
+                self.log({"lan": f"not listening for members on the local network: {e}"})
         last = fingerprint(self.m())
         next_full = time.time()
         while not self.stopping.is_set():
@@ -154,9 +170,11 @@ class Watcher:
 
     def stop(self):
         self.stopping.set()
+        if self.lan:
+            self.lan.stop()
 
 
-def run(m: Matter, every: float = 300) -> int:
+def run(m: Matter, every: float = 300, lan_port: int | None = None) -> int:
     """``adhoc sync watch``: run until stopped, unless another watcher has
     this matter."""
     (m.root / "run").mkdir(exist_ok=True)
@@ -167,7 +185,7 @@ def run(m: Matter, every: float = 300) -> int:
                     print(json.dumps({"watching": False, "why": "this matter has no pool"}), file=sys.stderr)
                     return 0
                 print(json.dumps({"watching": m.id, "origin": m.origin}), file=sys.stderr, flush=True)
-                w = Watcher(m, every)
+                w = Watcher(m, every, lan_port=lan_port)
                 try:
                     w.run()
                 except KeyboardInterrupt:
