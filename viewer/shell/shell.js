@@ -1299,7 +1299,7 @@ class DocumentPane {
     const suggested = det.filter((d) => !known.some((k) => d.start < k.end && k.start < d.end));
     // dates: placed by the document's own date; a known entity's name wins over a date inside it
     const anchor = this.info?.dated?.date;
-    const dates = dts.map((d) => ({ ...d, isDate: true, resolved: resolveDate(d, anchor) }))
+    const dates = dts.map((d) => ({ ...d, isDate: true, resolved: resolveDate(d, anchor), until: resolveUntil(d, anchor) }))
       .filter((d) => d.resolved && !known.some((k) => d.start < k.end && k.start < d.end));
     this.ents = { layer: id, cps: t.cps, known, suggested, dates };
     this.updateEntityStat();
@@ -1384,7 +1384,7 @@ class DocumentPane {
     if (!c || !this.ents || this.selection.layer !== this.ents.layer) return null;
     const x = this.ents.dates.find((d) => d.start <= c[0] && c[1] <= d.end);
     if (!x) return null;
-    return { form: x.form.replace(/\s+/g, " "), date: x.resolved, kind: x.kind,
+    return { form: x.form.replace(/\s+/g, " "), date: x.resolved, kind: x.kind, ...(x.until ? { until: x.until } : {}),
              ...(x.ambiguous ? { ambiguous: true, alt: x.alt } : {}), ...(x.header ? { quoted_from: x.header.who } : {}) };
   }
   selectionEntity() {
@@ -2127,12 +2127,15 @@ const dateCard = {
   async show(card, pane, x, at) {
     const seq = ++this.seq;
     const date = x.resolved, doc = pane.info?.doc;
-    const head = el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, fmtDay(date)),
+    // a range or a week shows both ends; the card is about its first day
+    const name = x.until ? (x.precision === "week" ? "Week of " : "") + `${fmtDay(date, false)} – ${fmtDay(x.until, false)}` : fmtDay(date);
+    const head = el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, name),
       el("span", { class: "ec-kind" }, x.strip ? (DATE_SOURCE[x.source] || "date").toLowerCase() : "date"));
     const lines = [];
     if (!x.strip) {
       const read = x.kind === "relative" || x.kind === "noyear";
       if (read) lines.push(el("div", { class: "ec-why" }, `“${x.form.replace(/\s+/g, " ")}”, counted from the document's date`));
+      if (x.rel?.bare === "near") lines.push(el("div", { class: "ec-why" }, "Read as the nearer one; the text doesn't say whether it's before or after"));
       if (x.ambiguous) lines.push(el("div", { class: "ec-why" }, `Or ${fmtDay(x.alt, false)}, if the day is written first`));
     }
     card.el.replaceChildren(el("div", { class: "ec-entity dc" }, head, ...lines, el("div", { class: "ec-empty" }, "…")));

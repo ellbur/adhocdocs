@@ -24,19 +24,10 @@ ADDRESS_FIELDS = ("from", "to", "cc", "bcc")
 
 class FieldsIndex(Index):
     kind = "fields"
+    rebuilds_itself = True
 
     def settings(self):
         return {"schema": 3}
-
-    def check_settings(self):
-        if self.manifest()["settings"] == self.settings():
-            return
-        with self.lock():
-            if self.manifest()["settings"] != self.settings():
-                self.db.executescript("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS addrs; DELETE FROM meta;")
-                self.db.commit()
-                self._write_manifest({})
-                self.init_db()
 
     def init_db(self):
         super().init_db()

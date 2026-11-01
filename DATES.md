@@ -97,9 +97,17 @@ small file. The rules, with examples, are in `dates.py`'s docstring:
 - Dates without a year: "March 9", and a bare "3/7" only after a word that
   takes a date ("due 3/7", "by 12/31"), so "1/2" is still a half. The year
   comes from the document's date.
-- Relative dates: "yesterday", "last Friday", "next Tuesday", counted from
-  the document's date. ("Today" is left out, because it only repeats the
-  document's date.)
+- Relative dates: "yesterday", "last Friday", "next Tuesday", "last week",
+  "next month", counted from the document's date. ("Today" is left out,
+  because it only repeats the document's date.)
+- Bare weekdays and days of the month: "on Friday", "by the 15th", only
+  after a word that takes a date, and a weekday only when capitalized, so
+  "on Fridays" and "the 2nd floor" aren't dates. "Since" looks back; "by",
+  "until" and "due" look ahead; anything else takes the nearer one, and
+  the card says it was read that way.
+- Ranges: "March 2–6, 2026", "March 30 to April 2", "2–6 March 2026" are
+  one mention with a first and last day, and the card shows both. A week
+  ("last week") is shown as one too, Monday to Sunday.
 
 Some rules are about mistakes the user can't see:
 
@@ -126,13 +134,16 @@ and [`tests/date_cases.json`](tests/date_cases.json) keeps them in step.
   "significant"). A tag vocabulary has no polarity to read, and "not
   responsive" mustn't count.
 - Copies of one email are one message in its thread.
+- The dates and fields indexes rebuild themselves when their rules
+  change, since nothing about them is a choice and they are cheap to make
+  again. Other indexes still ask for `idx rebuild`.
 
 ## Not built yet
 
 - File-system dates (the file's modified time when it was collected) aren't
   recorded at ingestion, so they can't be shown.
-- Bare weekdays ("on Friday"), "the 2nd", "last week" and date ranges
-  ("March 2–6") aren't detected.
+- A range's card is about its first day: what's dated near the start,
+  not across the whole range.
 - The day-first or month-first reading of ambiguous dates isn't learned
   from the rest of the corpus.
 - Documents ingested before `date_source` existed show "Dated" with no

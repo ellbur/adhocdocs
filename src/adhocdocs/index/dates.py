@@ -25,6 +25,7 @@ from .base import TextIndex
 
 class DatesIndex(TextIndex):
     kind = "dates"
+    rebuilds_itself = True
 
     def settings(self):
         return {"rules": dates.VERSION}

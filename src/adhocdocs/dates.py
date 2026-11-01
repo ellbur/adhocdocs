@@ -23,9 +23,20 @@ mention has the span, the words, the date (``YYYY-MM-DD``, ``YYYY-MM`` or
 ``noyear``     "March 9", "due 3/7" (a bare M/D only after a word like
                "on", "due" or "by"): ``date`` is ``--03-09``; the year comes
                from the document's date (:func:`resolve`)
-``relative``   "yesterday", "last Friday", "next Tuesday": ``rel`` says
-               how; resolved against the document's date
+``relative``   "yesterday", "last Friday", "next Tuesday", "last week",
+               "next month": ``rel`` says how; resolved against the
+               document's date. Also a bare weekday or day of the month
+               after a word that takes a date ("on Friday", "by the 15th"),
+               with ``rel["bare"]`` saying which way to look: ``past``
+               after "since", ``future`` after "by", "until", "till" or
+               "due", else ``near`` (the nearer of the two)
 =============  ==========================================================
+
+A range ("March 2–6, 2026", "March 30 to April 2", "2–6 March 2026") is
+one mention, of the kind its start would be, with ``until``: its last
+day, written like ``date`` (``--04-02`` without a year). "This week",
+"last week" and "next week" have ``precision`` ``week``; their date is the
+Monday and their ``until`` the Sunday (:func:`resolve_until`).
 
 A numeric date with both parts 12 or under (``3/4/2026``) is read month
 first, with ``ambiguous`` and the other reading in ``alt``. A date in a
@@ -33,14 +44,14 @@ quoted email's header ("On Mar 9, 2026, R. Voss wrote:", "Sent: …") has
 ``header`` with the sender as written, so the viewer can find that email.
 
 The viewer resolves ``noyear`` and ``relative`` mentions itself
-(shell.js), by the same rules as :func:`resolve`.
+(dates.js), by the same rules as :func:`resolve` and :func:`resolve_until`.
 """
 
 import calendar
 import re
 from datetime import date, timedelta
 
-VERSION = 1
+VERSION = 2
 
 MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
 MONTHS.update({m.lower(): i for i, m in enumerate(calendar.month_abbr) if m})
@@ -56,7 +67,22 @@ _YEAR = r"(?P<year>(?:1[89]|20)\d\d)"
 _B = r"(?<![\w/.-])"          # not glued to a word, a path or a number
 _E = r"(?![\w/-]|\.\d)"
 
+_SEP = r"\s*(?:-|–|—|\bto\b|\bthrough\b|\bthru\b|\buntil\b|\btill\b)\s*"
+_MON2 = _MON.replace("?P<mon>", "?P<mon2>")
+_LEAD = r"\b(?P<lead>on|by|until|till|before|after|since|from|through|thru|due)\s+"
+_WEEKDAY = r"(?-i:Mon(?:day)?|Tue(?:s|sday)?|Wed(?:nesday)?|Thu(?:rs?|rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)"
+_ORD = r"(?P<md>[0-3]?\d)(?:st|nd|rd|th)"
+# what may follow "the 2nd" for it to be a date: not a noun ("the 2nd floor")
+_ORD_END = r"(?=\s*(?:[.,;:!?)]|$|\b(?:at|and|or|through|thru|to|until|till|when|if|so|but|which|please|we|I|you|he|she|they|it|is|was|will)\b))"
+
 PATTERNS = [
+    # ranges first, so their ends aren't taken as dates of their own:
+    # March 2–6, 2026 · March 30 to April 2, 2026 · Mar 2 - 6
+    ("range", re.compile(_B + _WD + _MON + r"\s+" + _DAY + _SEP + r"(?:" + _MON2 + r"\s+)?(?P<day2>[0-3]?\d)(?:st|nd|rd|th)?"
+                         + r"(?:,?\s+" + _YEAR + r")?" + _E, re.I)),
+    # 2–6 March 2026 · 30 March – 2 April (dashes only: "2 to 6 May" is more often a count)
+    ("range", re.compile(_B + _DAY + r"(?:\s+" + _MON.replace("?P<mon>", "?P<mon0>") + r")?" + r"\s*[-–—]\s*" + r"(?P<day2>[0-3]?\d)(?:st|nd|rd|th)?\s+" + _MON
+                         + r"(?:,?\s+" + _YEAR + r")?" + _E, re.I)),
     # March 9, 2026 · Mar. 9 2026 · Monday, March 9th, 2026
     ("absolute", re.compile(_B + _WD + _MON + r"\s+" + _DAY + r",?\s+" + _YEAR + _E, re.I)),
     # 9 March 2026 · 9th of March, 2026
@@ -74,7 +100,15 @@ PATTERNS = [
                                   r"(?P<d>(?P<a>[01]?\d)/(?P<b>[0-3]?\d))(?![\w/]|\.\d)", re.I)),
     # yesterday · last Friday · next Tuesday · this Monday
     ("relative", re.compile(_B + r"(?P<rel>yesterday|tomorrow|(?P<dir>last|next|this|coming|past)\s+(?P<wd>(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)(?:day)?))" + r"(?!\w)", re.I)),
+    # last week · next month · this year
+    ("period", re.compile(_B + r"(?P<dir>last|next|this|coming|past)\s+(?P<unit>week|month|year)(?!\w)", re.I)),
+    # on Friday · by Tue. (capitalized, after a word that takes a date)
+    ("weekday", re.compile(_LEAD + r"(?P<d>" + _WEEKDAY + r")\.?(?!\w)", re.I)),
+    # on the 2nd · by the 15th (likewise, and not before a noun)
+    ("monthday", re.compile(_LEAD + r"(?P<d>the\s+" + _ORD + r")(?!\w)" + _ORD_END, re.I)),
 ]
+
+BARE = {"since": "past", "by": "future", "until": "future", "till": "future", "due": "future"}
 
 # a line that introduces a quoted or forwarded email, and who sent it
 HEADER_LINE = re.compile(r"^[>\s]*(?:On\s+(?P<on>.+?)\s+wrote:|(?:Sent|Date)\s*:\s*(?P<sent>.+))\s*$", re.I | re.M)
@@ -114,7 +148,45 @@ def detect(text: str) -> list[dict]:
             if not free(s, e):
                 continue
             out = {"start": s, "end": e, "form": text[s:e]}
-            if kind in ("absolute", "iso"):
+            if kind == "range":
+                d1, d2 = int(m["day"]), int(m["day2"])
+                if "mon0" in rx.groupindex:     # 30 March – 2 April: the months follow their days
+                    two = bool(m["mon0"])
+                    mon1, mon2 = _month(m["mon0"] or m["mon"]), _month(m["mon"])
+                else:
+                    two = bool(m["mon2"])
+                    mon1 = _month(m["mon"])
+                    mon2 = _month(m["mon2"]) if two else mon1
+                if any(x and x.lower().rstrip(".") == "may" and not x[0].isupper() for x in (m["mon"], m.groupdict().get("mon2"))):
+                    continue
+                if not two and not (d1 < d2):
+                    continue                    # "March 6–2" isn't a range; "March 2-3" is
+                if m["year"]:
+                    y2 = int(m["year"])
+                    y1 = y2 - 1 if (mon2, d2) < (mon1, d1) else y2       # Dec 28 – Jan 3, 2027
+                    a, b = _valid(y1, mon1, d1), _valid(y2, mon2, d2)
+                    if not a or not b or (b - a).days > 62:
+                        continue
+                    out.update(kind="absolute", date=a.isoformat(), until=b.isoformat(), precision="day")
+                else:
+                    if not _valid(2024, mon1, d1) or not _valid(2024, mon2, d2):
+                        continue
+                    if two and (mon2 - mon1) % 12 > 2:
+                        continue
+                    out.update(kind="noyear", date=f"--{mon1:02d}-{d1:02d}", until=f"--{mon2:02d}-{d2:02d}", precision="day")
+            elif kind == "period":
+                k = {"last": -1, "past": -1, "next": 1, "coming": 1, "this": 0}[m["dir"].lower()]
+                unit = m["unit"].lower()
+                out.update(kind="relative", rel={unit + "s": k}, precision=unit)
+            elif kind == "weekday":
+                wd = next(v for k, v in sorted(WEEKDAYS.items(), key=lambda kv: -len(kv[0])) if m["d"].lower().startswith(k))
+                out.update(kind="relative", rel={"weekday": wd, "bare": BARE.get(m["lead"].lower(), "near")}, precision="day")
+            elif kind == "monthday":
+                md = int(m["md"])
+                if not 1 <= md <= 31:
+                    continue
+                out.update(kind="relative", rel={"monthday": md, "bare": BARE.get(m["lead"].lower(), "near")}, precision="day")
+            elif kind in ("absolute", "iso"):
                 mon = _month(m["mon"]) if kind == "absolute" else int(m["mon"])
                 d = _valid(int(m["year"]), mon, int(m["day"]))
                 if not d:
@@ -211,7 +283,55 @@ def resolve(mention: dict, anchor: str | None) -> str | None:
     if "days" in rel:
         return (a + timedelta(days=rel["days"])).isoformat()
     monday = a - timedelta(days=a.weekday())
+    if "weeks" in rel:
+        return (monday + timedelta(days=7 * rel["weeks"])).isoformat()
+    if "months" in rel:
+        n = a.year * 12 + a.month - 1 + rel["months"]
+        return f"{n // 12:04d}-{n % 12 + 1:02d}"
+    if "years" in rel:
+        return f"{a.year + rel['years']:04d}"
+    if "bare" in rel:
+        if "weekday" in rel:
+            past = a - timedelta(days=(a.weekday() - rel["weekday"]) % 7 or 7)
+            future = a + timedelta(days=(rel["weekday"] - a.weekday()) % 7 or 7)
+        else:
+            past, future = _monthday(a, rel["monthday"], -1), _monthday(a, rel["monthday"], 1)
+        pick = {"past": past, "future": future}.get(rel["bare"])
+        if pick is None:                   # near: the nearer one, the coming one on a tie
+            pick = past if past and future and (a - past) < (future - a) else future or past
+        return pick.isoformat() if pick else None
     return (monday + timedelta(days=rel["weekday"] + 7 * rel["dir"])).isoformat()
+
+
+def _monthday(a: date, day: int, step: int) -> date | None:
+    """The nearest day ``day`` of a month strictly before (step -1) or after
+    (step 1) ``a``, skipping months too short to have it."""
+    n = a.year * 12 + a.month - 1
+    for i in range(0, 13 * step, step):
+        d = _valid((n + i) // 12, (n + i) % 12 + 1, day)
+        if d and (d - a).days * step > 0:
+            return d
+    return None
+
+
+def resolve_until(mention: dict, anchor: str | None) -> str | None:
+    """The last day of a range mention (``until``) or of a week ("last
+    week"), placed like :func:`resolve`; None for a single date."""
+    start = resolve(mention, anchor)
+    if not start:
+        return None
+    if mention.get("kind") == "relative" and "weeks" in (mention.get("rel") or {}):
+        return (date.fromisoformat(start) + timedelta(days=6)).isoformat()
+    until = mention.get("until")
+    if not until:
+        return None
+    if not until.startswith("--"):
+        return until
+    y, mon, day = int(start[:4]), int(until[2:4]), int(until[5:7])
+    if (mon, day) < (int(start[5:7]), int(start[8:10])):
+        y += 1
+    d = _valid(y, mon, day) or _valid(y, mon, 28)
+    return d.isoformat() if d else None
 
 
 # -- a document's own date --------------------------------------------------------------------
@@ -277,8 +397,11 @@ def doc_mentions(m, doc: str) -> dict:
             idx.update()
         for x in idx.mentions(layer.text):
             r = resolve(x, dd and dd["date"])
+            until = resolve_until(x, dd and dd["date"])
             found.append({"loc": f"doc:{doc}@{layer.id}#char={x['start']},{x['end']}", "form": x["form"], "kind": x["kind"],
-                          "date": r, **{k: x[k] for k in ("ambiguous", "alt", "header") if k in x}})
+                          "date": r, **({"until": until} if until else {}),
+                          **({"precision": x["precision"]} if x.get("precision") not in (None, "day") else {}),
+                          **{k: x[k] for k in ("ambiguous", "alt", "header") if k in x}})
     return {"doc": doc, "dated": dd, "mentions": found}
 
 

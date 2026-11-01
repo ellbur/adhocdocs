@@ -2,6 +2,7 @@
 into the change feed advanced in the same transaction as its rows."""
 
 import json
+import shutil
 import sqlite3
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -81,9 +82,29 @@ class Index:
         tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8", newline="\n")
         tmp.replace(self.manifest_path)
 
+    # An index made only from the change feed by fixed rules (no model, no
+    # options) is rebuilt on first use when its rules change, rather than
+    # refused: there is nothing to choose, and making it again is cheap.
+    rebuilds_itself = False
+
     def check_settings(self):
-        if self.manifest()["settings"] != self.settings():
+        if self.manifest()["settings"] == self.settings():
+            return
+        if not self.rebuilds_itself:
             raise NeedsRebuild(f"index {self.name} was built with other settings; run: idx rebuild {self.name}")
+        with self.lock():
+            if self.manifest()["settings"] != self.settings():
+                if self._db is not None:
+                    self._db.close()
+                    self._db = None
+                for f in self.dir.iterdir():
+                    if f.name == "lock":
+                        continue
+                    if f.is_dir():
+                        shutil.rmtree(f)
+                    else:
+                        f.unlink()
+                self.create()
 
     # -- database ----------------------------------------------------------------
 

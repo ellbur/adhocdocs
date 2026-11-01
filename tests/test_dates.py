@@ -53,6 +53,35 @@ def test_partial_and_relative():
         ("Yesterday", {"days": -1}), ("last Friday", {"weekday": 4, "dir": -1}), ("next Tuesday", {"weekday": 1, "dir": 1})]
 
 
+def test_bare_weekdays_and_days_of_the_month():
+    got = [(d["form"], d["rel"]) for d in dates.detect("Call me on Friday, or by Tue. Nothing since Monday. Due the 15th.")]
+    assert got == [("Friday", {"weekday": 4, "bare": "near"}), ("Tue", {"weekday": 1, "bare": "future"}),
+                   ("Monday", {"weekday": 0, "bare": "past"}), ("the 15th", {"monthday": 15, "bare": "future"})]
+    assert found("we work on Fridays; the sun rose on sun; on the 2nd floor; by the 3rd quarter") == []
+    assert found("send it on friday") == []                       # bare weekdays only capitalized
+    assert found("Then on the 2nd, we") == [("the 2nd", "relative", None)]
+
+
+def test_weeks_months_years():
+    got = [(d["form"], d["rel"], d["precision"]) for d in dates.detect("last week, this week, next month and last year")]
+    assert got == [("last week", {"weeks": -1}, "week"), ("this week", {"weeks": 0}, "week"),
+                   ("next month", {"months": 1}, "month"), ("last year", {"years": -1}, "year")]
+
+
+def test_ranges():
+    def rng(t):
+        return [(d["form"], d["kind"], d["date"], d.get("until")) for d in dates.detect(t)]
+    assert rng("on site March 2–6, 2026, then March 30 to April 2") == [
+        ("March 2–6, 2026", "absolute", "2026-03-02", "2026-03-06"), ("March 30 to April 2", "noyear", "--03-30", "--04-02")]
+    assert rng("2–6 March 2026; 30 March – 2 April 2026; Dec 28 – Jan 3, 2027") == [
+        ("2–6 March 2026", "absolute", "2026-03-02", "2026-03-06"),
+        ("30 March – 2 April 2026", "absolute", "2026-03-30", "2026-04-02"),
+        ("Dec 28 – Jan 3, 2027", "absolute", "2026-12-28", "2027-01-03")]
+    assert rng("March 6-2") == [("March 6", "noyear", "--03-06", None)]        # backwards: not a range
+    assert rng("we sell 2 to 6 May") == [] and rng("may 2-6 times") == []
+    assert rng("pages 2-6 of March 2026") == [("March 2026", "month", "2026-03", None)]
+
+
 def test_a_longer_form_wins():
     assert found("March 9, 2026") == [("March 9, 2026", "absolute", "2026-03-09")]  # not also "March 9"
 
@@ -70,19 +99,20 @@ def test_quoted_headers_name_the_sender():
 @pytest.mark.parametrize("case", CASES)
 def test_resolve(case):
     assert dates.resolve(case["mention"], case["anchor"]) == case["want"]
+    assert dates.resolve_until(case["mention"], case["anchor"]) == case.get("until")
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="node not installed")
 def test_viewer_resolves_the_same():
     """viewer/shell/dates.js gives the same answers as dates.resolve."""
     script = """
-const { resolveDate } = require(process.argv[1]);
+const { resolveDate, resolveUntil } = require(process.argv[1]);
 const cases = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8")).cases;
-console.log(JSON.stringify(cases.map((c) => resolveDate(c.mention, c.anchor))));
+console.log(JSON.stringify(cases.map((c) => [resolveDate(c.mention, c.anchor), resolveUntil(c.mention, c.anchor)])));
 """
     out = subprocess.run(["node", "-e", script, str(ROOT / "viewer/shell/dates.js"), str(ROOT / "tests/date_cases.json")],
                          capture_output=True, text=True, check=True)
-    assert json.loads(out.stdout) == [c["want"] for c in CASES]
+    assert json.loads(out.stdout) == [[c["want"], c.get("until")] for c in CASES]
 
 
 # -- a document's own date ----------------------------------------------------------------------

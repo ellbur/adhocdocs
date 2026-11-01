@@ -1,4 +1,4 @@
-{"about": "resolve() in src/adhocdocs/dates.py and resolveDate() in viewer/shell/dates.js give the same answers (tests/test_dates.py runs both)",
+{"about": "resolve()/resolve_until() in src/adhocdocs/dates.py and resolveDate()/resolveUntil() in viewer/shell/dates.js give the same answers (tests/test_dates.py runs both); \"until\" is the range's last day, null when absent",
  "cases": [
   {"mention": {"kind": "absolute", "date": "2026-03-09"}, "anchor": null, "want": "2026-03-09"},
   {"mention": {"kind": "month", "date": "2026-03"}, "anchor": "2026-05-01", "want": "2026-03"},
@@ -12,5 +12,24 @@
   {"mention": {"kind": "relative", "rel": {"weekday": 1, "dir": 1}}, "anchor": "2026-03-11", "want": "2026-03-17"},
   {"mention": {"kind": "relative", "rel": {"weekday": 0, "dir": 0}}, "anchor": "2026-03-15", "want": "2026-03-09"},
   {"mention": {"kind": "relative", "rel": {"days": -1}}, "anchor": null, "want": null},
-  {"mention": {"kind": "noyear", "date": "--03-02"}, "anchor": "someday", "want": null}
- ]}
+  {"mention": {"kind": "noyear", "date": "--03-02"}, "anchor": "someday", "want": null},
+  {"mention": {"kind": "relative", "rel": {"weeks": -1}}, "anchor": "2026-03-11", "want": "2026-03-02", "until": "2026-03-08"},
+  {"mention": {"kind": "relative", "rel": {"weeks": 0}}, "anchor": "2026-03-15", "want": "2026-03-09", "until": "2026-03-15"},
+  {"mention": {"kind": "relative", "rel": {"months": 1}}, "anchor": "2026-12-05", "want": "2027-01"},
+  {"mention": {"kind": "relative", "rel": {"months": -1}}, "anchor": "2026-01-31", "want": "2025-12"},
+  {"mention": {"kind": "relative", "rel": {"years": -1}}, "anchor": "2026-03-11", "want": "2025"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 4, "bare": "near"}}, "anchor": "2026-03-11", "want": "2026-03-13"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 0, "bare": "near"}}, "anchor": "2026-03-11", "want": "2026-03-09"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 2, "bare": "near"}}, "anchor": "2026-03-11", "want": "2026-03-18"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 4, "bare": "past"}}, "anchor": "2026-03-11", "want": "2026-03-06"},
+  {"mention": {"kind": "relative", "rel": {"weekday": 1, "bare": "future"}}, "anchor": "2026-03-11", "want": "2026-03-17"},
+  {"mention": {"kind": "relative", "rel": {"monthday": 15, "bare": "future"}}, "anchor": "2026-03-20", "want": "2026-04-15"},
+  {"mention": {"kind": "relative", "rel": {"monthday": 2, "bare": "near"}}, "anchor": "2026-03-28", "want": "2026-04-02"},
+  {"mention": {"kind": "relative", "rel": {"monthday": 2, "bare": "near"}}, "anchor": "2026-03-10", "want": "2026-03-02"},
+  {"mention": {"kind": "relative", "rel": {"monthday": 31, "bare": "past"}}, "anchor": "2026-05-10", "want": "2026-03-31"},
+  {"mention": {"kind": "relative", "rel": {"monthday": 31, "bare": "future"}}, "anchor": "2026-12-31", "want": "2027-01-31"},
+  {"mention": {"kind": "absolute", "date": "2026-03-02", "until": "2026-03-06"}, "anchor": null, "want": "2026-03-02", "until": "2026-03-06"},
+  {"mention": {"kind": "noyear", "date": "--12-28", "until": "--01-03"}, "anchor": "2027-01-10", "want": "2026-12-28", "until": "2027-01-03"},
+  {"mention": {"kind": "noyear", "date": "--03-30", "until": "--04-02"}, "anchor": "2026-03-11", "want": "2026-03-30", "until": "2026-04-02"}
+ ]
+}
