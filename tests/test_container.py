@@ -94,7 +94,7 @@ def test_session_guide_names_real_tools():
     guide = (root / "container" / "CLAUDE.md").read_text(encoding="utf-8")
     named = set(re.findall(r"^\| `(\w+)`", guide, re.M))
     assert named and named <= scripts, named - scripts
-    assert len(guide.splitlines()) < 80          # it's loaded into every session: keep it short
+    assert len(guide.splitlines()) < 65          # it's loaded into every session: keep it short
 
 
 def test_bridged_session_args(tmp_path):
