@@ -268,9 +268,23 @@ name.
 
 **Leaving and removal.** `adhoc sync remove` stops every other member from
 syncing with that installation, once they've synced the removal. It can't
-recall what was already copied; the command says so. *Not built yet:*
-events a removed member wrote after its removal can still arrive by way of
-a member that hadn't heard of the removal yet; they should be set aside.
+recall what was already copied; the command says so. The removal records
+how much of the installation's logs the remover had, and nothing past that
+counts or is accepted, whatever IDs it carries: event IDs are the writer's
+to choose, so a removed member could otherwise backdate its way back in.
+*Not built yet:* documents, tags and published work it wrote after that
+point, and that some member took in before hearing of the removal, still
+replay; only membership events are set aside on replay.
+
+**Known limits.** Someone enrolled at a hub who isn't in a matter's pool,
+but knows its ID (it travels in invitation codes, and in clear in TLS's
+SNI), can push a pool of their own under that ID first; the hub then
+refuses the real one ("another founder"). Nothing leaks, but the real
+members can't use that hub for the matter until its administrator removes
+the squatter's replica. The server keeps the nonces of signed requests in
+memory: a request signed in the five minutes before a restart could be
+replayed once after it, by someone who had it (which, inside TLS, means
+the member who sent it).
 
 ### Isolation (Principle 2)
 
@@ -309,6 +323,15 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   then the events. Membership goes first, since it says whose events to
   accept. Every event is checked against its origin's key and the event
   before it.
+- **Nothing is read from strangers.** The server checks a request's
+  signature header (a member's origin, a fresh time) before reading any
+  body, bodies must say their length and stay within limits, and log names
+  must be origin IDs, never paths.
+- **What arrives is laid out only where it belongs.** A publication's
+  name and files come from other installations, so they're checked before
+  anything is written: relative, no `..`, nothing hidden, and only under
+  `work/`. Publishing reads workspace files without following links, so a
+  link in the workspace can't publish a file from elsewhere on the host.
 - **A log that doesn't check is refused, alone.** A bad signature, a broken
   chain, or a fork (two copies of an origin's log that differ: the same
   count with different last events, or a next event that doesn't follow) is

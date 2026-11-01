@@ -108,47 +108,55 @@ class Hub:
         ``req``: ``token``, ``matter``, ``founder``, ``pool`` (``{origin:
         [events]}``, the pusher's membership logs), ``cert``. The pusher must
         be a member by those logs."""
-        from .peer import SyncError, append_remote
-        from .signing import BadLog
         person = self.config["people"].get(_digest(str(req.get("token", ""))))
         if person is None or person.get("revoked"):
             raise PermissionError("not enrolled at this hub")
         mid, founder = str(req["matter"]), str(req["founder"])
-        if not mid.startswith("mat_") or "/" in mid or "\\" in mid or ".." in mid:
-            raise ValueError(f"bad matter ID {mid!r}")
+        import re
+        from .origin import is_origin
+        if not re.fullmatch(r"mat_[0-9A-HJKMNP-TV-Z]{26}", mid) or not is_origin(founder):
+            raise ValueError(f"bad matter ID or founder ({mid!r}, {founder!r})")
         with self._lock():
             path = self.root / "matters" / mid
             new = not (path / "matter.toml").exists()
-            if new:
-                m = Matter.create(path, matter_id=mid)
-                cfg = m.config
-                cfg.update(founder=founder, adopted_by=person["name"], adopted=now())
-                write_toml(path / "matter.toml", cfg)
-            m = Matter(path)
-            if m.config.get("founder") != founder:
-                raise PermissionError("this hub has that matter with another founder")
-            # the pusher's membership, so the hub knows who may sync
-            pending = {o: evs for o, evs in req.get("pool", {}).items()}
-            for _ in range(len(pending) + 1):
-                progress = False
-                for o in list(pending):
-                    have = m.pool_log.log_for(o).count()
-                    evs = pending[o][have:] if have < len(pending[o]) else []
-                    try:
-                        if evs:
-                            append_remote(m, "pool", o, have, evs)
-                        del pending[o]
-                        progress = True
-                    except (SyncError, BadLog):
-                        continue          # its certificate may be in a log not appended yet
-                if not progress:
-                    break
-            p = poolmod.Pool.load(m)
-            if not p.is_member(requester):
-                if new:
+            try:
+                return self._adopt(path, new, mid, founder, person, req, requester)
+            except BaseException:
+                if new:             # whatever went wrong, leave no half-made replica
                     import shutil
-                    shutil.rmtree(path)
-                raise PermissionError("the pusher isn't a member of the matter's pool")
+                    shutil.rmtree(path, ignore_errors=True)
+                raise
+
+    def _adopt(self, path, new, mid, founder, person, req, requester):
+        from .peer import SyncError, append_remote
+        from .signing import BadLog
+        if new:
+            m = Matter.create(path, matter_id=mid)
+            cfg = m.config
+            cfg.update(founder=founder, adopted_by=person["name"], adopted=now())
+            write_toml(path / "matter.toml", cfg)
+        m = Matter(path)
+        if m.config.get("founder") != founder:
+            raise PermissionError("this hub has that matter with another founder")
+        # the pusher's membership, so the hub knows who may sync
+        pending = {o: evs for o, evs in req.get("pool", {}).items()}
+        for _ in range(len(pending) + 1):
+            progress = False
+            for o in list(pending):
+                have = m.pool_log.log_for(o).count()
+                evs = pending[o][have:] if have < len(pending[o]) else []
+                try:
+                    if evs:
+                        append_remote(m, "pool", o, have, evs)
+                    del pending[o]
+                    progress = True
+                except (SyncError, BadLog):
+                    continue          # its certificate may be in a log not appended yet
+            if not progress:
+                break
+        p = poolmod.Pool.load(m)
+        if not p.is_member(requester):
+            raise PermissionError("the pusher isn't a member of the matter's pool")
         return m, {"matter": mid, "origin": m.origin, "cert": m.identity.cert_path().read_text(encoding="ascii"),
                    "name": self.config["name"], "addresses": self.config["addresses"], "new": new}
 

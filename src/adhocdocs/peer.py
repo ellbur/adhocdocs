@@ -56,7 +56,7 @@ from pathlib import Path
 from . import pool as poolmod
 from .matter import EventLog, Matter
 from .objects import HASH_PREFIX, ObjectStore
-from .origin import cert_origin
+from .origin import cert_origin, is_origin
 from .portable import locked
 from .signing import BadLog, b64, check_chain, public_key, unb64
 
@@ -69,6 +69,15 @@ HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 class SyncError(Exception):
     pass
+
+
+class _TooLarge(Exception):
+    pass
+
+
+JSON_LIMIT = 64 << 20      # a batch of events, or a list of hashes
+JOIN_LIMIT = 64 << 10      # from someone not yet a member
+ADOPT_LIMIT = 16 << 20     # a matter's membership logs, from someone enrolled at the hub
 
 
 def sni_name(matter_id: str) -> str:
@@ -195,6 +204,8 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
         raise SyncError(f"objects missing for {feed}/{origin}: {missing[:3]}")
     log = feed_of(m, feed).log_for(origin)
     log.path.parent.mkdir(parents=True, exist_ok=True)
+    gone = pool.members.get(origin)
+    limit = gone["upto_feeds"].get(feed) if gone and not gone["active"] and gone.get("upto_feeds") else None
     with open(log.path, "a", encoding="utf-8", newline="\n") as f, locked(f):
         have = log.count()
         if have != start:
@@ -205,7 +216,20 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
                 events = events[skip:]
             else:
                 raise SyncError(f"{feed}/{origin}: this copy has {have} events, not {start}")
-        check_chain(log.last_event(), events, key, f"{feed}/{origin}")
+        if limit is not None and have + len(events) > limit:
+            # written after the installation was removed: they don't count, so they don't come
+            events = events[:max(0, limit - have)]
+            if not events:
+                raise SyncError(f"{feed}/{origin}: written after the installation was removed")
+        last = log.last_event()
+        check_chain(last, events, key, f"{feed}/{origin}")
+        if feed == "pool":
+            # membership is replayed by ID: an origin's IDs must only go up
+            prev = last["id"] if last else ""
+            for ev in events:
+                if not isinstance(ev.get("id"), str) or ev["id"] <= prev:
+                    raise BadLog(f"pool/{origin}: event {ev.get('id')} is dated before the one it follows")
+                prev = ev["id"]
         f.write("".join(json.dumps({k: v for k, v in ev.items() if k not in ("feed", "log", "origin", "stale")},
                                    ensure_ascii=False) + "\n" for ev in events))
     return have + len(events)
@@ -334,6 +358,12 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def handle(self):
+        try:
+            super().handle()
+        except (ssl.SSLError, ConnectionError, TimeoutError):
+            pass        # the client went away (or wasn't who it should be): nothing to answer
+
     def setup(self):
         super().setup()
         try:
@@ -349,11 +379,31 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _body(self) -> bytes:
-        n = int(self.headers.get("Content-Length", 0))
-        if n > 256 << 20:
-            raise SyncError("request too large")
+    def _body(self, limit: int) -> bytes:
+        """The request's body, which must say its length, and be at most
+        ``limit`` bytes. Read only after the headers check out."""
+        try:
+            n = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            raise _TooLarge("a request needs a Content-Length")
+        if n < 0 or n > limit:
+            raise _TooLarge("request too large")
         return self.rfile.read(n)
+
+    def _precheck(self, m: Matter | None):
+        """What can be checked before reading a body: a signature header with
+        a fresh time, and (with ``m``) an origin that's an active member. So
+        no one else can make the server read anything."""
+        h = self.headers.get("Authorization", "")
+        fields = dict(x.split("=", 1) for x in h.removeprefix("Adhoc ").split(",") if "=" in x)
+        try:
+            origin, ts = fields["origin"], int(fields["ts"])
+        except (KeyError, ValueError):
+            raise PermissionError("not signed")
+        if abs(time.time() - ts) > CLOCK_SKEW:
+            raise PermissionError("the request's clock is too far off this server's")
+        if m is not None and not poolmod.Pool.load(m).is_member(origin):
+            raise PermissionError(f"{origin} isn't a member of this matter's pool")
 
     def _route(self):
         parts = urllib.parse.urlsplit(self.path)
@@ -398,11 +448,16 @@ class _Handler(BaseHTTPRequestHandler):
             return self._hub()
         m, segs, q = self._route()
         if m is None:
+            self.close_connection = True
             return self._json(404, {"error": "no such matter here"})
         streaming = self.command == "PUT" and segs[:1] == ["objects"]
-        body = None if streaming or self.command == "GET" else self._body()
+        joining = segs == ["join"] and self.command == "POST"
+        body = None
         try:
-            if segs == ["join"] and self.command == "POST":
+            self._precheck(None if joining else m)
+            if not streaming and self.command != "GET":
+                body = self._body(JOIN_LIMIT if joining else JSON_LIMIT)
+            if joining:
                 req = json.loads(body)
                 self._auth(m, body, req.get("cert", "").encode())
                 from . import invite
@@ -410,19 +465,24 @@ class _Handler(BaseHTTPRequestHandler):
             who = self._auth(m, None if streaming else (body if body is not None else b""))
             return self._dispatch(m, segs, q, body, who)
         except PermissionError as e:
-            if streaming:
+            if streaming or body is None:
                 self.close_connection = True       # the body wasn't read
             return self._json(403, {"error": str(e)})
-        except (SyncError, BadLog, poolmod.PoolError, KeyError, ValueError) as e:
-            if streaming:
+        except _TooLarge as e:
+            self.close_connection = True
+            return self._json(413, {"error": str(e)})
+        except (SyncError, BadLog, poolmod.PoolError, KeyError, ValueError, TypeError, AttributeError) as e:
+            if streaming or body is None:
                 self.close_connection = True
             return self._json(409, {"error": f"{type(e).__name__}: {e}"})
 
     def _hub(self):
         """The hub's own routes: adopting a matter pushed to it."""
         hub = self.srv.hub
-        body = self._body()
+        body = None
         try:
+            self._precheck(None)
+            body = self._body(ADOPT_LIMIT)
             req = json.loads(body)
             who = self._auth(None, body, req.get("cert", "").encode(), hub.identity.origin)
             if self.path == "/hub/v1/adopt" and self.command == "POST":
@@ -432,8 +492,12 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(200, out)
             return self._json(404, {"error": "no such route"})
         except PermissionError as e:
+            self.close_connection = body is None
             return self._json(403, {"error": str(e)})
-        except (SyncError, BadLog, poolmod.PoolError, KeyError, ValueError) as e:
+        except _TooLarge as e:
+            self.close_connection = True
+            return self._json(413, {"error": str(e)})
+        except (SyncError, BadLog, poolmod.PoolError, KeyError, ValueError, TypeError, AttributeError) as e:
             return self._json(409, {"error": f"{type(e).__name__}: {e}"})
 
     def _dispatch(self, m, segs, q, body, who):
@@ -445,6 +509,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m)})
         if len(segs) == 3 and segs[0] == "events" and segs[1] in FEEDS:
             feed, origin = segs[1], segs[2]
+            if not is_origin(origin):
+                return self._json(404, {"error": "no such log"})
             if cmd == "GET":
                 start = int(q.get("from", ["0"])[0])
                 limit = min(int(q.get("limit", [str(BATCH)])[0]), BATCH)
@@ -459,7 +525,11 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"count": n})
         if segs == ["missing"] and cmd == "POST":
             store = store_only(m)
-            return self._json(200, {"missing": [h for h in json.loads(body)["hashes"] if HASH_RE.fullmatch(h) and not store.has(h)]})
+            hashes = json.loads(body)["hashes"]
+            if not isinstance(hashes, list) or len(hashes) > 10000:
+                raise ValueError("hashes must be a list of at most 10000")
+            return self._json(200, {"missing": [h for h in hashes
+                                                if isinstance(h, str) and HASH_RE.fullmatch(h) and not store.has(h)]})
         if len(segs) == 2 and segs[0] == "objects" and HASH_RE.fullmatch(segs[1]):
             h, store = segs[1], store_only(m)
             if cmd == "GET":

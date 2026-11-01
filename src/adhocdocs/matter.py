@@ -129,6 +129,8 @@ class EventLog:
             return
         with open(self.path, encoding="utf-8") as f:
             for line in f:
+                if not line.endswith("\n"):
+                    break           # being written right now: not there yet
                 if line.strip():
                     yield json.loads(line)
 
@@ -201,6 +203,11 @@ class Feed:
         return [(f"{self.name}/{o}", o, EventLog(p)) for o, p in sorted(found)]
 
     def log_for(self, origin: str) -> EventLog:
+        """One origin's log. ``origin`` often comes from another installation,
+        so it must be an origin ID: never a path."""
+        from .origin import is_origin
+        if not is_origin(origin):
+            raise ValueError(f"{origin!r} isn't an origin")
         return EventLog(self.dir / f"{origin}.jsonl")
 
     # -- reading -----------------------------------------------------------------

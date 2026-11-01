@@ -64,6 +64,7 @@ class Work:
     def __init__(self):
         self.versions: dict[str, dict] = {}      # version (event ID) -> version
         self.names: dict[str, list[str]] = {}    # name -> its versions, in merge order
+        self.ignored: list[dict] = []            # events that can't be laid out, and why
 
     @classmethod
     def load(cls, m: Matter) -> "Work":
@@ -74,6 +75,9 @@ class Work:
 
     def apply(self, ev: dict):
         if ev["op"] not in ("publish", "retire"):
+            return
+        if not safe_rel(ev.get("name")) or not isinstance(ev.get("revises", []), list):
+            self.ignored.append({"event": ev["id"], "origin": ev.get("origin"), "reason": f"bad name {ev.get('name')!r}"})
             return
         v = {"version": ev["id"], "name": ev["name"], "op": ev["op"], "revises": ev.get("revises", []),
              "by": ev["author"], "at": ev["at"], "origin": ev.get("origin"),
@@ -111,7 +115,21 @@ def _public(v: dict) -> dict:
 
 
 def files_of(m: Matter, v: dict) -> dict[str, str]:
-    return m.objects.get_object(v["publication"])["files"] if v.get("publication") else {}
+    """A version's files: ``{path: hash}``. A publication can come from any
+    installation, so its paths are checked: each must be a safe path, and
+    be the name itself, under it (a directory), or a cite-style file.
+    Raises Refused for one that isn't."""
+    if not v.get("publication"):
+        return {}
+    files = m.objects.get_object(v["publication"]).get("files")
+    name = v["name"]
+    if not isinstance(files, dict):
+        raise Refused(f"version {v['version']} of {name} is damaged")
+    for rel, h in files.items():
+        if not (safe_rel(rel) and isinstance(h, str) and HASH.fullmatch(h)
+                and (rel == name or rel.startswith(name.rstrip("/") + "/") or rel.endswith(".py"))):
+            raise Refused(f"version {v['version']} of {name} names a file it can't hold: {rel!r}")
+    return files
 
 
 # -- the workspace side ------------------------------------------------------------------
@@ -155,46 +173,95 @@ def name_of(m: Matter, path) -> str:
     return check_name(m, str(PurePosixPath(*p.relative_to(ws).parts)))
 
 
+def safe_rel(rel) -> bool:
+    """Whether a path (a name, or a file in a publication) is one that may be
+    laid out under ``work/`` or the workspace. These come from other
+    installations too, so they're checked wherever they're used: relative,
+    no ``..``, nothing hidden, no drive or backslash, and not ``logs/``,
+    where the work feed lives."""
+    if not isinstance(rel, str) or not rel or "\\" in rel or ":" in rel or "\x00" in rel:
+        return False
+    p = PurePosixPath(rel)
+    return (not p.is_absolute() and bool(p.parts) and ".." not in p.parts and str(p) == rel.rstrip("/")
+            and not any(x.startswith(".") for x in p.parts) and p.parts[0] != "logs")
+
+
 def check_name(m: Matter, name: str) -> str:
     """A name as given to the write path (from the API): relative, inside
     the workspace, and not hidden."""
-    rel = PurePosixPath(name)
-    if rel.is_absolute() or not rel.parts or ".." in rel.parts or "\\" in name:
-        raise Refused(f"{name!r} isn't a path in the workspace")
-    if any(part.startswith(".") for part in rel.parts):
-        raise Refused(f"{name} is hidden; only work product can be published")
-    ws = m.workspace.resolve()
-    if ws not in (ws / name).resolve().parents:
-        raise Refused(f"{name} isn't in the workspace")
-    return str(rel)
+    if not safe_rel(name):
+        raise Refused(f"{name!r} isn't a name work product can be published under (a path in the workspace, "
+                      "not hidden, not under logs/)")
+    return str(PurePosixPath(name))
 
 
-def _gather(m: Matter, name: str) -> dict[str, Path]:
+def _open_ws(m: Matter, rel: str):
+    """Open a workspace file for reading without following a symbolic link
+    anywhere in its path: the workspace is written by the session, and a
+    link could otherwise publish a file from anywhere on the host."""
+    parts = PurePosixPath(rel).parts
+    if os.name == "nt" or not hasattr(os, "O_NOFOLLOW"):
+        p = m.workspace / rel
+        if any((m.workspace.joinpath(*parts[:i + 1])).is_symlink() for i in range(len(parts))):
+            raise Refused(f"{rel} is a link; only files in the workspace can be published")
+        return open(p, "rb")
+    fd = os.open(m.workspace, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            nfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+        ffd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+    except OSError as e:
+        raise Refused(f"{rel} isn't a file in the workspace ({e.strerror}); links aren't followed")
+    finally:
+        os.close(fd)
+    import stat
+    if not stat.S_ISREG(os.fstat(ffd).st_mode):
+        os.close(ffd)
+        raise Refused(f"{rel} isn't a file")
+    return os.fdopen(ffd, "rb")
+
+
+def _read_ws(m: Matter, rel: str) -> bytes:
+    with _open_ws(m, rel) as f:
+        return f.read()
+
+
+def _gather(m: Matter, name: str) -> list[str]:
     """The files a publication of ``name`` holds: the file, or every file in
-    the directory, and a page's cite-style file."""
-    ws = m.workspace.resolve()
-    p = ws / name
+    the directory, and a page's cite-style file. Links are left out."""
+    p = m.workspace / name
+    if p.is_symlink():
+        raise Refused(f"{name} is a link; only files in the workspace can be published")
     if p.is_dir():
-        found = {str(PurePosixPath(*f.relative_to(ws).parts)): f for f in sorted(p.rglob("*"))
-                 if f.is_file() and not any(x.startswith(".") for x in f.relative_to(ws).parts)}
+        found = []
+        for d, dirs, files in os.walk(p, followlinks=False):
+            dirs[:] = sorted(x for x in dirs if not x.startswith(".") and not os.path.islink(os.path.join(d, x)))
+            for f in sorted(files):
+                full = Path(d) / f
+                if f.startswith(".") or full.is_symlink() or not full.is_file():
+                    continue
+                found.append(str(PurePosixPath(*full.relative_to(m.workspace).parts)))
         if not found:
             raise Refused(f"{name} is an empty directory")
         return found
     if not p.is_file():
         raise Refused(f"no file {name} in the workspace")
-    found = {name: p}
+    found = [name]
     if p.suffix == ".md":
-        style = _front_matter(p).get("cite-style")
+        style = _front_matter(_read_ws(m, name)).get("cite-style")
         if isinstance(style, str) and style.endswith(".py"):
-            sp = (p.parent / style).resolve()
-            if ws not in sp.parents or not sp.is_file():
+            rel = os.path.normpath(str(PurePosixPath(name).parent / style)).replace(os.sep, "/")
+            if not safe_rel(rel):
                 raise Refused(f"{name}'s cite-style {style} isn't a file in the workspace")
-            found[str(PurePosixPath(*sp.relative_to(ws).parts))] = sp
+            _read_ws(m, rel)
+            found.append(rel)
     return found
 
 
-def _front_matter(p: Path) -> dict:
-    text = p.read_text(encoding="utf-8")
+def _front_matter(data: bytes) -> dict:
+    text = data.decode("utf-8", errors="replace")
     if not text.startswith("---\n"):
         return {}
     end = text.find("\n---", 4)
@@ -224,14 +291,14 @@ def _layer_refs(obj: dict) -> list[str]:
     return [obj[k] for k in ("text", "offset_map", "segments", "geometry", "presentation") if obj.get(k)]
 
 
-def workspace_layers(m: Matter, paths) -> list[str]:
+def workspace_layers(m: Matter, rels) -> list[str]:
     """Layers the files name that only this workspace has."""
     state = m.state
     found = []
-    for p in paths:
-        if p.suffix not in TEXT_SUFFIXES:
+    for rel in rels:
+        if not rel.endswith(TEXT_SUFFIXES):
             continue
-        for h in dict.fromkeys(HASH.findall(p.read_text(encoding="utf-8", errors="replace"))):
+        for h in dict.fromkeys(HASH.findall(_read_ws(m, rel).decode("utf-8", errors="replace"))):
             info = state.layer(h)
             if info is not None and info.feed == "workspace" and h not in found:
                 found.append(h)
@@ -308,9 +375,12 @@ def publish(m: Matter, author: str, name: str, revises=None, merge=False, reques
         for r in revises:
             if r not in w.versions or w.versions[r]["name"] != name:
                 raise Refused(f"{r} is not a version of {name}")
-        promoted = promote(m, workspace_layers(m, found.values()))
+        promoted = promote(m, workspace_layers(m, found))
         store = _store(m)
-        files = {rel: store.put_file(p) for rel, p in found.items()}
+        files = {}
+        for rel in found:
+            with _open_ws(m, rel) as f:
+                files[rel] = store.put_stream(f)
         pub = {"type": "publication", "v": 1, "files": files}
         pid = object_id(pub)
         cur = w.current(name)
@@ -358,8 +428,11 @@ def checkout(m: Matter, name: str, version: str | None = None, force=False) -> d
     files = files_of(m, v)
     base = bases(m).get(name, {}).get("files", {})
     ws = m.workspace
+    root = ws.resolve()
     for rel, h in files.items():
         p = ws / rel
+        if p.is_symlink() or root not in (ws / rel).parent.resolve().joinpath(p.name).parents:
+            raise Refused(f"{rel} in the workspace is (or is under) a link; move it, then check out again")
         if p.exists() and not force:
             mine = _hash_file(p)
             if mine != h and mine != base.get(rel):
@@ -368,8 +441,8 @@ def checkout(m: Matter, name: str, version: str | None = None, force=False) -> d
     for rel, h in files.items():
         p = ws / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(p.name + ".checkout-tmp")
-        with open(tmp, "wb") as f:
+        tmp = p.with_name(f".{p.name}.checkout-{new_event_id()[-8:]}")
+        with open(tmp, "xb") as f:
             f.write(m.objects.get_bytes(h))
         tmp.replace(p)
     _set_base(m, name, v["version"], files)
@@ -424,13 +497,23 @@ def materialize(m: Matter) -> dict:
     root.mkdir(parents=True, exist_ok=True)
     w = Work.load(m)
     want: dict[str, str] = {}
+    skipped = []
+
+    def files(v):
+        try:
+            return files_of(m, v)
+        except (Refused, KeyError, ValueError) as e:     # damaged, or from a misbehaving installation
+            skipped.append({"version": v["version"], "name": v["name"], "reason": str(e)})
+            return {}
+
     for name in w.names:
         cur = w.current(name)
         if cur:
-            want.update(files_of(m, cur))
+            want.update(files(cur))
         for f in w.forks(name):
-            for rel, h in files_of(m, f).items():
+            for rel, h in files(f).items():
                 want[f".forks/{name}/{_short(f['version'])}/{rel}"] = h
+    real = root.resolve()
     manifest = root / ".materialized.json"
     try:
         had = json.loads(manifest.read_text(encoding="utf-8"))
@@ -439,6 +522,9 @@ def materialize(m: Matter) -> dict:
     written = 0
     for rel, h in want.items():
         p = root / rel
+        if real not in p.resolve().parents:          # belt and braces: only ever under work/
+            skipped.append({"file": rel, "reason": "outside work/"})
+            continue
         if had.get(rel) == h and p.exists():
             continue
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -451,7 +537,7 @@ def materialize(m: Matter) -> dict:
     removed = 0
     for rel in set(had) - set(want):
         p = root / rel
-        if p.exists():
+        if real in p.resolve().parents and p.exists():
             p.unlink()
             removed += 1
             for d in p.parents:
@@ -461,4 +547,4 @@ def materialize(m: Matter) -> dict:
     tmp = manifest.with_suffix(".tmp")
     tmp.write_text(json.dumps(want, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     tmp.replace(manifest)
-    return {"written": written, "removed": removed}
+    return {"written": written, "removed": removed, **({"skipped": skipped} if skipped else {})}

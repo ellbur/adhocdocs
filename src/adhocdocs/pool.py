@@ -36,14 +36,44 @@ ROLES = ("member", "hub")
 class Pool:
     def __init__(self, founder: str | None):
         self.founder = founder
+        self.cutoffs: dict[str, int] = {}      # removed origin -> how many of its pool events count
         self.members: dict[str, dict] = {}     # origin -> member (``active`` False once removed)
         self.ignored: list[dict] = []          # events that didn't count, and why
 
     @classmethod
     def load(cls, m: Matter) -> "Pool":
-        p = cls(m.config.get("founder"))
-        for ev in m.pool_log.read():
-            p.apply(ev)
+        return cls.replay(m.config.get("founder"), list(m.pool_log.read()))
+
+    @classmethod
+    def replay(cls, founder, events) -> "Pool":
+        """The pool the events describe.
+
+        An event's ID is chosen by whoever wrote it, so a removed member could
+        give a new event an ID from before its removal, and have it replay as
+        if written while it was still a member. So a removal records how much
+        of the removed installation's logs the remover had (``upto``), and its
+        events past that point don't count, whatever their IDs. Since that can
+        change who removed whom, this replays until the cutoffs settle."""
+        cutoffs: dict = {}
+        for _ in range(8):
+            p = cls(founder)
+            seen: dict[str, int] = {}
+            for ev in events:
+                o = ev.get("origin")
+                i = seen[o] = seen.get(o, -1) + 1
+                limit = cutoffs.get(o)
+                if limit is not None and i >= limit:
+                    p._ignore(ev, "written after its installation was removed")
+                    continue
+                try:
+                    p.apply(ev)
+                except (KeyError, TypeError, AttributeError, ValueError) as e:
+                    p._ignore(ev, f"malformed: {type(e).__name__}")
+            new = {o: x["upto"] for o, x in p.members.items() if not x["active"] and x.get("upto") is not None}
+            if new == cutoffs:
+                break
+            cutoffs = new
+        p.cutoffs = cutoffs
         return p
 
     def active(self) -> list[dict]:
@@ -83,6 +113,10 @@ class Pool:
                 return self._ignore(ev, f"{ev['member']} isn't a member")
             x["active"] = False
             x["removed_at"], x["removed_by"] = ev["at"], ev.get("author")
+            upto = ev.get("upto")
+            if isinstance(upto, dict) and isinstance(upto.get("pool"), int):
+                x["upto"] = upto["pool"]
+                x["upto_feeds"] = {k: v for k, v in upto.items() if isinstance(v, int)}
         elif op == "set-addresses":
             if ev.get("member") != by:
                 return self._ignore(ev, "a member sets only its own addresses")
@@ -136,7 +170,11 @@ def remove_member(m: Matter, author: str, origin: str) -> dict:
         raise PoolError("this installation isn't a member of the pool")
     if not p.is_member(origin):
         raise PoolError(f"{origin} isn't a member")
-    return m.pool_log.append(op="remove-member", member=origin, author=author)
+    # how much of its logs counts: what this installation holds of them now
+    upto = {name: feed.log_for(origin).count()
+            for name, feed in (("pool", m.pool_log), ("store", m.logs["store"]), ("annotations", m.annotation_log),
+                               ("work", m.work_log))}
+    return m.pool_log.append(op="remove-member", member=origin, upto=upto, author=author)
 
 
 def set_addresses(m: Matter, author: str, addresses) -> dict | None:

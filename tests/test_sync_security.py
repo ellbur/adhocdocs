@@ -1,0 +1,159 @@
+"""Regression tests for what an independent review of sync found: each
+of these was shown to work against the code before it was fixed."""
+
+import json
+import os
+import socket
+import ssl
+import time
+
+import pytest
+
+from adhocdocs import annotations, invite, peer, pool as poolmod, work
+from adhocdocs.annotations import Refused
+from adhocdocs.matter import Matter
+from adhocdocs.signing import sign
+from test_peer import ALICE, serve
+from test_sync import text_doc
+
+
+@pytest.fixture
+def pair(tmp_path):
+    a = Matter.create(tmp_path / "a")
+    text_doc(a, "a.txt", "hello")
+    srv, addr = serve(a)
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "b")
+    yield Matter(a.root), Matter(tmp_path / "b"), srv, addr
+    srv.stop()
+
+
+def test_a_log_name_cant_be_a_path(pair, tmp_path):
+    """A member of one matter can't read another's logs (or the workspace
+    feed) by putting a path where an origin goes."""
+    a, b, srv, addr = pair
+    other = Matter.create(tmp_path / "other")
+    annotations.write(other, ALICE, {"op": "define-tag", "tag": "secret"})
+    srv.add(other)
+    p = peer.Peer(b, addr, a.origin)
+    for evil in (f"..%2F..%2F..%2Fother%2Fannotations%2Flogs%2F{other.origin}", "..%2F..%2Fworkspace%2F.adhoc%2Flog"):
+        r = p.request("GET", f"events/annotations/{evil}?from=0")
+        assert r.status == 404 and b"secret" not in r.read()
+    p.close()
+    with pytest.raises(ValueError):
+        a.annotation_log.log_for("../x")
+
+
+def test_publications_from_elsewhere_cant_write_outside_work(pair, tmp_path):
+    a, b, srv, addr = pair
+    store = work._store(b)
+    h = store.put_bytes(b"pwned")
+    for name, files in (("x.md", {"../../escaped.txt": h}), ("y.md", {"/tmp/abs-escaped.txt": h}),
+                        ("../z.md", {"../z.md": h}), ("w.md", {"logs/" + b.origin + ".jsonl": h})):
+        pub = store.put_object({"type": "publication", "v": 1, "files": files})
+        b.work_log.append(op="publish", name=name, publication=pub, revises=[], kind="page", author="user:mallory")
+    peer.sync_with(b, addr, a.origin)
+    assert not (tmp_path / "escaped.txt").exists() and not (a.root / "escaped.txt").exists()
+    assert not os.path.exists("/tmp/abs-escaped.txt") and not (tmp_path / "z.md").exists()
+    assert work.listing(Matter(a.root))                               # listed, but laid out nowhere
+    assert sorted(p.name for p in (a.root / "work").iterdir() if not p.name.startswith(".")) == ["logs"]
+    with pytest.raises(Refused):
+        work.checkout(Matter(a.root), "x.md")
+
+
+def test_links_in_the_workspace_dont_publish_what_they_point_at(pair):
+    a, b, srv, addr = pair
+    key = next((a.root / "sync/keys").glob("*.pem"))
+    d = a.workspace / "exhibits"
+    d.mkdir()
+    (d / "real.md").write_text("# Real\n", encoding="utf-8")
+    (d / "key.md").symlink_to(key)
+    (d / "sub").symlink_to(a.root / "sync")
+    r = work.publish(a, ALICE, "exhibits")
+    assert r["files"] == ["exhibits/real.md"]
+    (a.workspace / "memo.md").symlink_to(key)
+    with pytest.raises(Refused, match="link"):
+        work.publish(a, ALICE, "memo.md")
+    (a.workspace / "linked").symlink_to(a.root / "sync" / "keys")
+    with pytest.raises(Refused):
+        work.publish(a, ALICE, f"linked/{key.name}")
+    assert not any(b"PRIVATE KEY" in p.read_bytes() for p in (a.root / "store/objects").rglob("*") if p.is_file())
+
+
+def test_a_removed_member_cant_backdate_its_way_back(pair, tmp_path):
+    a, b, srv, addr = pair
+    poolmod.remove_member(a, ALICE, b.origin)
+    # b hasn't heard: it adds a sock puppet, with an ID from before its removal
+    c = Matter.create(tmp_path / "c", matter_id=a.id)
+    added = next(e for e in a.pool_log.read() if e.get("member") == b.origin)
+    log = b.pool_log.log_for(b.origin)
+    ev = sign({"id": added["id"][:-1] + "Z", "at": "x", "op": "add-member", "member": c.origin,
+               "cert": c.identity.cert_path().read_text(encoding="ascii"), "name": "puppet", "role": "member",
+               "addresses": [], "author": "user:mallory"}, b.identity.key, log.last_event())
+    with open(log.path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(ev) + "\n")
+    # the events arrive anyway, by way of a member that kept them
+    import shutil
+    shutil.copy(log.path, a.pool_log.dir / log.path.name)
+    p = poolmod.Pool.load(Matter(a.root))
+    assert not p.is_member(c.origin) and not p.is_member(b.origin)
+    assert any("after its installation was removed" in x["reason"] for x in p.ignored)
+    # and sync won't take them in the first place
+    (a.pool_log.dir / log.path.name).unlink()
+    with pytest.raises(peer.SyncError, match="removed|403"):
+        peer.append_remote(Matter(a.root), "pool", b.origin, 0, list(log.events()))
+
+
+def test_ids_in_a_membership_log_only_go_up(pair):
+    a, b, srv, addr = pair
+    log = a.pool_log.log_for(a.origin)
+    events = list(log.events())
+    first = events[0]
+    back = sign({"id": "ev_00000000000000000000000001", "at": "x", "op": "set-addresses", "member": a.origin,
+                 "addresses": [], "author": ALICE}, a.identity.key, events[-1])
+    from adhocdocs.signing import BadLog
+    with pytest.raises(BadLog, match="dated before"):
+        peer.append_remote(Matter(b.root), "pool", a.origin, len(events), [back])
+    assert first
+
+
+def _raw(addr, sni, request: bytes) -> bytes:
+    host, port = peer.split_address(addr)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    s = ctx.wrap_socket(socket.create_connection((host, port), 5), server_hostname=sni)
+    s.sendall(request)
+    s.settimeout(5)
+    data = b""
+    try:
+        while chunk := s.recv(65536):
+            data += chunk
+    except (TimeoutError, ssl.SSLError, ConnectionError):
+        pass
+    s.close()
+    return data
+
+
+def test_nothing_is_read_from_strangers(pair):
+    a, b, srv, addr = pair
+    path = f"/v1/{a.id}/events/annotations/{a.origin}"
+    sni = peer.sni_name(a.id)
+    for headers in ("Content-Length: -1", "Content-Length: 999999999999", ""):
+        t = time.time()
+        out = _raw(addr, sni, f"POST {path} HTTP/1.1\r\nHost: x\r\n{headers}\r\n\r\n".encode() + b"x" * 100000)
+        assert out.startswith(b"HTTP/1.1 403") and time.time() - t < 4
+    # a member must still say how long its body is, within limits
+    p = peer.Peer(b, addr, a.origin)
+    auth = peer.auth_header(b, "POST", path, b"", a.origin)
+    out = _raw(addr, sni, f"POST {path} HTTP/1.1\r\nHost: x\r\nAuthorization: Adhoc {auth}\r\n"
+                          f"Content-Length: -1\r\n\r\n".encode())
+    assert out.startswith(b"HTTP/1.1 413")
+    p.close()
+
+
+def test_malformed_membership_events_dont_break_the_pool(pair):
+    a, b, srv, addr = pair
+    log = a.pool_log
+    log.append(op="add-member", member=None, cert=7, author=ALICE)
+    log.append(op="set-addresses", member=a.origin, addresses=None, author=ALICE)
+    p = poolmod.Pool.load(Matter(a.root))
+    assert p.is_member(b.origin) and len(p.ignored) >= 1
