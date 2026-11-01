@@ -1068,6 +1068,11 @@ lanes (--lanes group, custodian, from, kind). For a chronology, give items
 their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
 label), each with a locator to its evidence.
 
+Layout: a new pane (`view pane --new`, `view list`, `view open --new-pane`)
+gets a tab of its own. What the user opens from a pane (a page's
+references, a list's preview) goes beside it, tabbed there, so only related
+views share the width. `view state` shows the arrangement (windows[].tree).
+
 Windows: the viewer can have several, each with its own panes (say, a list
 on one screen and documents on another). Pane IDs are unique across them
 (p1 in the first window, w2-p1 in the second), a command naming a pane goes
@@ -1139,14 +1144,14 @@ def view(argv=None):
     s.add_argument("pane")
     s = sub.add_parser("home", help="show the overview: what the matter holds (the first window opens on it)")
     s.add_argument("--window", help="default: the window the user last used")
-    s = sub.add_parser("layout")
-    s.add_argument("layout", choices=["single", "split-v", "split-h", "grid"])
+    s = sub.add_parser("layout", help="a window's tabs one at a time (tabs, the default) or tiled")
+    s.add_argument("layout", choices=["tabs", "single", "split-v", "split-h", "grid"], help="single: the same as tabs")
     s.add_argument("--window", help="default: the window the user last used")
     s = sub.add_parser("window", help="windows: new (optionally moving a pane into it), move a pane, close")
     s.add_argument("action", choices=["new", "move", "close"])
     s.add_argument("--pane", help="new, move: the pane to move")
     s.add_argument("--window", help="move: the window to move it to; close: the window")
-    s.add_argument("--layout", choices=["single", "split-v", "split-h", "grid"], help="new: its layout")
+    s.add_argument("--layout", choices=["tabs", "single", "split-v", "split-h", "grid"], help="new: its layout")
     sub.add_parser("state", help="windows, panes, what's visible, selections, marks, form values")
     sub.add_parser("selection", help="the focused pane's selection and marks")
     s = sub.add_parser("history")

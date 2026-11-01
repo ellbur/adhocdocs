@@ -15,15 +15,38 @@
 body.adhoc-shell { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
   font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
 #tabs { display: flex; gap: 2px; padding: 4px 6px 0; border-bottom: 1px solid var(--line); flex: none; overflow-x: auto; }
-#tabs button { border: 1px solid var(--line); border-bottom: none; background: var(--bg); color: var(--muted);
-  padding: 4px 10px; border-radius: 5px 5px 0 0; font: inherit; max-width: 22em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#tabs button.focused { background: var(--pane); color: var(--ink); }
-#panes { flex: 1; display: grid; gap: 4px; padding: 4px; min-height: 0; }
-#panes.single { grid-template-columns: 1fr; }
-#panes.split-v { grid-auto-flow: column; grid-auto-columns: 1fr; }
-#panes.split-h { grid-auto-flow: row; grid-auto-rows: 1fr; }
-#panes.grid { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); grid-auto-rows: 1fr; }
-#panes.single > .pane:not(.focused) { display: none; }
+.lt-tab { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-bottom: none; background: var(--bg); color: var(--muted);
+  padding: 4px 6px 4px 10px; border-radius: 5px 5px 0 0; max-width: 22em; white-space: nowrap; cursor: default; flex: none; }
+.lt-tab .label { overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.lt-tab .x { border-radius: 3px; padding: 0 3px; line-height: 1.1; visibility: hidden; }
+.lt-tab:hover .x, .lt-tab.on .x { visibility: visible; }
+.lt-tab .x:hover { background: var(--line); color: var(--ink); }
+.lt-tab.on { background: var(--pane); color: var(--ink); }
+.lt-tab.focused .label { color: var(--accent); }
+.lt-tab.home-tab { padding-right: 10px; }
+/* the layout tree: tab groups, splits, and slots the panes are positioned over */
+#panes { flex: 1; position: relative; min-height: 0; }
+#layout { position: absolute; inset: 0; display: flex; padding: 4px; }
+#panes > .pane { position: absolute; }
+.lt-body { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.lt-body > * { flex: 1; }
+.lt-body.split-v { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.lt-body.split-h { display: grid; grid-auto-flow: row; grid-auto-rows: 1fr; gap: 4px; }
+.lt-body.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); grid-auto-rows: 1fr; gap: 4px; }
+.lt-split { display: flex; min-width: 0; min-height: 0; }
+.lt-split.h { flex-direction: column; }
+.lt-splitter { flex: 0 0 6px; cursor: col-resize; }
+.lt-split.h > .lt-splitter { cursor: row-resize; }
+.lt-splitter:hover { background: var(--line); border-radius: 3px; }
+.lt-tabs { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.lt-strip { display: flex; gap: 2px; flex: none; overflow-x: auto; padding: 0 2px; }
+.lt-strip .lt-tab { padding-top: 2px; padding-bottom: 2px; font-size: 12px; max-width: 16em; }
+.lt-strip + .lt-body > .lt-slot, .lt-strip + .lt-body > * { min-height: 0; }
+.lt-slot { min-width: 0; min-height: 0; }
+body.dragging { user-select: none; -webkit-user-select: none; }
+body.dragging iframe { pointer-events: none; }
+body.drag-v { cursor: col-resize; }
+body.drag-h { cursor: row-resize; }
 
 .pane { background: var(--pane); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .pane.focused { border-color: var(--accent); }
@@ -173,7 +196,7 @@ table.adhoc-list tr.child td:first-child { padding-left: 22px; }
 
 
 /* the overview (landing page) */
-#tabs button.home-tab { font-weight: 600; }
+.lt-tab.home-tab { font-weight: 600; }
 .pane-body.home { padding: 18px 22px 28px; }
 .home-intro { max-width: 60em; margin-bottom: 18px; }
 .home-intro h1 { font-size: 20px; margin: 0 0 4px; }

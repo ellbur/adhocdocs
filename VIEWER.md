@@ -13,7 +13,7 @@ the user points at can be read by Claude, which can drive it from code
 
 1. **Fast:** first page visible within 100 ms of a keypress, for flipping
    through hundreds of documents.
-2. **Many documents at once:** panes side by side.
+2. **Many documents at once:** related panes side by side, the rest in tabs.
 3. **Exact mapping to locators:** anything shown can be selected as a
    locator, and any locator can be shown and highlighted.
 4. **Custom displays from Claude:** a grouped list or a checklist, for the
@@ -101,8 +101,34 @@ ingest` instead. The data comes from `/api/overview` (built in
 [`overview.rs`](viewer/src/overview.rs)) and is read again every few
 seconds while the overview is showing.
 
-Panes are shown as tabs, one at a time or tiled (`split-v`, `split-h`,
-`grid`).
+**Tabs and splits:** a window's panes are arranged in a tree of tabs and
+splits. Columns are spent only on views that are read together; anything
+else gets a tab, so width isn't used up as panes pile on:
+
+- A new, unrelated view (a page, a list, a document Claude opens in a new
+  pane) gets a **tab of its own** at the top of the window.
+- A view opened **from** another (a reference clicked in a page, a document
+  from the overview, a list's preview) goes **beside** it, in a split. That
+  side is itself tabbed: the next reference opens a new tab there, and one
+  already showing that document is reused. A view on that side opens its own
+  references among its neighbors, not in a third column.
+- Closing panes folds away what they leave: a split with one side left
+  becomes that side, and its tabs join the tabs around it.
+
+For example, after Claude shows a page, the user opens two of its
+references, Claude shows a second page, and the user opens one of its
+references:
+
+```
+tabs(split(page, tabs(doc, doc)), split(page, tabs(doc)))
+```
+
+A tab holding a split is named after its first pane, with a count of the
+others. Each tab has a close button (×, closing all the panes under it),
+and the divider of a split can be dragged. `view state` reports the tree
+(`windows[].tree`: a pane ID, `{tabs, active}` or `{split, children,
+sizes}`). The top-level tabs can also be tiled instead of shown one at a
+time (`view layout split-v`, `split-h` or `grid`; `tabs` goes back).
 
 **Windows:** there can be several, each with its own panes and layout, for
 example a list on one screen and documents on another. The user moves the
