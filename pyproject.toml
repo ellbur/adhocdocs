@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "cryptography>=50.0.2",
     "fastembed>=0.9.1",
     "libpff-python>=20260926",
     "lxml>=6.1.3",

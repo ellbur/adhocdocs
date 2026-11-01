@@ -1,6 +1,7 @@
 """Tags and notes: an append-only event log, replayed into current state.
 
-Each line of ``annotations/log.jsonl`` is an event with ``id``, ``at``,
+Each line of ``annotations/logs/<origin>.jsonl`` (one log per installation,
+read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 ``author`` (``claude`` or ``user:<id>``), optional ``requested_by``, and
 ``op``:
 
@@ -295,7 +296,7 @@ OPS = {
 
 @contextmanager
 def _locked(m: Matter):
-    path = m.annotation_log.path.parent / ".lock"
+    path = m.root / "annotations" / ".lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f, locked(f):
         yield

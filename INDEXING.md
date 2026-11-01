@@ -86,14 +86,20 @@ The full syntax is in `search --help`. Choices worth knowing:
 ## Keeping indexes up to date
 
 Everything that changes what is in the matter is an event in one of two
-append-only feeds: the provenance log on the host (`store`) and the
+append-only feeds: the provenance log on the host (`store`, one log per
+installation of the matter, read merged: [SYNC.md](SYNC.md)) and the
 workspace log (`workspace`, for derived layers). This is the one
 requirement indexing puts on ingestion, **including removals**: `withdraw`
 deletes index rows (not just hides them) unless another live document shares
 the text. `idx changes` prints both feeds.
 
-Each index keeps a cursor per feed, advanced in the same transaction as its
-rows, so an interrupted update resumes cleanly. Its `settings`
+Each index keeps a cursor per log, advanced in the same transaction as its
+rows, so an interrupted update resumes cleanly. Events synced from another
+installation can arrive late and sort before ones already applied, so an
+index skips an event that later ones have overtaken (an `add-document`
+whose document has since been withdrawn, a `set-metadata` since replaced):
+it ends up agreeing with the replayed state whatever order events arrived
+in. Its `settings`
 (normalization version, model and model hash, passage size) are its
 identity. If the code's settings differ, the index refuses to answer and
 asks for `idx rebuild`, so it never mixes two models or tokenizers.

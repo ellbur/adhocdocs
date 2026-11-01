@@ -20,6 +20,30 @@ class Busy(Exception):
     pass
 
 
+def still_true(ev: dict, state) -> bool:
+    """Whether an event still describes the matter, given everything the feeds
+    hold now.
+
+    Events from other installations can arrive late, and sort before events
+    an index has already applied: a document's ``add-document`` after its
+    ``withdraw``, say. Indexes apply each event once, in the order they get
+    them, so an event that later ones have overtaken is skipped: whatever
+    overtook it is (or will be) applied instead. Then an index ends up
+    agreeing with the replayed state whatever order its events came in."""
+    op = ev["op"]
+    if op in ("add-document", "set-metadata"):
+        doc = ev["doc"]
+        live = doc in state.documents and doc not in state.withdrawn
+        return live and (op == "add-document" or state.metadata.get(doc) == ev["metadata"])
+    if op == "withdraw":
+        return ev["doc"] in state.withdrawn
+    if op == "supersede":
+        return ev["old"] in state.withdrawn
+    if op == "set-primary":
+        return state.primary.get(ev["content"]) == ev["layer"]
+    return True
+
+
 class Index:
     kind = ""
 
@@ -47,7 +71,7 @@ class Index:
 
     def create(self):
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._write_manifest({"store": None, "workspace": None})
+        self._write_manifest({})
         self.init_db()
 
     def _write_manifest(self, cursor):
@@ -78,7 +102,7 @@ class Index:
 
     def cursor(self) -> dict:
         row = self.db.execute("SELECT value FROM meta WHERE key='cursor'").fetchone()
-        return json.loads(row[0]) if row else {"store": None, "workspace": None}
+        return self.m.upgrade_cursor(json.loads(row[0]) if row else {})
 
     def _set_cursor(self, cursor):
         self.db.execute("INSERT OR REPLACE INTO meta VALUES('cursor', ?)", (json.dumps(cursor),))
@@ -87,7 +111,7 @@ class Index:
 
     def behind(self) -> bool:
         cur = self.cursor()
-        return any(cur.get(f) != last for f, last in self.m.cursor().items() if last)
+        return any(cur.get(k) != last for k, last in self.m.cursor().items())
 
     @contextmanager
     def lock(self, wait=True):
@@ -105,6 +129,7 @@ class Index:
         self.check_settings()
         with self.lock():
             cursor = self.cursor()
+            self.m.refresh()
             batch, n = [], 0
             for ev in self.m.changes(cursor):
                 batch.append(ev)
@@ -120,9 +145,11 @@ class Index:
 
     def _apply_batch(self, batch, cursor) -> int:
         with self.db:
+            state = self.m.state
             for ev in batch:
-                self.apply(ev)
-                cursor[ev["feed"]] = ev["id"]
+                if still_true(ev, state):
+                    self.apply(ev)
+                cursor[ev["log"]] = ev["id"]
             self._set_cursor(cursor)
         return len(batch)
 
@@ -163,7 +190,7 @@ class TextIndex(Index):
         op = ev["op"]
         state = self.m.state
         if op == "add-layer":
-            if self.wants_view(ev["view"]) and not self.has_text(ev["text"]):
+            if self.wants_view(ev["view"]) and not self.has_text(ev["text"]) and self._used(ev["content"]):
                 self.add_text(ev["text"])
         elif op == "add-document":
             for l in state.layers.get(ev["content"], []):
@@ -171,6 +198,12 @@ class TextIndex(Index):
                     self.add_text(l.text)
         elif op == "withdraw":
             self._remove_unshared(state.documents.get(ev["doc"]))
+
+    def _used(self, content) -> bool:
+        """Whether a live document has this content."""
+        state = self.m.state
+        return any(state.documents[d] == content and d not in state.withdrawn
+                   for d in state.by_content.get(content, ()))
 
     def _remove_unshared(self, content):
         """Delete a withdrawn content's texts unless a live document still uses them."""

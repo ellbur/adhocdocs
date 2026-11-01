@@ -196,14 +196,13 @@ impl Handler {
 
 /// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
 pub fn annotation_state(root: &std::path::Path) -> Value {
-    let text = std::fs::read_to_string(root.join("annotations/log.jsonl")).unwrap_or_default();
+    let events = crate::matter::annotation_events(root);
     let mut defs: Vec<(String, Value)> = vec![];
     let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
     let mut notes: Vec<(String, Value)> = vec![];
     let mut entities: Vec<(String, Value)> = vec![];
     let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let Ok(ev) = serde_json::from_str::<Value>(line) else { continue };
+    for ev in events {
         let tag = ev["tag"].as_str().unwrap_or("").to_string();
         match ev["op"].as_str().unwrap_or("") {
             "define-tag" => defs.push((tag, ev.clone())),

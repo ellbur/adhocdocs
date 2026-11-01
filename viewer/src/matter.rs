@@ -31,9 +31,64 @@ pub struct State {
 pub struct Matter {
     pub root: PathBuf,
     roots: Vec<PathBuf>,
-    logs: Vec<PathBuf>,
-    log_sizes: Vec<u64>,
+    log_sizes: Vec<(PathBuf, u64)>,
     pub state: State,
+}
+
+/// A feed's logs: one per installation (`<dir>/<origin>.jsonl`), plus the
+/// single log of a matter made before that (`legacy`), in the order merging
+/// breaks ties: by origin, the legacy log counting as origin "legacy". This
+/// must match `Feed.logs` in adhocdocs/matter.py.
+pub fn feed_logs(dir: &Path, legacy: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<(String, PathBuf)> = fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false))
+                .filter_map(|p| Some((p.file_stem()?.to_string_lossy().to_string(), p)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if legacy.exists() {
+        found.push(("legacy".to_string(), legacy.to_path_buf()));
+    }
+    found.sort();
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+fn read_log(p: &Path) -> Vec<Value> {
+    let Ok(text) = fs::read_to_string(p) else { return vec![] };
+    text.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).ok()).collect()
+}
+
+/// Several logs' events in the order every installation replays them: at
+/// each step, the earliest of the logs' next events by ID, ties going to the
+/// earlier log. Each log keeps its own file order. (`heapq.merge` in
+/// adhocdocs/matter.py makes the same choices.)
+pub fn merged(paths: &[PathBuf]) -> Vec<Value> {
+    let logs: Vec<Vec<Value>> = paths.iter().map(|p| read_log(p)).collect();
+    let mut pos = vec![0usize; logs.len()];
+    let mut out = Vec::with_capacity(logs.iter().map(|l| l.len()).sum());
+    loop {
+        let mut best: Option<(usize, &str)> = None;
+        for (i, log) in logs.iter().enumerate() {
+            if let Some(ev) = log.get(pos[i]) {
+                let id = ev.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if best.map(|(_, b)| id < b).unwrap_or(true) {
+                    best = Some((i, id));
+                }
+            }
+        }
+        let Some((i, _)) = best else { break };
+        out.push(logs[i][pos[i]].clone());
+        pos[i] += 1;
+    }
+    out
+}
+
+/// The annotation feed's events, merged.
+pub fn annotation_events(root: &Path) -> Vec<Value> {
+    merged(&feed_logs(&root.join("annotations/logs"), &root.join("annotations/log.jsonl")))
 }
 
 fn hex(h: &str) -> &str {
@@ -48,7 +103,6 @@ impl Matter {
         }
         let mut m = Matter {
             roots: vec![root.join("store/objects"), root.join("workspace/.adhoc/objects")],
-            logs: vec![root.join("store/log.jsonl"), root.join("workspace/.adhoc/log.jsonl")],
             log_sizes: vec![],
             root,
             state: State::default(),
@@ -57,28 +111,31 @@ impl Matter {
         Ok(m)
     }
 
-    /// Replay the logs if either has grown since the last look.
+    /// Replay the logs if any has grown, or a new one appeared, since the
+    /// last look. The store feed (every installation's log, merged), then the
+    /// workspace's.
     pub fn refresh(&mut self) {
-        let sizes: Vec<u64> = self.logs.iter().map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0)).collect();
+        let store = feed_logs(&self.root.join("store/logs"), &self.root.join("store/log.jsonl"));
+        let workspace = self.root.join("workspace/.adhoc/log.jsonl");
+        let sizes: Vec<(PathBuf, u64)> = store
+            .iter()
+            .chain(std::iter::once(&workspace))
+            .map(|p| (p.clone(), fs::metadata(p).map(|m| m.len()).unwrap_or(0)))
+            .collect();
         if sizes == self.log_sizes {
             return;
         }
         let mut s = State::default();
-        for log in &self.logs {
-            let Ok(text) = fs::read_to_string(log) else { continue };
-            for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                if let Ok(ev) = serde_json::from_str::<Value>(line) {
-                    apply(&mut s, &ev);
-                }
-            }
+        for ev in merged(&store).iter().chain(read_log(&workspace).iter()) {
+            apply(&mut s, ev);
         }
         self.state = s;
         self.log_sizes = sizes;
     }
 
-    /// Changes whenever either log does.
+    /// Changes whenever any log does.
     pub fn generation(&self) -> Vec<u64> {
-        self.log_sizes.clone()
+        self.log_sizes.iter().map(|(_, n)| *n).collect()
     }
 
     fn path(&self, h: &str) -> Option<PathBuf> {
@@ -219,13 +276,15 @@ fn apply(s: &mut State, ev: &Value) {
     match ev.get("op").and_then(|v| v.as_str()).unwrap_or("") {
         "add-document" => {
             let doc = str_("doc");
-            if !s.documents.contains_key(&doc) {
+            let new = !s.documents.contains_key(&doc);
+            if new {
                 s.order.push(doc.clone());
             }
             s.documents.insert(doc.clone(), str_("content"));
             s.withdrawn.remove(&doc);
             let parent = str_("parent");
-            if !parent.is_empty() {
+            // the same document ingested on two installations is one document
+            if new && !parent.is_empty() {
                 s.children.entry(parent.clone()).or_default().push(doc.clone());
                 s.parent.insert(doc, parent);
             }
@@ -251,5 +310,38 @@ fn apply(s: &mut State, ev: &Value) {
             s.withdrawn.insert(str_("doc"));
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(id: &str, op: &str, doc: &str) -> String {
+        format!("{{\"id\": \"{}\", \"op\": \"{}\", \"doc\": \"{}\", \"content\": \"c-{}\"}}\n", id, op, doc, doc)
+    }
+
+    #[test]
+    fn logs_of_every_installation_merge_by_id() {
+        let dir = std::env::temp_dir().join(format!("adhoc-merge-{}", std::process::id()));
+        let logs = dir.join("store/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::create_dir_all(dir.join("store/objects")).unwrap();
+        // two installations; B's withdraw sorts between A's adds
+        fs::write(logs.join("o_B.jsonl"), ev("ev_2", "withdraw", "x")).unwrap();
+        fs::write(logs.join("o_A.jsonl"), ev("ev_1", "add-document", "x") + &ev("ev_3", "add-document", "y")).unwrap();
+        fs::write(logs.join("notes.txt"), "not a log").unwrap();
+        let paths = feed_logs(&logs, &dir.join("store/log.jsonl"));
+        assert_eq!(paths.len(), 2);
+        let ids: Vec<String> = merged(&paths).iter().map(|e| e["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, ["ev_1", "ev_2", "ev_3"]);
+        let mut m = Matter::open(&dir).unwrap();
+        assert!(!m.live("x") && m.live("y"));
+        // a log arriving from a third installation is picked up
+        fs::write(logs.join("o_C.jsonl"), ev("ev_4", "add-document", "x")).unwrap();
+        m.refresh();
+        assert!(m.live("x"));
+        assert_eq!(m.state.order, ["x", "y"]);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

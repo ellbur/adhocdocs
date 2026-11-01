@@ -1,6 +1,9 @@
 # Syncing a Matter Across Installations
 
-*Status: designed, not built. Decisions still open are at the end.*
+*Status: being built, in the steps under "Order of building". Built: step 1,
+one log per installation ([`matter.py`](src/adhocdocs/matter.py),
+[`origin.py`](src/adhocdocs/origin.py)). Decisions still open are at the
+end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
 desktop, a firm server. Cloud document platforms solve this by keeping the
@@ -69,9 +72,9 @@ someone's page, `work checkout memo` copies it into the workspace.
 
 ## The data model: one log per installation
 
-Today `store/log.jsonl` and `annotations/log.jsonl` are each one append-only
-log. Sync changes that to **one log per installation**, each written only by
-the installation that owns it:
+A matter used to have one `store/log.jsonl` and one
+`annotations/log.jsonl`. Now it has **one log per installation**, each
+written only by the installation that owns it:
 
 ```
 <matter>/
@@ -85,7 +88,19 @@ the installation that owns it:
 ```
 
 An **origin** is one installation of one matter, identified by the hash of
-its public key (as a Syncthing device ID is).
+its public key (as a Syncthing device ID is). It's made the first time the
+installation writes, not when it reads.
+
+- **A copied matter gets a new origin.** The origin records the host and
+  path it was made for, and a matter opened anywhere else makes its own. A
+  restored backup or a copied directory would otherwise be a second writer
+  of the original's log, forking it. Moving a matter costs a new log file,
+  nothing more.
+- **Existing matters migrate when opened on the host:** each single log
+  becomes the logs of a new origin, unchanged, and `matter.toml` records
+  which (`legacy_origin`), so index cursors that named the old feeds still
+  work. In a session, where nothing is writable, an unmigrated matter is
+  read as it is.
 
 This makes sync almost trivial and conflict-free *at the storage level*:
 
@@ -113,7 +128,14 @@ every installation that has the same events reaches the same state.
 - **Event IDs come from a hybrid logical clock.** They are still ULIDs, but
   an installation never stamps an event earlier than one it has already
   seen. So an event made after seeing another sorts after it, whatever the
-  machines' clocks say. Ties break by origin.
+  machines' clocks say. (A machine whose clock is far ahead drags later IDs
+  along with it. That's harmless: IDs order events, and the time an event
+  happened is its `at`.)
+- **The merge order:** at each step, the earliest of the logs' next events,
+  by ID, ties going to the lower origin, each log in its own file order. For
+  logs the clock wrote, that's ID order. Logs from before (whose IDs came
+  from several processes' clocks) keep their file order, and every
+  installation still picks the same order. The viewer merges the same way.
 - **The rules are checked again on replay.** An event that was valid where
   it was written can conflict with one written concurrently elsewhere: the
   same tag defined twice, the same hotkey, an untag of a tag someone else
@@ -135,14 +157,17 @@ every installation that has the same events reaches the same state.
   - **Two edits of a note or an entity field:** the later wins; the earlier
     is in the history.
   - **Withdraw and supersede** take effect whenever they arrive.
-- **Feeds and cursors become per origin.** An index's cursor becomes a
-  vector (`{feed: {origin: event}}`). An event that arrives late but sorts
-  early is still new to the index. Today indexes apply events one at a
-  time, in log order (a `withdraw` deletes rows, an `add-layer` adds them).
-  With late arrivals that isn't safe, so an event becomes a prompt to
-  re-read *that document's* state from the replay and make the index agree
-  with it. Custom indexes (Claude's own updaters, fed JSON Lines) get the
-  vector cursor and the same advice in `idx --help`.
+- **Cursors are per log.** A reader's cursor maps each log
+  (`store/<origin>`, `workspace`) to the last event it read, and every event
+  says which log it came from, so an event that arrives late but sorts early
+  is still past the cursor. `ann log --cursor` gives one for the annotation
+  feed.
+- **Indexes skip overtaken events.** Indexes apply each event once, as it
+  arrives. A document's `add-document` can arrive after its `withdraw`, so
+  an index checks each event against the replayed state and skips one that
+  later events have overtaken (`still_true` in
+  [`index/base.py`](src/adhocdocs/index/base.py)). Custom indexes get such
+  events marked `stale`.
 
 ### Authorship and the rules across installations
 
@@ -252,7 +277,8 @@ way, and with them the protocol is small.
 
 1. Per-origin logs, HLC IDs, the matter ID and vector cursors, with no
    network. Test by copying logs between two matter directories by hand: two
-   installations that exchange logs must end in the same state.
+   installations that exchange logs must end in the same state. *Built;
+   tests in [`test_sync.py`](tests/test_sync.py).*
 2. Replay rules and `adhoc sync conflicts`.
 3. Publishing work product.
 4. Signing, the pool log, and sync between two members on a LAN.

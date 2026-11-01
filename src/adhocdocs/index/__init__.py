@@ -31,7 +31,10 @@ def _kinds():
 class ExternalIndex(Index):
     """A custom index. Its updater gets change events as JSON Lines on stdin,
     with ``ADHOC_INDEX_DIR`` and ``ADHOC_MATTER`` set, applies them, and
-    writes the new cursor into the manifest itself."""
+    writes the new cursor into the manifest itself: for each event,
+    ``cursor[ev["log"]] = ev["id"]``. An event that later ones have overtaken
+    (see :func:`adhocdocs.index.base.still_true`) comes with ``"stale": true``;
+    skip it, but advance the cursor past it."""
 
     def __init__(self, m, name):
         super().__init__(m, name)
@@ -41,10 +44,13 @@ class ExternalIndex(Index):
         return self.manifest().get("settings", {})
 
     def cursor(self):
-        return self.manifest().get("cursor") or {"store": None, "workspace": None}
+        return self.m.upgrade_cursor(self.manifest().get("cursor"))
 
     def update(self, progress=None):
-        events = list(self.m.changes(self.cursor()))
+        from .base import still_true
+        self.m.refresh()
+        state = self.m.state
+        events = [ev if still_true(ev, state) else {**ev, "stale": True} for ev in self.m.changes(self.cursor())]
         if not events:
             return 0
         env = {**os.environ, "ADHOC_INDEX_DIR": str(self.dir), "ADHOC_MATTER": str(self.m.root)}

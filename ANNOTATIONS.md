@@ -48,11 +48,12 @@ delete tags and notes directly. Everything else stays programmable.
 
 ## Storage
 
-`annotations/log.jsonl` is an append-only event log, and the current state
-is a replay. That gives no write conflicts between the viewer and Claude,
-full history ("who tagged this privileged, and when?"), a change feed (`ann
-log --since <id> --author user`: "what did the user tag since I last
-looked?"), and plain data. Writers hold `annotations/.lock` while they
+`annotations/logs/` holds append-only event logs, one per installation of
+the matter ([SYNC.md](SYNC.md)), and the current state is a replay of them
+merged. That gives no write conflicts between the viewer and Claude, full
+history ("who tagged this privileged, and when?"), a change feed (`ann log
+--since <cursor> --author user`: "what did the user tag since I last
+looked?", with `ann log --cursor` marking where you are), and plain data. Writers hold `annotations/.lock` while they
 validate and append, so the viewer must too.
 
 ## Authorship doesn't depend on Claude

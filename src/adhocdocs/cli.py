@@ -295,10 +295,12 @@ def idx(argv=None):
         if name == "verify":
             s.add_argument("--repair", action="store_true")
     s = sub.add_parser("changes", help="print the change feed")
-    s.add_argument("--since", help='cursor JSON, e.g. \'{"store": "ev_…"}\'')
+    s.add_argument("--since", help='cursor JSON, e.g. \'{"store/o_…": "ev_…", "workspace": "ev_…"}\': '
+                   'the last event read in each log. Each event names its log ("log")')
     s = sub.add_parser("new", help="register a custom index updated by your own command")
     s.add_argument("name")
-    s.add_argument("--updater", required=True, help="command that reads change events on stdin")
+    s.add_argument("--updater", required=True, help='command that reads change events on stdin, applies them, and writes the manifest\'s "cursor": '
+                   'cursor[ev["log"]] = ev["id"] for each event. Skip events marked "stale" (overtaken by later ones)')
     s.add_argument("--kind", default="custom")
     s.add_argument("--settings", default="{}", help="JSON")
     matter_everywhere(sub)
@@ -314,7 +316,7 @@ def idx(argv=None):
         d.mkdir(parents=True, exist_ok=False)
         (d / "manifest.json").write_text(json.dumps(
             {"type": "index", "v": 1, "name": a.name, "kind": a.kind, "settings": json.loads(a.settings),
-             "cursor": {"store": None, "workspace": None}, "updater": a.updater}, indent=2) + "\n", encoding="utf-8", newline="\n")
+             "cursor": {}, "updater": a.updater}, indent=2) + "\n", encoding="utf-8", newline="\n")
         out({"created": str(d)})
         return
     names = getattr(a, "names", None) or all_names(m)
@@ -693,8 +695,10 @@ def ann(argv=None):
     s = sub.add_parser("find", help="documents by tags: --tag hot --tag -privileged")
     s.add_argument("--tag", action="append", required=True)
     s.add_argument("--list", dest="list_file", help="also write a list file")
-    s = sub.add_parser("log", help="the event log")
-    s.add_argument("--since", help="event ID")
+    s = sub.add_parser("log", help="the event log, all installations' logs merged")
+    s.add_argument("--since", help="a cursor from --cursor (JSON), or an event ID. Events synced from other "
+                   "installations can sort before ones you've read; a cursor still catches them, an ID doesn't")
+    s.add_argument("--cursor", action="store_true", help="print only the cursor for the log's end")
     s.add_argument("--author", help="user, claude, or user:<id>")
     s = sub.add_parser("check", help="check a note's references and quotations (note ID, or - for a body on stdin)")
     s.add_argument("note")
@@ -811,7 +815,11 @@ def ann(argv=None):
             lists.write(a.list_file, *lists.new(" ".join(a.tag), ["doc:" + d for d in docs],
                                                 query=" ".join(f"tag:{t}" for t in a.tag)))
     elif a.cmd == "log":
-        for ev in m.annotation_log.read(a.since):
+        if a.cursor:
+            out(m.annotation_log.cursor())
+            return
+        since = json.loads(a.since) if a.since and a.since.lstrip().startswith("{") else a.since
+        for ev in m.annotation_log.read(since):
             if who(a.author, ev["author"]):
                 out(ev)
     elif a.cmd == "check":

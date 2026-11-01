@@ -10,7 +10,7 @@ nothing here reads or relays what passes through it.
 Inside the session:
 
 ====================  ==================  ====================================
-/matter/store         read-only           originals, layers, provenance log
+/matter/store         read-only           originals, layers, provenance logs
 /matter/annotations   read-only           tags and notes (writes go through the API)
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
@@ -22,7 +22,8 @@ Inside the session:
 ====================  ==================  ====================================
 
 ``<matter>/audit`` is not mounted: the host writes the session's audit log
-there (:mod:`adhocdocs.audit`).
+there (:mod:`adhocdocs.audit`). Nor is ``<matter>/sync``, this
+installation's keys and sync state (:mod:`adhocdocs.origin`, SYNC.md).
 
 adhocdocs never reads, copies or sends what Claude Code writes in
 ``claude-home``; it only provides the directory.
