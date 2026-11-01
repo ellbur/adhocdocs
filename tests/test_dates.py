@@ -170,6 +170,19 @@ def test_index_files_and_analyze(m):
     assert dates.doc_dates(m)[attachment]["source"] == "attached"
 
 
+def test_index_with_old_rules_rebuilds_itself(m):
+    ix = open_index(m, "dates")
+    ix.update()
+    man = ix.manifest()
+    man["settings"] = {"rules": 1}
+    ix.manifest_path.write_text(json.dumps(man))
+    (ix.dir / "texts" / "stale.json").write_text("{}")
+    email = next(d for d in m.state.live_documents() if d in m.state.children)
+    assert {x["form"] for x in dates.doc_mentions(Matter(m.root), email)["mentions"]} >= {"March 9", "Yesterday"}
+    assert open_index(m, "dates").manifest()["settings"] == {"rules": dates.VERSION}
+    assert not (ix.dir / "texts" / "stale.json").exists()
+
+
 def test_event_entities_and_around(m):
     e = write(m, "claude", {"op": "define-entity", "name": "Dock 4 rejection", "kind": "event", "date": "2026-03-09"})[0]["entity"]
     assert Annotations.load(m).entities[e]["date"] == "2026-03-09"
