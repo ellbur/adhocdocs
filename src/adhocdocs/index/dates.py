@@ -57,7 +57,7 @@ class DatesIndex(TextIndex):
                              for d in found])
         self.texts_dir.mkdir(parents=True, exist_ok=True)
         tmp = self._sidecar(text_hash).with_suffix(".tmp")
-        tmp.write_text(json.dumps({"text": text_hash, "dates": found}, ensure_ascii=False))
+        tmp.write_text(json.dumps({"text": text_hash, "dates": found}, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self._sidecar(text_hash))
 
     def remove_text(self, text_hash):
@@ -89,7 +89,7 @@ class DatesIndex(TextIndex):
             of, messages = {}, {}
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.dir / "threads.tmp"
-        tmp.write_text(json.dumps({"of": of, "threads": messages}))
+        tmp.write_text(json.dumps({"of": of, "threads": messages}), encoding="utf-8")
         tmp.replace(self.dir / "threads.json")
 
     def verify(self, repair=False) -> dict:

@@ -49,7 +49,7 @@ class ExternalIndex(Index):
             return 0
         env = {**os.environ, "ADHOC_INDEX_DIR": str(self.dir), "ADHOC_MATTER": str(self.m.root)}
         data = "".join(json.dumps(e) + "\n" for e in events)
-        subprocess.run(self.manifest()["updater"], shell=True, input=data, text=True, env=env, check=True)
+        subprocess.run(self.manifest()["updater"], shell=True, input=data, text=True, encoding="utf-8", env=env, check=True)
         return len(events)
 
     def status(self):
@@ -62,7 +62,7 @@ def open_index(m: Matter, name: str, create=True) -> Index:
     d = m.indexes_dir / name
     kinds = _kinds()
     if (d / "manifest.json").exists():
-        kind = json.loads((d / "manifest.json").read_text())["kind"]
+        kind = json.loads((d / "manifest.json").read_text(encoding="utf-8"))["kind"]
         idx = kinds[kind](m, name) if kind in kinds else ExternalIndex(m, name)
     elif name in kinds and create:
         idx = kinds[name](m, name)

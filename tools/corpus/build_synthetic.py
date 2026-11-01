@@ -1275,6 +1275,233 @@ Dana
                    "vnd.openxmlformats-officedocument.wordprocessingml.document")])
 
 
+# ===================================================================== Outlook
+
+EXCHANGE_DN = "/O=BELLWETHER/OU=EXCHANGE ADMINISTRATIVE GROUP (FYDIBOHF23SPDLT)/CN=RECIPIENTS/CN="
+
+
+def _who(s):
+    name, addr = s.rsplit(" <", 1)
+    return name, addr.rstrip(">")
+
+
+def _sender(s, internal=True):
+    """Sender and sent-representing properties for 'Name <addr>'."""
+    import outlook as o
+    name, addr = _who(s)
+    typ, email = ("EX", EXCHANGE_DN + addr.split("@")[0].upper()) if internal else ("SMTP", addr)
+    p = {}
+    for n, t, e, smtp in ((0x0042, 0x0064, 0x0065, 0x5D02), (0x0C1A, 0x0C1E, 0x0C1F, 0x5D01)):
+        p[n], p[t], p[e], p[smtp] = (o.STR, name), (o.STR, typ), (o.STR, email), (o.STR, addr)
+    return p
+
+
+def _recips(to=(), cc=()):
+    import outlook as o
+    out = []
+    for kind, people in ((1, to), (2, cc)):
+        for s in people:
+            name, addr = _who(s)
+            internal = addr.endswith("@bellwethermarine.example")
+            out.append(o.addr_props(name, addr, EXCHANGE_DN + addr.split("@")[0].upper() if internal else None, kind))
+    return out
+
+
+def outlook_msg(subject, frm, to, sent, text, html=None, cc=(), msgid=None, in_reply_to=None, references=None,
+                transport=None, internal=True, attachments=(), received=None, html_in_rtf=False):
+    """An Outlook message. html goes in PidTagHtml, or (html_in_rtf) only in
+    the compressed RTF body, as Outlook keeps much HTML mail."""
+    import outlook as o
+    p = {0x001A: (o.STR, "IPM.Note"), 0x0037: (o.STR, subject), 0x0039: (o.TIME, sent),
+         0x0E06: (o.TIME, received or sent), 0x3007: (o.TIME, sent), 0x3008: (o.TIME, received or sent),
+         0x0E07: (o.LONG, 1), 0x3FDE: (o.LONG, 65001), 0x1000: (o.STR, text), **_sender(frm, internal)}
+    names = lambda people: "; ".join(_who(x)[0] for x in people)
+    if to:
+        p[0x0E04] = (o.STR, names(to))
+    if cc:
+        p[0x0E03] = (o.STR, names(cc))
+    if html is not None:
+        if html_in_rtf:
+            p[0x1009] = (o.BIN, o.compress_rtf(o.html_to_rtf(html)))
+        else:
+            p[0x1013] = (o.BIN, html.encode("utf-8"))
+    for pid, v in ((0x1035, msgid), (0x1042, in_reply_to), (0x1039, references), (0x007D, transport)):
+        if v:
+            p[pid] = (o.STR, v)
+    p[0x0E08] = (o.LONG, len(text) * 2 + sum(len(a.data or b"") for a in attachments) + 1024)
+    return o.Msg(p, _recips(to, cc), list(attachments))
+
+
+def _file_att(name, data, mime):
+    import outlook as o
+    return o.Att({0x3707: (o.STR, name), 0x3704: (o.STR, name), 0x3001: (o.STR, name), 0x370E: (o.STR, mime),
+                  0x0E20: (o.LONG, len(data))}, data)
+
+
+def pickup_order_pdf() -> bytes:
+    d = pymupdf.open()
+    p = d.new_page(width=LETTER.width, height=LETTER.height)
+    lines = [("TRI-COUNTY FREIGHT LINES, INC. - PICKUP ORDER", 14), ("", 11),
+             ("Pickup order: PU-0304-118", 11), ("Date: 03/04/2026  AM run", 11),
+             ("Pick up at: Bellwether Marine Systems, Inc., 2200 Industrial Pkwy, Dock 4, Norfolk VA", 11),
+             ("Contact: T. Kettering, receiving", 11), ("Reference: PRO 0047-2219-6 (BOL TCF-889104)", 11),
+             ("Pieces: 1 pallet, unlabeled, shrink wrap printed HFS   Weight: 1,410 lb", 11),
+             ("Driver: R. Ames   Truck: 4471", 11),
+             ("Disposition: refused freight, hold at Richmond terminal pending shipper instructions", 11)]
+    y = 72
+    for text, size in lines:
+        if text:
+            p.insert_text((72, y), text, fontsize=size, fontname="helv")     # a base-14 font: nothing to embed
+        y += size + 9
+    d.set_metadata({"title": "Pickup order PU-0304-118", "author": "Tri-County Freight Lines",
+                    "creator": "adhocdocs corpus generator", "producer": "PyMuPDF",
+                    "creationDate": "D:20260302151000-05'00'", "modDate": "D:20260302151000-05'00'",
+                    "subject": "", "keywords": ""})
+    return d.tobytes(garbage=4, deflate=True, no_new_id=True)
+
+
+def outlook_files():
+    """Kettering's mailbox as a PST, and his reply to the litigation hold
+    saved from Outlook as a .msg in Delacroix-Hale's files."""
+    import outlook as o
+
+    tom_to_tcfl = outlook_msg(
+        "Unclaimed pallet at Bellwether Dock 4 - please pick up", TOM, [TCFL], when(2026, 3, 2, 13, 5),
+        """Dispatch,
+
+You dropped a pallet at Bellwether Marine, 2200 Industrial Pkwy, Dock 4, on
+2/24 (your truck 4471, PRO looks like 0047-2219-6). No PO, no packing list,
+so it has been in our quarantine cage. We can't receive it. Please pick it
+up and return it to the shipper.
+
+Available weekdays 07:00-15:30. Ask for the receiving desk.
+
+Thomas Kettering
+Receiving Supervisor, Bellwether Marine Systems
+""", msgid="<20260302130500.1e5f@bellwethermarine.example>")
+
+    pickup = """Mr. Kettering,
+
+Pickup is scheduled for Wednesday 3/4, morning run: driver R. Ames, truck
+4471, pickup order PU-0304-118 attached. Please have the pallet inside the
+Dock 4 door. The driver will need a signature for the pickup.
+
+We will hold the pallet at our Richmond terminal as refused freight until
+the shipper tells us what to do with it.
+
+Tri-County Freight Lines Dispatch
+(804) 555-0177
+"""
+    tcfl_msgid = "<tcfl.20260302151000.pu0304118@tricountyfreight.example>"
+    tcfl_reply = outlook_msg(
+        "RE: Unclaimed pallet at Bellwether Dock 4 - please pick up", TCFL, [TOM], when(2026, 3, 2, 15, 10),
+        pickup, msgid=tcfl_msgid, internal=False, received=when(2026, 3, 2, 15, 10, 4),
+        in_reply_to="<20260302130500.1e5f@bellwethermarine.example>",
+        references="<20260302130500.1e5f@bellwethermarine.example>",
+        transport="\r\n".join([
+            "Received: from mx2.tricountyfreight.example (mx2.tricountyfreight.example [192.0.2.61])",
+            "\tby mail.bellwethermarine.example with ESMTPS id 7Hq0Lp3Vb; Mon, 02 Mar 2026 15:10:04 -0500",
+            "From: Tri-County Freight Lines Dispatch <dispatch@tricountyfreight.example>",
+            "To: Thomas Kettering <tkettering@bellwethermarine.example>",
+            "Subject: RE: Unclaimed pallet at Bellwether Dock 4 - please pick up",
+            f"Date: {rfcdate(2026, 3, 2, 15, 10)}",
+            f"Message-ID: {tcfl_msgid}",
+            "In-Reply-To: <20260302130500.1e5f@bellwethermarine.example>",
+            "References: <20260302130500.1e5f@bellwethermarine.example>",
+            "MIME-Version: 1.0",
+            'Content-Type: multipart/mixed; boundary="=_tcfl_0302"', "", ""]),
+        attachments=[_file_att("pickup-order-PU-0304-118.pdf", pickup_order_pdf(), "application/pdf")])
+
+    hold_text = """PRIVILEGED & CONFIDENTIAL - LITIGATION HOLD NOTICE
+
+Bellwether has received a demand from Harrowgate Fastener Supply Co.
+concerning PO-BMS-26-0112 and invoice INV-2026/0347. Effective immediately
+you must preserve, and must not delete, alter or discard, any documents or
+data relating to:
+
+  - PO-BMS-26-0112, INV-2026/0347, BOL TCF-889104, PRO 0047-2219-6
+  - Dock 4 receiving logs, discrepancy reports (incl. RDR-0224-02) and
+    camera footage for February and March 2026
+  - the pallet held in quarantine bay Q-3 from 2/24 to 3/4
+  - communications with Harrowgate (Dana Okafor, Raymond Voss) or
+    Tri-County Freight Lines
+
+This applies to email, text messages, paper, and files on shared drives.
+Normal deletion schedules are suspended for this material. Reply to
+confirm you have read this notice.
+
+Marcus Delacroix-Hale, General Counsel
+"""
+    hold = outlook_msg(
+        "LITIGATION HOLD — Harrowgate Fastener Supply Co. (PO-BMS-26-0112)", MARCUS, [ZOE, TOM, AP],
+        when(2026, 3, 27, 17, 45), hold_text, msgid="<20260327174500.ab02@bellwethermarine.example>",
+        received=when(2026, 3, 27, 17, 45, 2),
+        html="<html><body>\n<p style=\"color:#a00\"><b>PRIVILEGED &amp; CONFIDENTIAL &ndash; LITIGATION HOLD "
+             "NOTICE</b></p>\n<p>Bellwether has received a demand from Harrowgate Fastener Supply Co. concerning "
+             "PO-BMS-26-0112 and invoice INV-2026/0347.</p>\n<p>Marcus Delacroix-Hale, General Counsel</p>\n"
+             "</body></html>\n")
+
+    reply_to_marcus = outlook_msg(
+        "RE: FW: Harrowgate Fastener Supply Co. / Bellwether Marine — demand for payment", TOM, [MARCUS],
+        when(2026, 3, 26, 8, 52), """Marcus,
+
+Understood, I won't talk to Harrowgate or Tri-County. Before we meet: my
+3/2 note asking Tri-County to collect the Q-3 pallet is attached, and the
+discrepancy report (RDR-0224-02) is in the receiving binder. I'm free any
+time after 10 tomorrow.
+
+Tom
+""", msgid="<20260326085200.aa03@bellwethermarine.example>",
+        in_reply_to="<20260326080500.aa01@bellwethermarine.example>",
+        references="<20260326080500.aa01@bellwethermarine.example>",
+        attachments=[o.Att({0x3001: (o.STR, "Unclaimed pallet at Bellwether Dock 4 - please pick up")},
+                           message=tom_to_tcfl)])
+
+    forklift = outlook_msg(
+        "Dock 4 forklift recertification - Thursday 3/5", "Bellwether Facilities <facilities@bellwethermarine.example>",
+        [TOM], when(2026, 3, 3, 7, 30), """Receiving team,
+
+The annual forklift recertification for Dock 4 operators is Thursday 3/5,
+06:30-08:00, in the training room. Bring your current card. Anyone who
+can't make it needs to book the 3/19 session.
+
+Facilities
+""", msgid="<20260303073000.f4c1@bellwethermarine.example>")
+
+    w = o.PstWriter("Thomas Kettering")
+    root = w.folder("", container_class=None)
+    top = w.folder("Top of Personal Folders", root, container_class=None)
+    inbox = w.folder("Inbox", top)
+    tcfl_folder = w.folder("Tri-County", inbox)
+    sent = w.folder("Sent Items", top)
+    deleted = w.folder("Deleted Items", top)
+    w.message(inbox, hold)
+    w.message(tcfl_folder, tcfl_reply)
+    w.message(sent, tom_to_tcfl)
+    w.message(sent, reply_to_marcus)
+    w.message(deleted, forklift)
+    note(out("kettering-t", "kettering-t-mailbox-2026-04.pst")).write_bytes(w.write(top, deleted))
+
+    confirm = outlook_msg(
+        "RE: LITIGATION HOLD — Harrowgate Fastener Supply Co. (PO-BMS-26-0112)", TOM, [MARCUS],
+        when(2026, 3, 27, 18, 20), """Marcus,
+
+Read and confirmed. One thing for your list: the Dock 4 camera footage for
+2/24 is on the NVR, and IT tells me it records over itself after 60 days.
+Someone should pull it before April 25.
+
+Tom
+""", html="""<html><body>
+<p>Marcus,</p>
+<p>Read and confirmed. One thing for your list: the Dock 4 camera footage for 2/24 is on the NVR, and IT tells me it records over itself after <b>60 days</b>. Someone should pull it before April 25.</p>
+<p>Tom</p>
+</body></html>
+""", html_in_rtf=True, msgid="<20260327182000.ab03@bellwethermarine.example>",
+        in_reply_to="<20260327174500.ab02@bellwethermarine.example>",
+        references="<20260327174500.ab02@bellwethermarine.example>")
+    note(out("delacroix-m", "RE LITIGATION HOLD - Harrowgate.msg")).write_bytes(o.write_msg(confirm))
+
+
 # ===================================================================== main
 
 
@@ -1296,6 +1523,7 @@ def main():
     texts()
     htmls()
     emails(inv, po, pod, demand, resp)
+    outlook_files()
     dep_path = out("delacroix-m", "deposition-kettering-2026-04-28.pdf")
     dep_index = build_deposition(dep_path)
     note(dep_path)

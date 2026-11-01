@@ -41,7 +41,7 @@ class Page:
     def __init__(self, m: Matter, path):
         self.m = m
         self.path = Path(path)
-        self.source = self.path.read_text()
+        self.source = self.path.read_text(encoding="utf-8")
         fm = FRONT.match(self.source)
         self.meta = (yaml.safe_load(fm.group(1)) or {}) if fm else {}
         body = self.source[fm.end():] if fm else self.source
@@ -91,7 +91,7 @@ class Page:
             self._cite_as = {}
             f = self.m.workspace / "cite-as.jsonl"
             if f.exists():
-                for line in f.read_text().splitlines():
+                for line in f.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         row = json.loads(line)
                         self._cite_as[locators.parse("doc:" + row["doc"].removeprefix("doc:"), self.m.objects)["doc"]] = row["cite"]
@@ -490,7 +490,7 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
     out = Path(out)
     html_doc, _ = render(page, standalone=True)
     if fmt == "html":
-        out.write_text(html_doc)
+        out.write_text(html_doc, encoding="utf-8", newline="\n")
     elif fmt == "pdf":
         import pymupdf
         html_doc, _ = render(page, standalone=True, images="files")
@@ -514,7 +514,7 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
     prov_path = out.with_name(out.name + ".provenance.json")
     prov = {"page": str(page.path), "page_hash": sha256(page.source.encode()), "output": str(out),
             "output_hash": sha256(out.read_bytes()), "format": fmt, "quotations": provenance(page)}
-    prov_path.write_text(json.dumps(prov, indent=2, ensure_ascii=False) + "\n")
+    prov_path.write_text(json.dumps(prov, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     ev = page.m.logs["workspace"].append(op="export", page=str(page.path), output=str(out), output_hash=prov["output_hash"],
                                          provenance=str(prov_path), provenance_hash=sha256(prov_path.read_bytes()))
     return {"output": str(out), "provenance": str(prov_path), "event": ev["id"], "reanchored": moved}
@@ -614,7 +614,7 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
     with layer and quote fingerprints taken from the store."""
     if not literate.ID.match(rid):
         raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
-    source = Path(path).read_text()
+    source = Path(path).read_text(encoding="utf-8")
     _, refs, _, _ = literate.split(source)
     if any(r["id"] == rid for r in refs) and not replace:
         raise PageError(f"reference {rid} exists; pass --replace")
@@ -654,13 +654,13 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
             raise PageError("only text ranges can be elided")
         ref = {"id": rid, "doc": first["doc"], **({"select": sel} if sel else {})}
     refs = [r for r in refs if r["id"] != rid] + [ref]
-    Path(path).write_text(literate.replace_refs(source, refs))
+    Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
     return ref
 
 
 def update_refs(m: Matter, path: Path) -> list[dict]:
     """Rewrite re-anchored references in place. Returns what changed."""
-    source = Path(path).read_text()
+    source = Path(path).read_text(encoding="utf-8")
     _, refs, _, _ = literate.split(source)
     changed, new_refs = [], []
     for ref in refs:
@@ -671,7 +671,7 @@ def update_refs(m: Matter, path: Path) -> list[dict]:
         else:
             new_refs.append(ref)
     if changed:
-        Path(path).write_text(literate.replace_refs(source, new_refs))
+        Path(path).write_text(literate.replace_refs(source, new_refs), encoding="utf-8", newline="\n")
     return changed
 
 

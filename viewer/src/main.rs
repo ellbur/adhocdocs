@@ -1,6 +1,7 @@
 //! adhoc-viewer: shows one matter's documents. Launched on the host by the
 //! connect mechanism, never by Claude. Claude drives it through a small API
-//! on a Unix socket (`view` CLI in the container).
+//! on a Unix socket, or on Windows and macOS a port with a token (`view`
+//! CLI in the container; see endpoint.rs).
 //!
 //! Each window is one web view running the viewer's own code (shell/), with
 //! its own panes. The host routes each API command to the window that has
@@ -13,6 +14,7 @@
 
 mod api;
 mod chrono;
+mod endpoint;
 mod matter;
 mod overview;
 mod protocol;
@@ -48,7 +50,7 @@ struct Args {
 }
 
 fn args() -> Result<Args, String> {
-    let mut a = Args { matter: PathBuf::new(), socket: None, user: std::env::var("USER").unwrap_or("user".into()), annotate: None };
+    let mut a = Args { matter: PathBuf::new(), socket: None, user: std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or("user".into()), annotate: None };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {

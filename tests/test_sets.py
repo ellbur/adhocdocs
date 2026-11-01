@@ -26,9 +26,9 @@ def matter(tmp_path_factory):
     shutil.copy(CORPUS / "okafor-d/2026-03-09_RE_INV-2026-0347_past-due.eml", b)  # same text, other custodian
     shutil.copy(CORPUS / "kettering-t/dock4-camera-review-notes.txt", b / "copy-of-notes.txt")  # same original
     text = " ".join(f"{w}{i}" for i, w in enumerate(WORDS * 8))
-    (a / "account.txt").write_text(text)
-    (a / "account-v2.txt").write_text(text.replace("damage", "harm", 1))  # a near-duplicate
-    (a / "unrelated.txt").write_text(" ".join(reversed(WORDS)) * 3)
+    (a / "account.txt").write_text(text, encoding="utf-8", newline="\n")
+    (a / "account-v2.txt").write_text(text.replace("damage", "harm", 1), encoding="utf-8", newline="\n")  # a near-duplicate
+    (a / "unrelated.txt").write_text(" ".join(reversed(WORDS)) * 3, encoding="utf-8", newline="\n")
     m = Matter.create(tmp / "matter")
     ingest_paths(m, [a], "a-a", "a")
     ingest_paths(m, [b], "b-b", "b")
@@ -177,7 +177,7 @@ def test_ls_and_page_docs(matter, tmp_path, capsys):
     candidates(matter, ws / "c.list.jsonl")
     (ws / ".hidden").mkdir(exist_ok=True)
     candidates(matter, ws / ".hidden" / "x.list.jsonl")
-    (ws / "not-a-list.list.jsonl").write_text('{"type": "other"}\n')
+    (ws / "not-a-list.list.jsonl").write_text('{"type": "other"}\n', encoding="utf-8", newline="\n")
     args = ["--matter", str(matter.root)]
     (ws / "sets").mkdir(exist_ok=True)
     cli.list_(["condense", str(ws / "c.list.jsonl"), "--out", str(ws / "sets" / "pod.list.jsonl"),
@@ -199,7 +199,7 @@ def test_ls_and_page_docs(matter, tmp_path, capsys):
         text = matter.objects.get_text(layer.text)
         return json.dumps(locators.char_locator(d, layer.id, text, 0, 20))
     memo = ws / "memo.md"
-    memo.write_text("First :q{#b}, then [this](ref:a), and :cite{#b} again.\n")
+    memo.write_text("First :q{#b}, then [this](ref:a), and :cite{#b} again.\n", encoding="utf-8", newline="\n")
     pages.add_ref(matter, memo, "a", [loc("unrelated.txt")], False)
     pages.add_ref(matter, memo, "b", [loc("account.txt")], False)
     pages.add_ref(matter, memo, "unused", [loc("account-v2.txt")], False)

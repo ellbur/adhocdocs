@@ -33,22 +33,23 @@ import json
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from . import proxy
+from . import endpoint, proxy
 from .audit import AuditLog, audit_dir
 from .matter import Matter, new_event_id
+from .portable import runtime_dir, spawn, stop
 
 IMAGE = "localhost/adhocdocs:latest"
 REPO = Path(__file__).resolve().parents[2]
 CONTAINERFILE = REPO / "container" / "Containerfile"
 IMAGE_UID = 1000
 PROXY_PORT = 3128
+BRIDGE_PORT = 7100
 SESSION_ENV = {
     "ADHOC_MATTER": "/matter",
     "ADHOC_VIEW_SOCKET": "/run/adhoc/viewer.sock",
@@ -79,7 +80,7 @@ class ContainerError(Exception):
 def podman(*args, capture=True, check=True) -> str:
     if not shutil.which("podman"):
         raise ContainerError("podman is not installed")
-    r = subprocess.run(["podman", *args], capture_output=capture, text=True)
+    r = subprocess.run(["podman", *args], capture_output=capture, text=True, encoding="utf-8")
     if check and r.returncode:
         raise ContainerError(f"podman {' '.join(args[:3])}…: {(r.stderr or '').strip()}")
     return (r.stdout or "").strip()
@@ -92,14 +93,13 @@ def slug(m: Matter) -> str:
 
 def run_dir(m: Matter) -> Path:
     """Where this matter's sockets live on the host, mounted at /run/adhoc."""
-    base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return base / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16]
+    return runtime_dir() / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16]
 
 
 # -- the image -----------------------------------------------------------------------------
 
 def image_id() -> str | None:
-    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True)
+    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True, encoding="utf-8")
     return r.stdout.strip() or None
 
 
@@ -118,9 +118,20 @@ def build_image(no_cache=False):
 
 # -- the session ----------------------------------------------------------------------------
 
-def session_args(m: Matter, name: str, sockets: Path, command=()) -> list[str]:
-    """The `podman run` arguments for a session. Pure, so it can be tested."""
+def _bind(src: Path, dst: str, ro=False, bridged=False) -> list[str]:
+    if bridged:
+        # --mount, since a Windows path has a colon of its own; podman maps it into its VM
+        return ["--mount", f"type=bind,source={src},target={dst}" + (",ro" if ro else "")]
+    return ["-v", f"{src}:{dst}" + (":ro" if ro else "")]
+
+
+def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple[str, str] | None = None) -> list[str]:
+    """The `podman run` arguments for a session. Pure, so it can be tested.
+    With ``volumes`` (on Windows and macOS: :mod:`adhocdocs.bridge`), the
+    socket directories are those two Podman volumes, shared with the bridge,
+    instead of host directories."""
     root = m.root
+    bridged = volumes is not None
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
            "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name}
     tty = ["-it"] if sys.stdin.isatty() else ["-i"]
@@ -128,19 +139,73 @@ def session_args(m: Matter, name: str, sockets: Path, command=()) -> list[str]:
             "--network", "none",          # loopback only: no route out, no DNS
             f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
-            "-v", f"{root / 'store'}:/matter/store:ro",
-            "-v", f"{root / 'annotations'}:/matter/annotations:ro",
-            "-v", f"{root / 'workspace'}:/matter/workspace",
-            "-v", f"{root / 'claude-home'}:/home/adhoc/.claude",
-            "-v", f"{sockets}:/run/adhoc",
-            # Read-only, so nothing in the session can put its own listener in the audit API's place.
-            "-v", f"{sockets / 'audit'}:/run/adhoc-audit:ro"]
+            *_bind(root / "store", "/matter/store", ro=True, bridged=bridged),
+            *_bind(root / "annotations", "/matter/annotations", ro=True, bridged=bridged),
+            *_bind(root / "workspace", "/matter/workspace", bridged=bridged),
+            *_bind(root / "claude-home", "/home/adhoc/.claude", bridged=bridged)]
+    if bridged:
+        args += ["-v", f"{volumes[0]}:/run/adhoc", "-v", f"{volumes[1]}:/run/adhoc-audit:ro"]
+    else:
+        args += ["-v", f"{sockets}:/run/adhoc"]
+        # Read-only, so nothing in the session can put its own listener in the audit API's place.
+        args += ["-v", f"{sockets / 'audit'}:/run/adhoc-audit:ro"]
     for k, v in env.items():
         args += ["-e", f"{k}={v}"]
     for k in PASS_THROUGH:
         if os.environ.get(k):
             args += ["-e", k]          # podman copies the value from our environment
     return args + [IMAGE, *(["--", *command] if command else [])]
+
+
+# The sockets the session uses, by name: where the bridge listens in the VM,
+# and where the host service is, relative to the session's run directory.
+BRIDGED = {
+    "proxy": ("/run/adhoc/proxy.sock", "proxy.sock"),
+    "annotations": ("/run/adhoc/annotations.sock", "annotations.sock"),
+    "viewer": ("/run/adhoc/viewer.sock", "viewer.sock"),
+    "audit": ("/run/adhoc-audit/audit.sock", "audit/audit.sock"),
+}
+
+
+def bridge_args(name: str, volumes: tuple[str, str]) -> list[str]:
+    """The `podman run` arguments for a session's bridge. Pure, so it can be
+    tested. Its token comes from the launcher's environment, by name."""
+    args = ["run", "-d", "--rm", "--name", f"{name}-bridge", "--hostname", "adhoc-bridge",
+            f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",     # the session's user, so each can use the other's sockets
+            "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "-p", f"127.0.0.1::{BRIDGE_PORT}",                       # on the host's loopback only
+            "-v", f"{volumes[0]}:/run/adhoc", "-v", f"{volumes[1]}:/run/adhoc-audit",
+            "-e", "ADHOC_BRIDGE_TOKEN", "--entrypoint", "python", IMAGE,
+            "-m", "adhocdocs.bridge", "serve", "--port", str(BRIDGE_PORT)]
+    for svc, (inside, _) in BRIDGED.items():
+        args += ["--socket", f"{svc}={inside}"]
+    return args
+
+
+def _start_bridge(name: str, sockets: Path, volumes: tuple[str, str], started: list, log: Path) -> list[str]:
+    """Start the bridge and the link (Windows and macOS). Returns the bridge's arguments."""
+    token = endpoint.new_token()
+    env = {**os.environ, "ADHOC_BRIDGE_TOKEN": token}
+    # A crashed launcher's bridge would hold the name; its session is gone (we checked).
+    podman("rm", "-f", "-t", "0", f"{name}-bridge", check=False)
+    for v in volumes:
+        podman("volume", "create", "--ignore", v)
+    args = bridge_args(name, volumes)
+    r = subprocess.run(["podman", *args], capture_output=True, text=True, encoding="utf-8", env=env)
+    if r.returncode:
+        raise ContainerError(f"the bridge did not start: {r.stderr.strip()}")
+    published = podman("port", f"{name}-bridge", str(BRIDGE_PORT)).splitlines()[0].strip()
+    host, _, port = published.rpartition(":")
+    address = f"{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
+    # The viewer reaches Claude's services (view serve) through the bridge too.
+    endpoint.write_endpoint(sockets / "svc.endpoint", address, token)
+    link = [sys.executable, "-m", "adhocdocs.bridge", "link", address, "--ready", str(sockets / "link.ready")]
+    for svc, (_, outside) in BRIDGED.items():
+        link += ["--service", f"{svc}={sockets / outside}"]
+    started.append(spawn(link, log, env=env))
+    if not wait_for(sockets / "link.ready", 30):
+        raise ContainerError(f"the bridge did not answer; see `podman logs {name}-bridge`")
+    return args
 
 
 def wait_for(path: Path, seconds=10) -> bool:
@@ -150,11 +215,6 @@ def wait_for(path: Path, seconds=10) -> bool:
             return True
         time.sleep(0.1)
     return False
-
-
-def _service(args, log: Path) -> subprocess.Popen:
-    out = open(log, "a")
-    return subprocess.Popen(args, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
 
 
 def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
@@ -170,9 +230,14 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         n += 1
     name = f"{base}-{n}"
     sockets = run_dir(m) / str(n)
+    shutil.rmtree(sockets, ignore_errors=True)       # a crashed launcher's leftovers would look like live services
     sockets.mkdir(parents=True, exist_ok=True, mode=0o700)
     (sockets / "audit").mkdir(exist_ok=True, mode=0o700)
     py = [sys.executable, "-m"]
+    # Windows and macOS: the session is in Podman's VM, reached through a bridge (adhocdocs.bridge).
+    bridged = endpoint.tcp_mode()
+    volumes = (f"{name}-run", f"{name}-audit") if bridged else None
+    bridge = None
     session = "ses_" + new_event_id().removeprefix("ev_")
     audit = AuditLog(audit_dir(m))
 
@@ -180,37 +245,40 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     code = None
     try:
         # Everything the session can reach, on sockets in one directory.
-        started.append(_service(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
+        started.append(spawn(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
                                       "--audit", str(audit.root), "--session", session], m.root / "run" / "proxy.log"))
-        started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
                                       "--socket", str(sockets / "annotations.sock")], m.root / "run" / "ann-api.log"))
-        started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
                                       "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
                                 m.root / "run" / "audit-api.log"))
         if viewer:
-            from .view import viewer_binary
-            started.append(_service([viewer_binary(), "--matter", str(m.root), "--user", user,
-                                     "--socket", str(sockets / "viewer.sock"),
-                                     "--annotate", f"{sys.executable} -m adhocdocs.cli adhoc"], m.root / "run" / "viewer.log"))
+            from .view import annotate_command, viewer_binary
+            started.append(spawn([viewer_binary(), "--matter", str(m.root), "--user", user,
+                                  "--socket", str(sockets / "viewer.sock"),
+                                  "--annotate", annotate_command()], m.root / "run" / "viewer.log"))
         for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
             if not wait_for(sockets / sock):
                 raise ContainerError(f"{sock} did not start; see {m.root / 'run'}")
+        if bridged:
+            bridge = _start_bridge(name, sockets, volumes, started, m.root / "run" / "link.log")
         if first:
             print(ACCOUNT_NOTICE, file=sys.stderr)
-        args = session_args(m, name, sockets, command)
+        args = session_args(m, name, sockets, command, volumes)
         audit.append(session=session, source="launcher", kind="session-start", user=user, container=name,
                      image=IMAGE, image_id=image_id(), command=list(command) or None, viewer=viewer,
-                     allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args)
+                     allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args,
+                     **({"bridge_args": bridge} if bridged else {}))
         # The terminal goes straight to the container: no relay in between.
         code = subprocess.call(["podman", *args])
         return code
     finally:
         audit.append(session=session, source="launcher", kind="session-end", exit=code)
         for p in started:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            stop(p)
+        if bridged:
+            podman("rm", "-f", "-t", "1", f"{name}-bridge", check=False)
+            podman("volume", "rm", "-f", *volumes, check=False)
         shutil.rmtree(sockets, ignore_errors=True)
 
 
@@ -219,7 +287,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
 def _mounts() -> dict:
     out = {}
     try:
-        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
             f = line.split()
             point, opts = f[4], f[5]
             if point.startswith("/matter") or point in ("/home/adhoc/.claude", "/run/adhoc", "/run/adhoc-audit"):
@@ -230,15 +298,11 @@ def _mounts() -> dict:
 
 
 def _socket_ok(path: str) -> bool:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(1)
     try:
-        s.connect(path)
+        endpoint.connect(path, 1).close()
         return True
-    except OSError:
+    except (OSError, ValueError):
         return False
-    finally:
-        s.close()
 
 
 def _direct_internet() -> str:

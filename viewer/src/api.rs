@@ -6,6 +6,7 @@
 //! `"files": {"index.html": "<base64>", …}`; it is sanitized and stored here,
 //! and the shell only ever sees a content ID.
 
+use crate::endpoint::{self, Stream};
 use crate::matter::Matter;
 use crate::protocol::{char_slice, sanitize, Panes};
 use crate::UserEvent;
@@ -33,10 +34,24 @@ pub fn default_socket(root: &Path) -> PathBuf {
     if p.to_string_lossy().len() <= MAX_SOCKET_PATH {
         return p;
     }
-    let run = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/adhocdocs-{}", unsafe { libc::getuid() }));
     // the same short hash the Python side computes
     let h = sha256_hex(root.to_string_lossy().as_bytes());
-    PathBuf::from(run).join("adhocdocs").join(&h[..16]).join("viewer.sock")
+    runtime_dir().join("adhocdocs").join(&h[..16]).join("viewer.sock")
+}
+
+/// The same as the Python side's `portable.runtime_dir()`.
+fn runtime_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| std::env::temp_dir());
+        base.join("adhocdocs").join("run")
+    }
+    #[cfg(unix)]
+    {
+        std::env::var("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(format!("/tmp/adhocdocs-{}", unsafe { libc::getuid() })))
+    }
 }
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -66,24 +81,57 @@ pub fn store_files(panes: &Panes, files: &Value) -> Result<String, String> {
     Ok(id)
 }
 
-pub fn serve(path: PathBuf, proxy: EventLoopProxy<UserEvent>, panes: Panes) {
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+/// One HTTP request: (method, path, body). Enough for the API's clients
+/// (the `view` CLI and the bridge), which send one request per connection.
+fn read_request(s: &mut dyn Stream) -> Option<(String, String, String)> {
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 65536 || s.read(&mut b).ok()? == 0 {
+            return None;
+        }
+        head.push(b[0]);
     }
-    let _ = std::fs::remove_file(&path);
-    let server = match tiny_http::Server::http_unix(&path) {
-        Ok(s) => s,
+    let head = String::from_utf8_lossy(&head).to_string();
+    let mut lines = head.split("\r\n");
+    let mut first = lines.next()?.split(' ');
+    let (method, path) = (first.next()?.to_string(), first.next()?.to_string());
+    let len = lines
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    if len > 256 << 20 {
+        return None;
+    }
+    let mut body = vec![0u8; len];
+    s.read_exact(&mut body).ok()?;
+    Some((method, path, String::from_utf8_lossy(&body).to_string()))
+}
+
+fn respond(s: &mut dyn Stream, status: u16, body: &str) {
+    let reason = if status == 200 { "OK" } else { "Bad Request" };
+    let _ = write!(s, "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                   status, reason, body.len(), body);
+    let _ = s.flush();
+}
+
+pub fn serve(path: PathBuf, proxy: EventLoopProxy<UserEvent>, panes: Panes) {
+    let listener = match endpoint::listen(&path) {
+        Ok(l) => l,
         Err(e) => {
             eprintln!("{}", json!({"error": format!("can't listen on {}: {}", path.display(), e)}));
             std::process::exit(2);
         }
     };
-    std::thread::spawn(move || {
-        for mut req in server.incoming_requests() {
-            let mut body = String::new();
-            let _ = req.as_reader().read_to_string(&mut body);
+    std::thread::spawn(move || loop {
+        let Ok(conn) = listener.accept() else { continue };
+        let (proxy, panes) = (proxy.clone(), panes.clone());
+        std::thread::spawn(move || {
+            let Some(mut s) = conn.checked() else { return };
+            let Some((_method, url, body)) = read_request(&mut *s) else { return };
             let result = (|| -> Result<Value, String> {
-                if req.url() != "/command" {
+                if url != "/command" {
                     return Err("POST /command".into());
                 }
                 let mut cmd: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -100,11 +148,8 @@ pub fn serve(path: PathBuf, proxy: EventLoopProxy<UserEvent>, panes: Panes) {
                 Ok(v) => (200, v),
                 Err(e) => (400, json!({"error": e})),
             };
-            let resp = tiny_http::Response::from_string(v.to_string())
-                .with_status_code(status)
-                .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
-            let _ = req.respond(resp);
-        }
+            respond(&mut *s, status, &v.to_string());
+        });
     });
 }
 
@@ -140,12 +185,16 @@ pub fn add_quotes(m: &Matter, v: &mut Value) {
 
 /// Write the user's own annotation through the host tool, which stamps it
 /// as the user and applies the rules. Returns its JSON reply.
+/// `cmd` is a JSON list of arguments (a path may have spaces), or words.
 pub fn annotate(cmd: Option<&str>, root: &Path, user: &str, request: &Value) -> Value {
     let cmd = cmd.unwrap_or("adhoc");
-    let mut parts = cmd.split_whitespace();
-    let Some(prog) = parts.next() else { return json!({"error": "no annotate command"}) };
+    let parts: Vec<String> = match serde_json::from_str::<Vec<String>>(cmd) {
+        Ok(list) => list,
+        Err(_) => cmd.split_whitespace().map(String::from).collect(),
+    };
+    let Some((prog, rest)) = parts.split_first() else { return json!({"error": "no annotate command"}) };
     let child = Command::new(prog)
-        .args(parts)
+        .args(rest)
         .args(["--matter", &root.to_string_lossy(), "annotate-as-user", "--user", user])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -175,16 +224,14 @@ mod tests {
 /// session). Its reply is HTML for the pane, sanitized and stored like any
 /// other pane content. Returns `{"content": id}` or `{"error": …}`.
 pub fn call_service(dir: &Path, name: &str, values: &Value, panes: &Panes) -> Value {
-    use std::os::unix::net::UnixStream;
     if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
         return json!({"error": format!("bad service name {:?}", name)});
     }
-    let path = dir.join(format!("svc-{}.sock", name));
-    let mut stream = match UnixStream::connect(&path) {
+    // The service answers within its own 55-second limit (`view serve`).
+    let mut stream = match endpoint::connect_service(dir, name) {
         Ok(s) => s,
         Err(_) => return json!({"error": format!("no service {} is running (view serve {} -- …)", name, name)}),
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
     let body = values.to_string();
     let req = format!("POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", body.len(), body);
     if stream.write_all(req.as_bytes()).is_err() {

@@ -14,13 +14,13 @@ import http.client
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 from pathlib import Path
 
-from . import lists, locators
+from . import endpoint, lists, locators
 from .matter import Matter
+from .portable import WINDOWS, runtime_dir, spawn
 
 MAX_SOCKET_PATH = 100
 ROWS_PER_PAGE = 500
@@ -35,8 +35,7 @@ def socket_path(m: Matter) -> Path:
     p = m.root / "run" / "viewer.sock"
     if len(str(p)) <= MAX_SOCKET_PATH:
         return p
-    run = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return run / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16] / "viewer.sock"
+    return runtime_dir() / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16] / "viewer.sock"
 
 
 class NotRunning(Exception):
@@ -53,9 +52,7 @@ class _Conn(http.client.HTTPConnection):
         self._path = path
 
     def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(30)
-        self.sock.connect(str(self._path))
+        self.sock = endpoint.connect(self._path, 30)
 
 
 def command(m: Matter, cmd: dict) -> dict:
@@ -161,8 +158,9 @@ def list_html(m: Matter, path: Path) -> tuple[dict, list[str]]:
 def viewer_binary() -> str:
     if os.environ.get("ADHOC_VIEWER_BIN"):
         return os.environ["ADHOC_VIEWER_BIN"]
+    exe = "adhoc-viewer.exe" if WINDOWS else "adhoc-viewer"
     for profile in ("release", "debug"):
-        p = REPO / "viewer" / "target" / profile / "adhoc-viewer"
+        p = REPO / "viewer" / "target" / profile / exe
         if p.exists():
             return str(p)
     found = shutil.which("adhoc-viewer")
@@ -171,17 +169,21 @@ def viewer_binary() -> str:
     raise NotRunning("adhoc-viewer not found: build it with `uv run adhoc setup`, or set ADHOC_VIEWER_BIN")
 
 
+def annotate_command() -> str:
+    """How the viewer runs this Python's ``adhoc`` to write the user's
+    annotations: a JSON list, since the path may have spaces (on Windows, often)."""
+    return json.dumps([sys.executable, "-m", "adhocdocs.cli", "adhoc"])
+
+
 def launch(m: Matter, user: str, wait=False):
     """Start the viewer for this matter. This is part of connecting a matter,
     done by the user on the host; nothing in the container can do it."""
     cmd = [viewer_binary(), "--matter", str(m.root), "--user", user,
-           "--annotate", f"{sys.executable} -m adhocdocs.cli adhoc"]
+           "--annotate", annotate_command()]
     if wait:
         return subprocess.call(cmd)
     (m.root / "run").mkdir(exist_ok=True)
-    log = open(m.root / "run" / "viewer.log", "a")
-    proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
-    return proc.pid
+    return spawn(cmd, m.root / "run" / "viewer.log").pid
 
 
 # -- services ------------------------------------------------------------------------------------
@@ -197,14 +199,10 @@ def serve(m: Matter, name: str, command: list[str]):
     ``command`` with ``{"form", "selection", "pane"}`` as JSON on stdin; its
     stdout is the pane's new HTML. Runs until interrupted."""
     import re
-    import socketserver
     from http.server import BaseHTTPRequestHandler
     if not re.fullmatch(r"[a-z0-9-]+", name):
         raise ViewerError("service names are lowercase letters, digits and hyphens")
     path = service_socket(m, name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -221,18 +219,10 @@ def serve(m: Matter, name: str, command: list[str]):
             self.end_headers()
             self.wfile.write(data)
 
-    class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-        daemon_threads = True
-
-        def get_request(self):
-            sock, _ = super().get_request()
-            return sock, ("service", 0)
-
-    with Server(str(path), Handler) as srv:
+    # In the session: a Unix socket the viewer reaches (through the bridge on Windows and macOS).
+    with endpoint.http_server(path, Handler, "service", mode=0o660) as srv:
         print(json.dumps({"serving": name, "socket": str(path)}), file=sys.stderr, flush=True)
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
             pass
-        finally:
-            path.unlink(missing_ok=True)
