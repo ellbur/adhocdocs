@@ -530,7 +530,7 @@ class DocumentPane {
     this.renderStrip();
     this.body.replaceChildren();
     this.words = null;
-    if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer.")); }
+    if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer: nothing here reads its format. Ask Claude what it is; it can look at the bytes, and show you its own reading of them, marked as such.")); }
     if (this.mode === "page") await this.renderPages();
     else if (this.mode === "flow") await this.renderFlow();
     else if (this.mode === "grid") await this.renderGrid();

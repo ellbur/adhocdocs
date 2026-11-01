@@ -124,6 +124,10 @@ class Page:
                         labels[locators.page_of(r.text, s["start"])] = s["label"]
                 if all(p in labels for p in info["pages"]):
                     info["page_labels"] = [labels[p] for p in info["pages"]]
+        elif r.kind == "bytes":
+            info["bytes"] = list(r.select["bytes"])
+        elif r.kind == "interp":
+            info["interpretation"] = r.interp["title"]
         else:
             sel = (self.refs.get(r.id) or {}).get("select") or {}
             if "cells" in sel:
@@ -140,6 +144,8 @@ class Page:
         return info
 
     def cite(self, r: Resolved, signal=None) -> str:
+        if r.kind == "interp":
+            return "Claude’s reading of " + self.cite(_doc_only(r), signal) + f" ({html.escape(r.interp['title'])})"
         style = self.meta.get("cite-style", "default")
         info = self.cite_info(r, signal)
         if style == "default":
@@ -230,6 +236,9 @@ def default_cite(info: dict) -> str:
         s += f" at {a}" if a == b else f" at {a}–{b}"
     elif info.get("cells"):
         s += f" ({'sheet ' + info['sheet'] + ', ' if info.get('sheet') else ''}cells {info['cells']})"
+    elif info.get("bytes"):
+        a, b = info["bytes"]
+        s += f" at bytes {a}–{b - 1}" if b - a > 1 else f" at byte {a}"
     elif info.get("kind") == "email" and _date(info.get("date")):
         s += f" ({_date(info['date'])})"
     if info.get("emphasis_added"):
@@ -317,6 +326,40 @@ def cells_text(r: Resolved) -> str:
     return " / ".join("; ".join(c for c in row if c) for row in r.cells)
 
 
+def hex_quote_html(r: Resolved, block: bool) -> str:
+    """Bytes, quoted: a hex dump in a block, hex digits inline."""
+    from . import raw
+    href = _sel_loc(r)
+    if block:
+        dump = raw.hexdump_text(r.data, r.select["bytes"][0])
+        return (f'<figure class="adhoc-quote adhoc-bytes" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">'
+                f'<pre class="adhoc-hex">{html.escape(dump)}</pre></a></figure>')
+    return f'<code class="adhoc-quote adhoc-bytes" data-ref="{r.id}"><a href="loc:{href}">{html.escape(r.data.hex(" "))}</a></code>'
+
+
+def interp_html(page: Page, d, r: Resolved, images: str) -> str:
+    """An interpretation: a captioned figure in a block, or inline its value
+    marked as Claude's reading, with the reading's source cited."""
+    from . import interp
+    want, err = literate.shown_as(page.m, d, r)
+    if err:
+        return broken_html(d.id, err)
+    names = {r.doc: re.sub("<[^>]+>", "", page.cite(_doc_only(r)))}
+    if d.kind == "interp-block":
+        return interp.figure_html(page.m, r.interp, r.ptr, want, page.images, images == "data", names)
+    value = interp.value_of(page.m, r.interp, r.ptr)
+    text = interp.as_text(page.m, r.interp, value, want)
+    cap = re.sub("<[^>]+>", "", interp.caption(page.m, r.interp, r.ptr, names))
+    frag = f'<span class="adhoc-interp" data-interp="{html.escape(r.interp["name"])}" title="{html.escape(cap)}">{html.escape(text)}</span>'
+    if d.opts.get("cite", "inline") != "none":
+        frag += f' <span class="adhoc-mark">(Claude’s reading of {names[r.doc]})</span>'
+    return frag
+
+
+def _doc_only(r: Resolved) -> Resolved:
+    return Resolved(r.id, r.status, doc=r.doc)
+
+
 def broken_html(rid: str, error: str | None) -> str:
     return f'<span class="adhoc-broken" data-ref="{html.escape(rid)}">[broken reference: {html.escape(rid)}' + \
         (f" ({html.escape(error)})" if error else "") + "]</span>"
@@ -339,7 +382,7 @@ def prepare(page: Page) -> tuple[str, dict]:
             out.append(f"](ADHOCLINK{i}X)")
             continue
         fills[token] = ("node", d, r)
-        out.append(f"\n\n{token}\n\n" if d.kind == "block" else token)
+        out.append(f"\n\n{token}\n\n" if d.kind in ("block", "interp-block") else token)
     out.append(prose[pos:])
     return "".join(out), fills
 
@@ -379,6 +422,8 @@ def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]
             continue
         if r.status == "broken":
             frag = broken_html(d.id, r.error)
+        elif d.kind in ("interp", "interp-block"):
+            frag = interp_html(page, d, r, images)
         else:
             cite_mode = d.opts.get("cite", "inline")
             citation = page.cite(r, d.opts.get("signal"))
@@ -388,6 +433,8 @@ def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]
                 shown = page.shown(d, r)
                 if shown["error"]:
                     frag = broken_html(d.id, shown["error"])
+                elif shown["as"] == "hex":
+                    frag = hex_quote_html(r, d.kind == "block")
                 elif shown["as"] == "image":
                     frag = image_html(page, r, shown["crops"], images)
                 elif shown["as"] == "table":
@@ -405,7 +452,7 @@ def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]
                     elif cite_mode != "none":
                         cite_el = f'<cite data-ref="{d.id}">{citation}</cite>'
                         frag = frag + f'<p class="adhoc-cite">{cite_el}</p>' if d.kind == "block" else f"{frag} ({cite_el})"
-        if d.kind == "block":
+        if d.kind in ("block", "interp-block"):
             body = body.replace(f"<p>{token}</p>", frag)
         body = body.replace(token, frag)
 
@@ -417,7 +464,8 @@ def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]
         body = f"<h1 class=\"adhoc-title\">{html.escape(str(title))}</h1>\n" + body
     results = page.check()
     if standalone:
-        body = STANDALONE.format(title=html.escape(str(title or page.path.stem)), body=body)
+        from .interp import STYLE
+        body = STANDALONE.format(title=html.escape(str(title or page.path.stem)), body=body, interp_style=STYLE)
     return body, results
 
 
@@ -439,6 +487,7 @@ figure.adhoc-image img {{ max-width: 100%; border: 1px solid #ccc; display: bloc
 figure.adhoc-cells {{ margin: 1em 0; }}
 figure.adhoc-cells table {{ border-collapse: collapse; width: 100%; font: 11px/1.3 system-ui, sans-serif; }}
 figure.adhoc-cells td {{ border: 1px solid #ccc; padding: 2px 6px; }}
+{interp_style}
 </style></head><body>
 {body}
 </body></html>
@@ -461,6 +510,9 @@ def provenance(page: Page) -> list[dict]:
                        rendered=literate.plain(literate.pieces(r, inline=d.kind != "block")), alterations=r.alter)
             if shown["as"] == "rich":
                 row["formatting"] = shown.get("source") or "none found in the original"
+        elif r.kind == "bytes":
+            row.update(locators=[{"doc": r.doc, "select": r.select, "quote": raw_fingerprint(r.data)}],
+                       rendered=r.data.hex(" "))
         elif r.kind == "cells":
             text = "\n".join("\t".join(row_) for row_ in r.cells)
             row.update(locators=[{"doc": r.doc, "layer": r.layer.id, "select": r.select, "quote": {"exact": text}}], rendered=text)
@@ -472,6 +524,30 @@ def provenance(page: Page) -> list[dict]:
                              for c in shown["crops"]]
         row["citation"] = re.sub("<[^>]+>", "", page.cite(r, d.opts.get("signal")))
         rows.append(row)
+    return rows
+
+
+def raw_fingerprint(data: bytes) -> dict:
+    from .raw import fingerprint
+    return fingerprint(data)
+
+
+def interpretations(page: Page) -> list[dict]:
+    """What an export records for each interpretation it shows: never a
+    quotation, but exactly which reading, of what, made by what."""
+    from . import interp
+    rows = []
+    for d in literate.directives(page.prose):
+        if d.kind not in ("interp", "interp-block"):
+            continue
+        r = page.resolved(d.id)
+        rec = r.interp
+        want, _ = literate.shown_as(page.m, d, r)
+        value = interp.value_of(page.m, rec, r.ptr)
+        rows.append({"id": d.id, "interpretation": rec["name"], "title": rec["title"], "about": rec.get("about"),
+                     "unofficial": True, "inputs": rec["inputs"], "decoder": rec["decoder"], "output": rec["output"],
+                     "ptr": r.ptr, "as": want,
+                     "rendered": interp.as_text(page.m, rec, value, want) if want != "image" else None})
     return rows
 
 
@@ -513,7 +589,8 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
         raise PageError(f"unknown format {fmt}")
     prov_path = out.with_name(out.name + ".provenance.json")
     prov = {"page": str(page.path), "page_hash": sha256(page.source.encode()), "output": str(out),
-            "output_hash": sha256(out.read_bytes()), "format": fmt, "quotations": provenance(page)}
+            "output_hash": sha256(out.read_bytes()), "format": fmt, "quotations": provenance(page),
+            "interpretations": interpretations(page)}
     prov_path.write_text(json.dumps(prov, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     ev = page.m.logs["workspace"].append(op="export", page=str(page.path), output=str(out), output_hash=prov["output_hash"],
                                          provenance=str(prov_path), provenance_hash=sha256(prov_path.read_bytes()))
@@ -649,10 +726,32 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
         if len(parts) > 1:
             raise PageError("only text ranges can be elided")
         ref = {"id": rid, "doc": first["doc"], "layer": first["layer"], "select": sel, "quote": first["quote"]}
+    elif "bytes" in sel:
+        if len(parts) > 1:
+            raise PageError("only text ranges can be elided")
+        ref = {"id": rid, "doc": first["doc"], "select": sel, "quote": first["quote"]}
     else:
         if len(parts) > 1:
             raise PageError("only text ranges can be elided")
         ref = {"id": rid, "doc": first["doc"], **({"select": sel} if sel else {})}
+    refs = [r for r in refs if r["id"] != rid] + [ref]
+    Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+    return ref
+
+
+def add_interp_ref(m: Matter, path: Path, rid: str, name: str, ptr: str | None = None, replace=False) -> dict:
+    """Add a reference to an interpretation (or the value at ``ptr`` in its
+    JSON output), fingerprinted by the output's hash."""
+    from . import interp
+    if not literate.ID.match(rid):
+        raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
+    source = Path(path).read_text(encoding="utf-8")
+    _, refs, _, _ = literate.split(source)
+    if any(r["id"] == rid for r in refs) and not replace:
+        raise PageError(f"reference {rid} exists; pass --replace")
+    rec = interp.load(m, name)
+    interp.value_of(m, rec, ptr)
+    ref = {"id": rid, "interp": name, "output": rec["output"]["sha256"], **({"ptr": ptr} if ptr else {})}
     refs = [r for r in refs if r["id"] != rid] + [ref]
     Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
     return ref
@@ -682,10 +781,15 @@ def cited_docs(page: Page) -> list[tuple[str, list[str]]]:
     out = {}
     for d in literate.directives(page.prose):
         ref = page.refs.get(d.id)
-        if not ref or not ref.get("doc"):
+        if ref and ref.get("interp"):              # an interpretation: the documents it reads
+            r = page.resolved(d.id)
+            docs = [i["doc"] for i in r.interp["inputs"]] if r.interp else []
+        elif ref and ref.get("doc"):
+            docs = [locators.parse({"doc": ref["doc"]}, page.m.objects)["doc"]]
+        else:
             continue
-        doc = locators.parse({"doc": ref["doc"]}, page.m.objects)["doc"]
-        ids = out.setdefault(doc, [])
-        if d.id not in ids:
-            ids.append(d.id)
+        for doc in docs:
+            ids = out.setdefault(doc, [])
+            if d.id not in ids:
+                ids.append(d.id)
     return list(out.items())

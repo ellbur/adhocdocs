@@ -518,6 +518,13 @@ def text(argv=None):
         return
     if r["status"] == "broken":
         raise locators.LocatorError(f"broken locator: {r['error']}")
+    if "bytes" in (r["loc"].get("select") or {}):            # an original's bytes, as a hex dump
+        from .raw import DUMP_LIMIT, hexdump_text
+        a0 = r["loc"]["select"]["bytes"][0]
+        print(hexdump_text(r.data[:DUMP_LIMIT], a0))
+        if len(r.data) > DUMP_LIMIT:
+            print(json.dumps({"truncated": f"showing {DUMP_LIMIT} of {len(r.data)} bytes"}), file=sys.stderr)
+        return
     if r["status"] != "exact":
         print(json.dumps({"status": r["status"], "loc": r["loc"], "notes": r.get("notes")}), file=sys.stderr)
     loc = r["loc"]
@@ -533,6 +540,235 @@ def text(argv=None):
     sys.stdout.write(r["text"])
     if not r["text"].endswith("\n"):
         sys.stdout.write("\n")
+
+
+# -- raw and interp: files of unknown format or schema ------------------------------------
+
+RAW_HELP = """\
+Originals as bytes, and structured data as structure: for files no
+extractor reads (kind "other"), and for JSON, JSON Lines and XML whose
+schema no one has told us. See DATA.md.
+
+  raw info <doc>                     size, hash, signature, entropy, text-likeness, format
+  raw hex <doc|locator> [--start N] [--length N]
+                                     a hex dump; prints the byte locator of the range
+  raw strings <doc> [--min N] [--limit N]
+                                     printable runs (ASCII, UTF-16LE), each with its byte locator
+  raw schema <doc>                   JSON/JSON Lines/XML: every path, its types, counts and
+                                     examples (each with a ptr= locator)
+  raw path <doc>                     the original's path, read-only, for your own decoders
+
+Byte locators (doc:<id>#bytes=start,end) quote an original's bytes; pages
+show them as hex (::q{#id}). ptr= locators (doc:<id>#ptr=/items/3/amount,
+RFC 6901) name a value in JSON and resolve to its text, which quotes
+verbatim like any text. What bytes or fields *mean* is interpretation:
+write a decoder and record it with `interp run`.
+"""
+
+
+@run
+def raw(argv=None):
+    from . import raw as rawmod, structured
+    p = parser("raw", RAW_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("info")
+    s.add_argument("doc")
+    s = sub.add_parser("hex")
+    s.add_argument("loc", help="a document, or a byte locator (doc:…#bytes=a,b)")
+    s.add_argument("--start", type=lambda x: int(x, 0), default=0, help="first byte (0x… works)")
+    s.add_argument("--length", type=lambda x: int(x, 0), default=256)
+    s.add_argument("--json", action="store_true", help="rows as JSON instead of text")
+    s = sub.add_parser("strings")
+    s.add_argument("doc")
+    s.add_argument("--min", type=int, default=6, help="shortest run (characters)")
+    s.add_argument("--limit", type=int, default=2000)
+    s.add_argument("--start", type=lambda x: int(x, 0), default=0)
+    s.add_argument("--length", type=lambda x: int(x, 0), default=None, help="default: to the end (at most 64 MB)")
+    s = sub.add_parser("schema")
+    s.add_argument("doc")
+    s.add_argument("--paths", type=int, default=500, help="most paths to report")
+    s = sub.add_parser("path")
+    s.add_argument("doc")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+
+    def doc_of(x):
+        return locators.parse("doc:" + x.removeprefix("doc:").split("#")[0], m.objects)["doc"]
+
+    if a.cmd == "info":
+        out(rawmod.info(m, doc_of(a.doc)))
+    elif a.cmd == "path":
+        doc = doc_of(a.doc)
+        print(m.objects.path(rawmod.content_of(m, doc)))
+    elif a.cmd == "hex":
+        loc = locators.parse(a.loc if a.loc.lstrip().startswith("{") else "doc:" + a.loc.removeprefix("doc:"), m.objects)
+        content = rawmod.content_of(m, loc["doc"])
+        if "bytes" not in (loc.get("select") or {}):
+            n = rawmod.size(m, content)
+            start = min(a.start, n)
+            loc = rawmod.byte_locator(loc["doc"], m, start, min(n, start + min(a.length, rawmod.DUMP_LIMIT)), content)
+        r = locators.resolve(m, loc)
+        if r["status"] == "broken":
+            raise locators.LocatorError(f"broken locator: {r['error']}")
+        data = r.data[:rawmod.DUMP_LIMIT]
+        start = r["loc"]["select"]["bytes"][0]
+        if a.json:
+            for row in rawmod.hexdump(data, start):
+                out(row)
+        else:
+            print(rawmod.hexdump_text(data, start))
+        print(json.dumps({"loc": locators.format(r["loc"]), "quote": r["loc"]["quote"]}), file=sys.stderr)
+    elif a.cmd == "strings":
+        doc = doc_of(a.doc)
+        content = rawmod.content_of(m, doc)
+        n = rawmod.size(m, content)
+        end = min(n, a.start + (a.length if a.length is not None else 64 << 20))
+        data = rawmod.read(m, content, a.start, end)
+        for s0, e0, text_, enc in rawmod.strings(data, a.min, a.start, a.limit):
+            out({"loc": locators.format({"doc": doc, "select": {"bytes": [s0, e0]}}), "encoding": enc, "text": text_})
+        if end < n:
+            print(json.dumps({"note": f"read bytes {a.start}–{end} of {n}; use --start/--length for the rest"}), file=sys.stderr)
+    elif a.cmd == "schema":
+        doc = doc_of(a.doc)
+        content = rawmod.content_of(m, doc)
+        kind = locators.pointer_kind(m, doc)
+        layer = m.state.primary_layer(content)
+        if kind is None and layer is not None:
+            kind = structured.sniff(m.objects.get_text(layer.text))
+        if kind is None:
+            meta = m.objects.get_object(m.state.metadata[doc]) if doc in m.state.metadata else {}
+            kind = "xml" if meta.get("kind") == "xml" or meta.get("format") == "xml" else None
+        if kind == "xml":
+            res = structured.xml_schema(rawmod.read(m, content), a.paths)
+        elif kind in ("json", "ndjson") and layer is not None:
+            text_ = m.objects.get_text(layer.text)
+            res = structured.schema(structured.loads(text_, kind), kind == "ndjson", a.paths)
+            for row in res["paths"]:
+                for ex in row.get("examples", []):
+                    ex["loc"] = locators.format({"doc": doc, "select": {"ptr": ex.pop("ptr")}})
+        else:
+            raise ValueError("raw schema is for JSON, JSON Lines and XML; for other formats see raw info, raw strings, raw hex")
+        out({"doc": doc, "format": kind, **res})
+
+
+INTERP_HELP = """\
+Interpretations: your own readings of documents whose format or schema
+adhocdocs doesn't know, kept apart from the documents' own text. See DATA.md.
+
+  interp run <doc>... --name N --title T [--about A] [--type T] [--replace] -- <command> [args...]
+        run a decoder you wrote on the originals and record what it prints:
+        JSON (a table, tree or value), CSV, text, or a chart as SVG or PNG.
+        It gets the first original on stdin and their paths in $ADHOC_INPUT
+        and $ADHOC_INPUTS (JSON). Files on its command line are copied in
+        and run from the copies, so the record says exactly what ran.
+  interp ls                          the interpretations, newest first
+  interp show N                      the record, and the start of the output
+  interp check [N]                   still holds (inputs, files) and reruns to the same output
+  interp search QUERY [--name N]...  search the outputs, with search's query language (no field
+                                     filters); /p means the same record. Hits are places in your
+                                     readings, each with the evidence locator its record gives
+  interp render N [--ptr P] [--as A] [-o out.html]
+  interp view N [--ptr P] [--as A] [--pane P]   show it in the viewer
+
+--about says what you think the file is and how sure you are; it is shown
+with the interpretation. In JSON output, objects with "_bytes": [a, b]
+(bytes of the first input), "_ptr" (a JSON pointer into it) or "_loc" link
+to the evidence they were read from, which can be quoted. In pages, show an
+interpretation with :interp{#id} or ::interp{#id as=table|tree|value|text|image}
+(page ref add page.md <id> --interp N [--ptr P]); it can never be quoted
+with :q. Say it is your reading whenever you rely on one.
+"""
+
+
+@run
+def interp(argv=None):
+    from . import interp as im
+    p = parser("interp", INTERP_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("run")
+    s.add_argument("docs", nargs="+")
+    s.add_argument("--name", required=True)
+    s.add_argument("--title", required=True, help="what the output is, e.g. 'Call records decoded from the .cdr file'")
+    s.add_argument("--about", help="what you think the file is, why, and how sure you are")
+    s.add_argument("--type", choices=im.TYPES, help="the output's type (default: guessed)")
+    s.add_argument("--replace", action="store_true")
+    sub.add_parser("ls")
+    s = sub.add_parser("show")
+    s.add_argument("name")
+    s = sub.add_parser("check")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--no-rerun", action="store_true")
+    s = sub.add_parser("search", help="search interpretations' outputs (search's query language, no field filters)")
+    s.add_argument("query")
+    s.add_argument("--name", action="append", help="only this interpretation (repeatable)")
+    s.add_argument("--limit", type=int, help="most hits to print per interpretation")
+    for name in ("render", "view"):
+        s = sub.add_parser(name)
+        s.add_argument("name")
+        s.add_argument("--ptr", help="a JSON pointer into the output")
+        s.add_argument("--as", dest="as_", choices=im.SHOWN_AS)
+        if name == "render":
+            s.add_argument("-o", "--out")
+        else:
+            s.add_argument("--pane", help="replace this pane's content")
+            s.add_argument("--window")
+    matter_everywhere(sub)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command = []
+    if "--" in argv:                       # the decoder's own command line, untouched
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    try:
+        if a.cmd == "run":
+            cmd = command
+            rec = im.run(m, a.docs, a.name, cmd, a.title, a.about, a.type, a.replace)
+            out({"name": rec["name"], "folder": str(im.folder(m, rec["name"])), "output": rec["output"],
+                 "decoder": rec["decoder"]})
+        elif a.cmd == "ls":
+            recs = [im.load(m, n) for n in im.names(m)]
+            for rec in sorted(recs, key=lambda r: r.get("made", ""), reverse=True):
+                out({"name": rec["name"], "title": rec["title"], "type": rec["output"]["type"], "made": rec.get("made"),
+                     "inputs": [i["doc"] for i in rec["inputs"]]})
+        elif a.cmd == "show":
+            rec = im.load(m, a.name)
+            data = im.output_bytes(m, rec)
+            preview = None if rec["output"]["type"] == "png" else data[:2000].decode("utf-8", errors="replace")
+            out({**rec, "folder": str(im.folder(m, a.name)), "preview": preview})
+        elif a.cmd == "check":
+            bad = False
+            for n in [a.name] if a.name else im.names(m):
+                r = im.check(m, n, rerun=not a.no_rerun)
+                bad = bad or not r["ok"]
+                out(r)
+            if bad:
+                sys.exit(1)
+        elif a.cmd == "search":
+            header, items = im.search(m, a.query, a.name, a.limit)
+            out(header)
+            for it in items:
+                out(it)
+        elif a.cmd == "render":
+            doc, _ = im.page_html(m, a.name, a.ptr, a.as_)
+            if a.out:
+                Path(a.out).write_text(doc, encoding="utf-8", newline="\n")
+                out({"written": a.out})
+            else:
+                sys.stdout.write(doc)
+        elif a.cmd == "view":
+            import base64
+            doc, images = im.page_html(m, a.name, a.ptr, a.as_, inline_images=False)
+            files = {"index.html": base64.b64encode(doc.encode()).decode(),
+                     **{k: base64.b64encode(v).decode() for k, v in images.items()}}
+            rec = im.load(m, a.name)
+            c = {"cmd": "pane", "files": files, "title": "Interpretation: " + rec["title"], "update": a.pane,
+                 "window": a.window}
+            out(viewmod.command(m, {k: v for k, v in c.items() if v is not None}))
+    except im.InterpError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
 
 
 # -- idx ---------------------------------------------------------------------------------
@@ -1209,8 +1445,10 @@ Literate pages: Markdown whose quotations are references to document text.
   page export page.md --format html|docx|pdf -o out
 
 References can be text ranges (from search hits or `view selection`),
-spreadsheet cells (`sheet=…&cells=B2:D10`, e.g. a grid selection) or page
-regions (`page=3&xywh=…`, e.g. an Alt-drag selection).
+spreadsheet cells (`sheet=…&cells=B2:D10`, e.g. a grid selection), page
+regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
+(`ptr=/a/0/b`, which become text ranges), an original's bytes (`bytes=0,16`,
+from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
 
 Format:
 """ + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
@@ -1255,6 +1493,8 @@ def page(argv=None):
                         "default: whichever one document has the words")
     s.add_argument("--words", action="append", help="the words to quote, as they appear in the document")
     s.add_argument("--layer", metavar="VIEW", help="with --words: search this layer view (e.g. ocr), not the primary")
+    s.add_argument("--interp", metavar="NAME", help="a reference to an interpretation (interp --help), shown with :interp")
+    s.add_argument("--ptr", help="with --interp: a JSON pointer into its output")
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
@@ -1290,7 +1530,13 @@ def page(argv=None):
             out({**shown, "problems": len(literate.problems(results))})
         elif a.cmd == "export":
             out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
+        elif a.cmd == "ref-add" and a.interp:
+            if a.locators or a.words:
+                raise pages.PageError("--interp makes a reference to an interpretation; don't give locators or --words too")
+            out(pages.add_interp_ref(m, a.file, a.id, a.interp, a.ptr, a.replace))
         elif a.cmd == "ref-add":
+            if a.ptr:
+                raise pages.PageError("--ptr goes with --interp; for a JSON document, use a ptr= locator (doc:…#ptr=/a/b)")
             if bool(a.locators) == bool(a.words):
                 raise pages.PageError("give locators, or --words (with --in), not both")
             locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
@@ -1715,7 +1961,7 @@ def work(argv=None):
 
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work, "raw": raw, "interp": interp}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

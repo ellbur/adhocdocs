@@ -64,6 +64,13 @@ text is now at the old offsets.
 - `page=3&xywh=x,y,w,h` (fractions of the page) is a region of a page; it
   resolves to that page, and is checked to lie on it. Pages quote regions
   as images.
+- `bytes=a,b` is a range of the original's bytes, for files no extractor
+  reads. Its quote is `{"sha256": …}` (plus `"hex"` for ranges up to 64
+  bytes), and it never names a layer: the original can't change, so it
+  is exact or broken, never re-anchored. Pages quote bytes as hex.
+- `ptr=/items/3/amount` (RFC 6901 JSON Pointer, percent-encoded) names a
+  value in a JSON or JSON Lines document. Like `pl=`, it is an alias: it
+  resolves to the `char` range of the value's text. See [DATA.md](DATA.md).
 
 ## Decisions to confirm
 

@@ -24,6 +24,31 @@ def extract_text(data: bytes) -> Extraction:
     return Extraction(kind="text", layers=[b.layer("native", primary=True)])
 
 
+def extract_structured(kind: str, data: bytes) -> Extraction:
+    """JSON, JSON Lines or XML: the literal text, like any text file, plus
+    what its syntax says (``valid``, its top-level ``shape`` or number of
+    ``records``). ``ptr=`` locators name values in JSON (adhocdocs.structured)."""
+    from .. import structured
+    b = TextBuilder()
+    b.add(decode(data))
+    layer = b.layer("native", primary=True)
+    meta = {"format": kind}
+    try:
+        if kind == "xml":
+            from lxml import etree
+            etree.fromstring(data, etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True))
+        else:
+            value = structured.loads(layer.text, kind)
+            meta["shape"] = structured.type_of(value) if kind == "json" else "records"
+            if kind == "ndjson":
+                meta["records"] = len(value)
+        meta["valid"] = True
+    except Exception as e:              # still the file's text; just not well-formed
+        meta["valid"] = False
+        meta["syntax_error"] = str(e)[:200]
+    return Extraction(kind=kind, layers=[layer], metadata=meta)
+
+
 STYLE_TAGS = {"b": "b", "strong": "b", "i": "i", "em": "i", "cite": "i", "u": "u", "ins": "u",
               "s": "s", "strike": "s", "del": "s", "sup": "sup", "sub": "sub"}
 

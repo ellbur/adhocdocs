@@ -35,6 +35,8 @@ view = "adhocdocs.cli:view"
 analyze = "adhocdocs.cli:analyze"
 produce = "adhocdocs.cli:produce"
 work = "adhocdocs.cli:work"
+raw = "adhocdocs.cli:raw"
+interp = "adhocdocs.cli:interp"
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]

@@ -5,8 +5,17 @@ String form::
     doc:<doc-id>[@<layer-id>][#<selector>]
 
 with selectors ``page=14``, ``page=14-16``, ``char=1200,1340``,
-``page=3&xywh=0.1,0.2,0.5,0.05`` and ``sheet=Q3&cells=B2:D10``. Hash
-prefixes of 8 or more hex digits are accepted on input and expanded.
+``page=3&xywh=0.1,0.2,0.5,0.05``, ``sheet=Q3&cells=B2:D10``,
+``bytes=0,16`` and ``ptr=/items/3/amount``. Hash prefixes of 8 or more hex
+digits are accepted on input and expanded.
+
+``bytes`` is a half-open range of the original's bytes, not of any layer
+(see adhocdocs.raw). Its quote fingerprint is ``{"sha256": …}``, plus
+``"hex"`` for short ranges. It is how a file no extractor reads is quoted.
+
+``ptr`` is an RFC 6901 JSON Pointer (percent-encoded in the string form)
+into a JSON or JSON Lines document. It is an alias: it resolves to the
+``char`` range of the value's text in the layer (see adhocdocs.structured).
 
 ``cells`` is a rectangle (``B2:D10``, or one cell ``B2``) on a sheet named by
 ``sheet`` (percent-encoded in the string form; the first sheet if left
@@ -51,7 +60,10 @@ def _parse_selector(s: str) -> dict:
             sel["char"] = [int(a), int(b)]
         elif key == "xywh":
             sel["xywh"] = [float(x) for x in val.split(",")]
-        elif key == "sheet":
+        elif key == "bytes":
+            a, b = val.split(",")
+            sel["bytes"] = [int(a), int(b)]
+        elif key in ("sheet", "ptr"):
             sel[key] = _unpct(val)
         elif key in ("cells", "label", "pl"):
             sel[key] = val
@@ -68,6 +80,8 @@ def _format_selector(sel: dict) -> str:
             parts.append(f"{key}={sep.join(str(v) for v in val)}")
         elif key == "sheet":
             parts.append(f"sheet={_pct(val, safe='')}")
+        elif key == "ptr":
+            parts.append(f"ptr={_pct(val, safe='/~')}")
         else:
             parts.append(f"{key}={val}")
     return "&".join(parts)
@@ -281,6 +295,14 @@ def resolve(matter, loc) -> Resolution:
     if "pl" in sel or "label" in sel:
         loc = expand_alias(matter, loc, content)
         sel = loc["select"]
+    if "bytes" in sel:
+        return _resolve_bytes(matter, loc, content, notes)
+    if "ptr" in sel:
+        try:
+            loc = expand_pointer(matter, loc, content)
+        except ValueError as e:
+            return Resolution(status="broken", loc=loc, error=str(e))
+        sel = loc["select"]
     if "cells" in sel:
         return _resolve_cells(matter, loc, content, notes)
     if "xywh" in sel:
@@ -358,3 +380,53 @@ def _resolve_cells(matter, loc, content, notes) -> Resolution:
     loc = {**loc, "layer": layer.id, "quote": {"exact": selected}}
     return Resolution(status="re-anchored" if notes else "exact", loc=loc, text=selected, notes=notes,
                       span=list(span) if span else None)
+
+
+def _resolve_bytes(matter, loc, content, notes) -> Resolution:
+    """A range of the original's bytes. ``hex`` is them (for ranges a hex
+    dump would show), and the resolution's ``data`` attribute the bytes."""
+    from . import raw
+    sel = loc["select"]
+    if len(sel["bytes"]) != 2 or set(sel) - {"bytes"}:
+        return Resolution(status="broken", loc=loc, error="a byte range is bytes=start,end, alone")
+    data, err = raw.check_bytes(matter, content, sel, loc.get("quote"))
+    if err:
+        return Resolution(status="broken", loc=loc, error=err)
+    loc = {k: v for k, v in loc.items() if k != "layer"}
+    loc["quote"] = raw.fingerprint(data)
+    r = Resolution(status="re-anchored" if notes else "exact", loc=loc, notes=notes, size=len(data))
+    if len(data) <= raw.DUMP_LIMIT:
+        r["hex"] = data.hex()
+    r.data = data
+    return r
+
+
+def pointer_kind(matter, doc: str) -> str | None:
+    """``json`` or ``ndjson`` from the document's metadata (kind, or the
+    format a text file was found to be), if it says."""
+    h = matter.state.metadata.get(doc)
+    meta = matter.objects.get_object(h) if h else {}
+    for v in (meta.get("kind"), meta.get("format")):
+        if v in ("json", "ndjson"):
+            return v
+    return None
+
+
+def expand_pointer(matter, loc: dict, content: str) -> dict:
+    """Turn ``ptr=`` into the char range of the value it names, in the
+    given layer or the primary one."""
+    from . import structured
+    state = matter.state
+    sel = dict(loc["select"])
+    ptr = sel.pop("ptr")
+    if "char" in sel or "page" in sel:
+        raise LocatorError("ptr names a value by itself; don't combine it with char or page")
+    layer = state.layer(loc["layer"]) if loc.get("layer") else state.primary_layer(content)
+    if layer is None or layer not in state.layers.get(content, []):
+        raise LocatorError("no such layer in this document")
+    text = matter.objects.get_text(layer.text)
+    kind = pointer_kind(matter, loc["doc"]) or structured.sniff(text)
+    if kind not in ("json", "ndjson"):
+        raise LocatorError("ptr needs a JSON or JSON Lines document")
+    s, e = structured.pointer_range(text, ptr, lines=kind == "ndjson")
+    return {**loc, "layer": layer.id, "select": {**sel, "char": [s, e]}}

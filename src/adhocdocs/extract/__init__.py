@@ -177,6 +177,12 @@ def kind_for(name: str | None, data: bytes, zip_kind=_zip_kind) -> str:
         return "csv"
     if n.endswith((".html", ".htm")):
         return "html"
+    if n.endswith(".json"):
+        return "json"
+    if n.endswith((".ndjson", ".jsonl")):
+        return "ndjson"
+    if n.endswith(".xml"):
+        return "xml"
     if n.endswith((".txt", ".text", ".md")):
         return "text"
     head = data[:2000]
@@ -184,11 +190,24 @@ def kind_for(name: str | None, data: bytes, zip_kind=_zip_kind) -> str:
         return "html"
     if b"\nSubject:" in head or head.startswith((b"From:", b"Received:", b"Return-Path:", b"Message-ID:", b"MIME-Version:")):
         return "email"
+    if b"\x00" in head:                         # text has no NULs; binary formats are full of them
+        return "other"
     try:
         head.decode("utf-8")
-        return "text"
-    except UnicodeDecodeError:
-        return "other"
+    except UnicodeDecodeError as e:
+        if e.start < len(head) - 4:            # not just a character cut off at the end of the sample
+            return "other"
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n")[:5] == b"<?xml":
+        return "xml"
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n")[:1] in (b"{", b"["):
+        from ..structured import sniff
+        try:
+            found = sniff(data.decode("utf-8-sig"))
+        except UnicodeDecodeError:
+            found = None
+        if found:
+            return found
+    return "text"
 
 
 # kind_for's names for formats whose extractors report another kind
@@ -277,4 +296,15 @@ def extract(name: str | None, data: bytes) -> Extraction:
     if kind == "text":
         from .simple import extract_text
         return extract_text(data)
-    return Extraction(kind="other")
+    if kind in ("json", "ndjson", "xml"):
+        from .simple import extract_structured
+        return extract_structured(kind, data)
+    return Extraction(kind="other", metadata=binary_metadata(data[:4096]))
+
+
+def binary_metadata(head: bytes) -> dict:
+    """What can be recorded about a file nothing reads: the signatures its
+    first bytes match (see adhocdocs.raw), so they are searchable fields."""
+    from ..raw import signature
+    sig = signature(head)
+    return {"signature": sig} if sig else {}

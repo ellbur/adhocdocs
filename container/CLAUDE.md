@@ -25,6 +25,7 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `ann` | tags, notes, privilege flags, and the entity list; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
+| `raw`, `interp` | files of unknown format or schema: bytes, JSON paths, and your decoded readings (never quotations) |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
 | `work` | publish work product for the matter's other installations |
 | `idx` | index status; why a search may be incomplete |
@@ -33,9 +34,8 @@ mark inference as inference, and ask the user when the evidence is thin.
 ## Rules that matter
 
 1. **Never type a quotation into durable work.** In pages, notes and
-   exports, every quotation is a reference made with `page ref add` (by
-   locator, or `--in <doc> --words "…"`), and the renderer fills in the
-   words. In chat, quote freely but say when you paraphrase.
+   exports, quotations are references (`page ref add`: a locator, or `--in
+   <doc> --words "…"`); in chat, quote freely but say when you paraphrase.
 2. **Searches have coverage.** When you tell the user nothing was found,
    say what was searched and what wasn't (`coverage`, `exhaustive`).
 3. **Locators are the currency.** Hits, selections and tags all use them.
