@@ -139,7 +139,7 @@ def detected(m: Matter, text_hash: str) -> list[dict]:
     """The entities index's detections for one text, or [] if not indexed yet."""
     p = m.indexes_dir / "entities" / "texts" / (text_hash.removeprefix("sha256:") + ".json")
     try:
-        return json.loads(p.read_text())["detections"]
+        return json.loads(p.read_text(encoding="utf-8"))["detections"]
     except (FileNotFoundError, KeyError, json.JSONDecodeError):
         return []
 
@@ -148,7 +148,7 @@ def candidates(m: Matter) -> dict:
     """key -> {kind, name, docs, ...}: every detected candidate across the matter."""
     p = m.indexes_dir / "entities" / "candidates.json"
     try:
-        return json.loads(p.read_text())["candidates"]
+        return json.loads(p.read_text(encoding="utf-8"))["candidates"]
     except (FileNotFoundError, KeyError, json.JSONDecodeError):
         return {}
 

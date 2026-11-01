@@ -16,7 +16,6 @@ Every change to what is in the matter is an event in one of the two feeds,
 including removals (``withdraw``) and corrections (``supersede``).
 """
 
-import fcntl
 import json
 import os
 import secrets
@@ -26,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .objects import ObjectStore
+from .portable import locked
 
 FEEDS = ("store", "workspace")
 
@@ -60,8 +60,7 @@ class EventLog:
     def append(self, **event) -> dict:
         event = {"id": new_event_id(), "at": now(), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+        with open(self.path, "a", encoding="utf-8", newline="\n") as f, locked(f):
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event
 
@@ -70,7 +69,7 @@ class EventLog:
         if not self.path.exists():
             return
         seen = since is None
-        with open(self.path) as f:
+        with open(self.path, encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -123,7 +122,7 @@ class Matter:
             (root / f).touch()
         gi = root / "workspace" / ".gitignore"
         if not gi.exists():
-            gi.write_text(".adhoc/indexes/\n")
+            gi.write_text(".adhoc/indexes/\n", encoding="utf-8", newline="\n")
         return cls(root)
 
     @classmethod

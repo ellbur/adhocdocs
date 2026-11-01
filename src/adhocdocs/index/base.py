@@ -1,13 +1,13 @@
 """What every index has: a directory, a manifest, settings, and a cursor
 into the change feed advanced in the same transaction as its rows."""
 
-import fcntl
 import json
 import sqlite3
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from ..matter import Matter
+from ..portable import locked
 
 BATCH = 200
 
@@ -43,7 +43,7 @@ class Index:
         return {}
 
     def manifest(self) -> dict:
-        return json.loads(self.manifest_path.read_text())
+        return json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
     def create(self):
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +54,7 @@ class Index:
         man = {"type": "index", "v": 1, "name": self.name, "kind": self.kind,
                "settings": self.settings(), "cursor": cursor, "updater": f"idx-{self.kind}"}
         tmp = self.manifest_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(man, indent=2) + "\n")
+        tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8", newline="\n")
         tmp.replace(self.manifest_path)
 
     def check_settings(self):
@@ -92,12 +92,13 @@ class Index:
     @contextmanager
     def lock(self, wait=True):
         self.dir.mkdir(parents=True, exist_ok=True)
-        with open(self.dir / "lock", "w") as f:
-            try:
-                fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-            except BlockingIOError:
-                raise Busy(self.name)
-            yield
+        with open(self.dir / "lock", "w", encoding="utf-8", newline="\n") as f:
+            with ExitStack() as held:
+                try:
+                    held.enter_context(locked(f, wait))
+                except BlockingIOError:
+                    raise Busy(self.name)
+                yield
 
     def update(self, progress=None) -> int:
         """Apply events since the cursor. Returns the number applied."""

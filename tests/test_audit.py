@@ -34,14 +34,14 @@ def test_chain_finds_edits_and_removals(tmp_path):
     for i in range(5):
         log.append(session="s", kind="note", n=i)
     assert log.verify()["ok"] and log.verify()["events"] == 5
-    lines = log.path.read_text().splitlines()
+    lines = log.path.read_text(encoding="utf-8").splitlines()
 
-    log.path.write_text("\n".join(lines[:2] + lines[3:]) + "\n")              # remove one
+    log.path.write_text("\n".join(lines[:2] + lines[3:]) + "\n", encoding="utf-8", newline="\n")              # remove one
     assert [p["line"] for p in log.verify()["problems"]] == [3]
     edited = lines[1].replace('"n": 1', '"n": 9')
-    log.path.write_text("\n".join([lines[0], edited, *lines[2:]]) + "\n")      # edit one
+    log.path.write_text("\n".join([lines[0], edited, *lines[2:]]) + "\n", encoding="utf-8", newline="\n")      # edit one
     assert [p["line"] for p in log.verify()["problems"]] == [3]
-    log.path.write_text("\n".join(lines) + "\n")
+    log.path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     assert log.verify()["ok"]
 
 
@@ -62,7 +62,7 @@ def test_hook_records(tmp_path):
 
     # a stored result changed afterwards
     p = log.objects / ev["result_sha256"][:2] / ev["result_sha256"][2:]
-    p.write_text("something else")
+    p.write_text("something else", encoding="utf-8", newline="\n")
     assert log.verify()["problems"][0]["problem"] == "stored result altered"
 
 
@@ -159,7 +159,7 @@ def test_session_has_audit_socket_but_not_the_log(tmp_path):
 
 def test_managed_settings_hook_every_event():
     root = Path(__file__).parent.parent / "container"
-    settings = json.loads((root / "managed-settings.json").read_text())
+    settings = json.loads((root / "managed-settings.json").read_text(encoding="utf-8"))
     hooks = settings["hooks"]
     for event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "SessionStart", "SessionEnd"):
         [group] = hooks[event]

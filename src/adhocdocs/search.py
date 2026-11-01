@@ -6,7 +6,6 @@ searched (``coverage``) and how far the index had got (``as_of``).
 """
 
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field
 
@@ -15,6 +14,7 @@ from .annotations import current_tags
 from .index import Busy, open_index
 from .matter import Matter
 from .objects import sha256
+from .portable import spawn
 
 EMPTY_TEXT = sha256(b"")
 SNIPPET_CONTEXT = 60
@@ -300,7 +300,7 @@ class Searcher:
         if text_hash == EMPTY_TEXT:
             return True
         p = self.m.objects.path(text_hash)
-        return p.stat().st_size < 4096 and not p.read_text().strip()
+        return p.stat().st_size < 4096 and not p.read_text(encoding="utf-8").strip()
 
     def header(self, q, node, index, idx, exhaustive, coverage, as_of=None):
         h = {"type": "search", "v": 1, "query": q, "parsed": Q.to_text(node) if node is not None else None,
@@ -503,9 +503,7 @@ def start_background_update(m: Matter, name: str):
             pass
     except Busy:
         return False
-    log = open(idx.dir / "update.log", "a")
-    subprocess.Popen([sys.executable, "-m", "adhocdocs.cli", "idx", "--matter", str(m.root), "update", name],
-                     stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+    spawn([sys.executable, "-m", "adhocdocs.cli", "idx", "--matter", str(m.root), "update", name], idx.dir / "update.log")
     return True
 
 

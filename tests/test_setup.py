@@ -29,11 +29,11 @@ def test_corpus_is_mostly_noise():
 
 def test_manifest_ingest(tmp_path):
     (tmp_path / "a").mkdir()
-    (tmp_path / "a" / "one.txt").write_text("one")
-    (tmp_path / "two.txt").write_text("two")
+    (tmp_path / "a" / "one.txt").write_text("one", encoding="utf-8", newline="\n")
+    (tmp_path / "two.txt").write_text("two", encoding="utf-8", newline="\n")
     man = tmp_path / "m.toml"
     man.write_text('[[collection]]\nname = "c1"\ncustodian = "smith-j"\npaths = ["a"]\n'
-                   '[[collection]]\nname = "c2"\npaths = ["two.txt"]\n')
+                   '[[collection]]\nname = "c2"\npaths = ["two.txt"]\n', encoding="utf-8", newline="\n")
     m = Matter.create(tmp_path / "matter")
     docs = ingest_manifest(m, man)
     assert len(docs) == 2
@@ -51,7 +51,7 @@ def test_manifest_ingest(tmp_path):
 ])
 def test_manifest_errors(tmp_path, body, msg):
     (tmp_path / "a").mkdir()
-    (tmp_path / "m.toml").write_text(body)
+    (tmp_path / "m.toml").write_text(body, encoding="utf-8", newline="\n")
     with pytest.raises(ValueError, match=msg.replace("[", r"\[").replace("(", r"\(").replace(")", r"\)")):
         load_manifest(tmp_path / "m.toml")
 

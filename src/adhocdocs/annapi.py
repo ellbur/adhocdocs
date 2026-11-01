@@ -22,6 +22,7 @@ from pathlib import Path
 
 from . import annotations
 from .matter import Matter
+from .portable import runtime_dir
 
 
 MAX_SOCKET_PATH = 100   # AF_UNIX paths are limited to about 108 bytes
@@ -36,8 +37,7 @@ def socket_path(m: Matter) -> Path:
     p = m.root / "run" / "annotations.sock"
     if len(str(p)) <= MAX_SOCKET_PATH:
         return p
-    run = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return run / "adhocdocs" / (hashlib.sha256(str(m.root).encode()).hexdigest()[:16] + ".sock")
+    return runtime_dir() / "adhocdocs" / (hashlib.sha256(str(m.root).encode()).hexdigest()[:16] + ".sock")
 
 
 class _Handler(BaseHTTPRequestHandler):

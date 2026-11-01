@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import lists, locators
 from .matter import Matter
+from .portable import runtime_dir, spawn
 
 MAX_SOCKET_PATH = 100
 ROWS_PER_PAGE = 500
@@ -35,8 +36,7 @@ def socket_path(m: Matter) -> Path:
     p = m.root / "run" / "viewer.sock"
     if len(str(p)) <= MAX_SOCKET_PATH:
         return p
-    run = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return run / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16] / "viewer.sock"
+    return runtime_dir() / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16] / "viewer.sock"
 
 
 class NotRunning(Exception):
@@ -179,9 +179,7 @@ def launch(m: Matter, user: str, wait=False):
     if wait:
         return subprocess.call(cmd)
     (m.root / "run").mkdir(exist_ok=True)
-    log = open(m.root / "run" / "viewer.log", "a")
-    proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
-    return proc.pid
+    return spawn(cmd, m.root / "run" / "viewer.log").pid
 
 
 # -- services ------------------------------------------------------------------------------------

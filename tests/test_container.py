@@ -90,8 +90,8 @@ def test_session_guide_names_real_tools():
     import tomllib
     from pathlib import Path
     root = Path(__file__).parent.parent
-    scripts = set(tomllib.loads((root / "pyproject.toml").read_text())["project"]["scripts"])
-    guide = (root / "container" / "CLAUDE.md").read_text()
+    scripts = set(tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"])
+    guide = (root / "container" / "CLAUDE.md").read_text(encoding="utf-8")
     named = set(re.findall(r"^\| `(\w+)`", guide, re.M))
     assert named and named <= scripts, named - scripts
     assert len(guide.splitlines()) < 80          # it's loaded into every session: keep it short

@@ -35,7 +35,7 @@ def loc_of(m, name, phrase):
 
 def write_page(tmp_path, body, refs):
     p = tmp_path / "page.md"
-    p.write_text(body + "\n" + literate.format_refs(refs))
+    p.write_text(body + "\n" + literate.format_refs(refs), encoding="utf-8", newline="\n")
     return p
 
 
@@ -87,7 +87,7 @@ def test_elision_and_transcript_free_parts(m, tmp_path):
     a, text, _ = loc_of(m, MEMO, "Bellwether Marine Systems, Inc. has not paid")
     b, _, _ = loc_of(m, MEMO, "which was due on March 7, 2026")
     p = tmp_path / "page.md"
-    p.write_text("::q{#e}\n")
+    p.write_text("::q{#e}\n", encoding="utf-8", newline="\n")
     pages.add_ref(m, p, "e", [json.dumps(a), json.dumps(b)])
     with pytest.raises(pages.PageError, match="order"):
         pages.add_ref(m, p, "e2", [json.dumps(b), json.dumps(a)])
@@ -129,11 +129,11 @@ def test_lints(m, tmp_path):
 
 def test_export_provenance_and_cite_as(m, tmp_path):
     loc, _, _ = loc_of(m, EMAIL, "the shipment was never received")
-    (m.workspace / "cite-as.jsonl").write_text(json.dumps({"doc": loc["doc"], "cite": "Müller Email"}) + "\n")
+    (m.workspace / "cite-as.jsonl").write_text(json.dumps({"doc": loc["doc"], "cite": "Müller Email"}) + "\n", encoding="utf-8", newline="\n")
     p = write_page(tmp_path, ":q{#nr cite=footnote}", [{"id": "nr", **loc}])
     for fmt in ("html", "docx", "pdf"):
         res = pages.export(pages.Page(m, p), fmt, tmp_path / f"out.{fmt}")
-        prov = json.loads(Path(res["provenance"]).read_text())
+        prov = json.loads(Path(res["provenance"]).read_text(encoding="utf-8"))
         assert prov["quotations"][0]["rendered"] == "the shipment was never received"
         assert prov["quotations"][0]["citation"] == "Müller Email (Mar. 9, 2026)"
     assert sum(1 for e in Matter(m.root).logs["workspace"].read() if e["op"] == "export") == 3
@@ -141,7 +141,7 @@ def test_export_provenance_and_cite_as(m, tmp_path):
 
 def test_custom_cite_style(m, tmp_path):
     loc, _, _ = loc_of(m, EMAIL, "the shipment was never received")
-    (tmp_path / "style.py").write_text("def cite(info):\n    return 'CUSTOM ' + info['kind']\n")
+    (tmp_path / "style.py").write_text("def cite(info):\n    return 'CUSTOM ' + info['kind']\n", encoding="utf-8", newline="\n")
     p = write_page(tmp_path, "---\ncite-style: style.py\n---\n:q{#nr}", [{"id": "nr", **loc}])
     assert "CUSTOM email" in pages.render(pages.Page(m, p))[0]
 

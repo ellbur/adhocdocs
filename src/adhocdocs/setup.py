@@ -27,7 +27,7 @@ class Check:
 
 def _run(*args) -> subprocess.CompletedProcess | None:
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=60)
+        return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
 

@@ -51,7 +51,7 @@ def model_hash() -> str:
     f = files[0].resolve()
     key = f"{f}:{f.stat().st_size}"
     cache = models_dir() / "hashes.json"
-    known = json.loads(cache.read_text()) if cache.exists() else {}
+    known = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
     if key not in known:
         h = hashlib.sha256()
         with open(f, "rb") as fh:
@@ -59,7 +59,7 @@ def model_hash() -> str:
                 h.update(chunk)
         known[key] = "sha256:" + h.hexdigest()
         try:
-            cache.write_text(json.dumps(known))
+            cache.write_text(json.dumps(known), encoding="utf-8", newline="\n")
         except OSError:
             pass
     return known[key]

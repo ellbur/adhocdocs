@@ -66,7 +66,7 @@ def test_rich_quotes(m, tmp_path):
             text_ref(m, "mail", "Bill of lading", "mail", 12),
             text_ref(m, "memo", "MEMORANDUM", "memo", 10)]
     p = tmp_path / "rich.md"
-    p.write_text(":q{#letter as=rich} :q{#mail as=rich} :q{#memo as=rich} :q{#memo}\n\n" + literate.format_refs(refs))
+    p.write_text(":q{#letter as=rich} :q{#mail as=rich} :q{#memo as=rich} :q{#memo}\n\n" + literate.format_refs(refs), encoding="utf-8", newline="\n")
     page = pages.Page(m, p)
     html_doc, results = pages.render(page)
     assert all(r.get("status") == "exact" for r in results if "id" in r)
@@ -81,7 +81,7 @@ def test_rich_quotes(m, tmp_path):
     runs = [run for para in docx.Document(str(out)).paragraphs for run in para.runs]
     assert any(run.bold and "BELLWETHER" in run.text for run in runs)
     assert any(run.bold and run.text.startswith("Bill of lading") for run in runs)
-    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text())["quotations"]
+    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text(encoding="utf-8"))["quotations"]
     assert [q.get("formatting") for q in prov] == ["Word run formatting", "the email's HTML", "PDF fonts (approximate)", None]
 
 
@@ -90,7 +90,7 @@ def test_pictures_of_pages(m, tmp_path):
     refs = [text_ref(m, "memo", "MEMORANDUM", "head", 5),
             {"id": "region", "doc": memo, "select": {"page": 1, "xywh": [0.1, 0.05, 0.8, 0.2]}}]
     p = tmp_path / "img.md"
-    p.write_text("::q{#head as=image}\n\n::q{#region}\n\n::q{#head as=image highlight=yes}\n\n" + literate.format_refs(refs))
+    p.write_text("::q{#head as=image}\n\n::q{#region}\n\n::q{#head as=image highlight=yes}\n\n" + literate.format_refs(refs), encoding="utf-8", newline="\n")
     page = pages.Page(m, p)
     html_doc, results = pages.render(page)
     assert html_doc.count('<img src="data:image/png;base64,') == 3
@@ -101,7 +101,7 @@ def test_pictures_of_pages(m, tmp_path):
     out = tmp_path / "img.docx"
     pages.export(page, "docx", out)
     assert len(docx.Document(str(out)).inline_shapes) == 3
-    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text())["quotations"]
+    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text(encoding="utf-8"))["quotations"]
     assert [q["as"] for q in prov] == ["image", "image", "image"] and prov[1]["locators"][0]["select"]["xywh"]
     assert all(q["images"][0]["sha256"].startswith("sha256:") for q in prov)
     pages.export(page, "pdf", tmp_path / "img.pdf")
@@ -110,12 +110,12 @@ def test_pictures_of_pages(m, tmp_path):
 def test_cells(m, tmp_path):
     aging = doc_of(m, "aging")
     p = tmp_path / "cells.md"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8", newline="\n")
     pages.add_ref(m, p, "table", [f"doc:{aging}#cells=A1:C3"])
     pages.add_ref(m, p, "row", [f"doc:{aging}#cells=A2:B2"])
-    ref = literate.split(p.read_text())[1][0]
+    ref = literate.split(p.read_text(encoding="utf-8"))[1][0]
     assert ref["quote"]["exact"].startswith("customer\tinvoice\tinvoice_date\n") and ref["layer"]
-    p.write_text("::q{#table}\n\nInline: :q{#row}.\n\n" + p.read_text().split("\n", 1)[1])
+    p.write_text("::q{#table}\n\nInline: :q{#row}.\n\n" + p.read_text(encoding="utf-8").split("\n", 1)[1], encoding="utf-8", newline="\n")
     page = pages.Page(m, p)
     html_doc, _ = pages.render(page)
     assert "<table>" in html_doc and "<td>invoice_date</td>" in html_doc
@@ -134,7 +134,7 @@ def test_what_each_kind_allows(m, tmp_path):
             text_ref(m, "memo", "MEMORANDUM", "memo")]
     p = tmp_path / "bad.md"
     p.write_text("::q{#mailregion}\n\n:q{#memo as=image}\n\n:q{#region as=text}\n\n::q{#bad}\n\n::q{#memo as=table}\n\n"
-                 + literate.format_refs(refs))
+                 + literate.format_refs(refs), encoding="utf-8", newline="\n")
     errors = {r["id"]: r.get("error", "") for r in pages.Page(m, p).check() if "id" in r}
     assert "pages of its own" in errors["mailregion"] and "block" in errors["memo"]
     assert "image" in errors["region"] and "xywh" in errors["bad"]
@@ -147,7 +147,7 @@ def test_pictures_of_documents_without_pages(m, tmp_path):
     their formatting, and say so."""
     refs = [text_ref(m, "mail", "Bill of lading", "mail", 12), text_ref(m, "letter", "BELLWETHER MARINE SYSTEMS", "letter", 20)]
     p = tmp_path / "rendered.md"
-    p.write_text("::q{#mail as=image highlight=yes}\n\n::q{#letter as=image}\n\n" + literate.format_refs(refs))
+    p.write_text("::q{#mail as=image highlight=yes}\n\n::q{#letter as=image}\n\n" + literate.format_refs(refs), encoding="utf-8", newline="\n")
     page = pages.Page(m, p)
     html_doc, results = pages.render(page)
     assert all(r.get("status") == "exact" for r in results if "id" in r)
@@ -165,6 +165,6 @@ def test_pictures_of_documents_without_pages(m, tmp_path):
     pages.export(page, "docx", out)
     body = "\n".join(par.text for par in docx.Document(str(out)).paragraphs)
     assert body.count(pages.RENDERED_NOTE) == 2
-    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text())["quotations"]
+    prov = json.loads(out.with_name(out.name + ".provenance.json").read_text(encoding="utf-8"))["quotations"]
     assert {i["of"] for q in prov for i in q["images"]} == {"the text set as pages by adhocdocs"}
 

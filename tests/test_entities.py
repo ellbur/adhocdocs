@@ -16,7 +16,7 @@ from adhocdocs.matter import Matter
 
 USER = "user:owen"
 ROOT = Path(__file__).parent.parent
-CASES = json.loads((ROOT / "tests" / "entity_match_cases.json").read_text())["cases"]
+CASES = json.loads((ROOT / "tests" / "entity_match_cases.json").read_text(encoding="utf-8"))["cases"]
 
 CONTRACT = """MASTER SUPPLY AGREEMENT
 This Master Supply Agreement (the “Agreement”) is made as of November 3, 2025 between Harrowgate Fastener Supply Co., an Ohio corporation (“Seller”), and Bellwether Marine Systems, Inc., a Virginia corporation (“Buyer”).
@@ -180,7 +180,7 @@ def test_index_writes_files_for_the_viewer(m):
     ix.update()
     state = m.state
     layer = state.primary_layer(state.documents[m.doc])
-    side = json.loads((ix.dir / "texts" / (layer.text.removeprefix("sha256:") + ".json")).read_text())
+    side = json.loads((ix.dir / "texts" / (layer.text.removeprefix("sha256:") + ".json")).read_text(encoding="utf-8"))
     assert any(d["form"] == "Seller" for d in side["detections"])
     cands = entities.candidates(m)
     assert cands["identifier:INV-2026-0347"]["docs"] == 2               # both spellings, both documents

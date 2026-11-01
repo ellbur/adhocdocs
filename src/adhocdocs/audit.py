@@ -31,7 +31,6 @@ happened. What it does show is that nothing Claude Code ran is missing, and
 that nothing written was changed from inside the session.
 """
 
-import fcntl
 import hashlib
 import json
 import os
@@ -40,6 +39,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from .matter import Matter, new_event_id, now
+from .portable import locked
 
 PREVIEW = 2000          # characters of a tool result kept in the log line itself
 HOOK_EVENTS = {"SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
@@ -64,8 +64,7 @@ class AuditLog:
 
     def append(self, **event) -> dict:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with open(self.path, "a+b") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+        with open(self.path, "a+b") as f, locked(f):
             event = {"id": new_event_id(), "at": now(), **event, "prev": self._last_hash(f)}
             f.write(json.dumps(event, ensure_ascii=False).encode() + b"\n")
             f.flush()

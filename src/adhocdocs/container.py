@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -43,6 +42,7 @@ from pathlib import Path
 from . import proxy
 from .audit import AuditLog, audit_dir
 from .matter import Matter, new_event_id
+from .portable import runtime_dir, spawn, stop
 
 IMAGE = "localhost/adhocdocs:latest"
 REPO = Path(__file__).resolve().parents[2]
@@ -79,7 +79,7 @@ class ContainerError(Exception):
 def podman(*args, capture=True, check=True) -> str:
     if not shutil.which("podman"):
         raise ContainerError("podman is not installed")
-    r = subprocess.run(["podman", *args], capture_output=capture, text=True)
+    r = subprocess.run(["podman", *args], capture_output=capture, text=True, encoding="utf-8")
     if check and r.returncode:
         raise ContainerError(f"podman {' '.join(args[:3])}…: {(r.stderr or '').strip()}")
     return (r.stdout or "").strip()
@@ -92,14 +92,13 @@ def slug(m: Matter) -> str:
 
 def run_dir(m: Matter) -> Path:
     """Where this matter's sockets live on the host, mounted at /run/adhoc."""
-    base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/adhocdocs-{os.getuid()}")
-    return base / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16]
+    return runtime_dir() / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16]
 
 
 # -- the image -----------------------------------------------------------------------------
 
 def image_id() -> str | None:
-    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True)
+    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True, encoding="utf-8")
     return r.stdout.strip() or None
 
 
@@ -152,11 +151,6 @@ def wait_for(path: Path, seconds=10) -> bool:
     return False
 
 
-def _service(args, log: Path) -> subprocess.Popen:
-    out = open(log, "a")
-    return subprocess.Popen(args, stdout=out, stderr=out, stdin=subprocess.DEVNULL, start_new_session=True)
-
-
 def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     if not image_exists():
         print("Building the session image (first run; this takes a few minutes)…", file=sys.stderr)
@@ -180,16 +174,16 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     code = None
     try:
         # Everything the session can reach, on sockets in one directory.
-        started.append(_service(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
+        started.append(spawn(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
                                       "--audit", str(audit.root), "--session", session], m.root / "run" / "proxy.log"))
-        started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
                                       "--socket", str(sockets / "annotations.sock")], m.root / "run" / "ann-api.log"))
-        started.append(_service(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
                                       "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
                                 m.root / "run" / "audit-api.log"))
         if viewer:
             from .view import viewer_binary
-            started.append(_service([viewer_binary(), "--matter", str(m.root), "--user", user,
+            started.append(spawn([viewer_binary(), "--matter", str(m.root), "--user", user,
                                      "--socket", str(sockets / "viewer.sock"),
                                      "--annotate", f"{sys.executable} -m adhocdocs.cli adhoc"], m.root / "run" / "viewer.log"))
         for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
@@ -207,10 +201,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     finally:
         audit.append(session=session, source="launcher", kind="session-end", exit=code)
         for p in started:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            stop(p)
         shutil.rmtree(sockets, ignore_errors=True)
 
 
@@ -219,7 +210,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
 def _mounts() -> dict:
     out = {}
     try:
-        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
             f = line.split()
             point, opts = f[4], f[5]
             if point.startswith("/matter") or point in ("/home/adhoc/.claude", "/run/adhoc", "/run/adhoc-audit"):

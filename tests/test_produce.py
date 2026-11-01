@@ -36,7 +36,7 @@ def test_production(m, tmp_path):
     p = make_list(m, tmp_path, ["INV-2026-0347.pdf", "2026-03-06_INV-2026-0347_reminder.eml", "demand-letter-2026-03-25.pdf"])
     r = produce.produce(m, p, "vol001", "HFS", legend="CONFIDENTIAL")
     out = Path(r["path"])
-    recs = [json.loads(l) for l in (out / "production.jsonl").read_text().splitlines()][1:]
+    recs = [json.loads(l) for l in (out / "production.jsonl").read_text(encoding="utf-8").splitlines()][1:]
     names = [m.objects.get_object(m.state.metadata[x["doc"]])["name"] for x in recs]
     assert names == ["2026-03-06_INV-2026-0347_reminder.eml", "INV-2026-0347.pdf", "demand-letter-2026-03-25.pdf"]
     assert recs[0]["begin"] == "HFS000001" and recs[0]["page_map"] is None          # email rendered from text
@@ -47,7 +47,7 @@ def test_production(m, tmp_path):
     assert "HFS" in pdf[1].get_text() and "CONFIDENTIAL" in pdf[1].get_text()
     dat = (out / "vol001.dat").read_text(encoding="utf-8").splitlines()
     assert len(dat) == 4 and "þBEGBATESþ" in dat[0]
-    assert len((out / "vol001.opt").read_text().splitlines()) == r["pages"]
+    assert len((out / "vol001.opt").read_text(encoding="utf-8").splitlines()) == r["pages"]
     with pytest.raises(produce.ProductionError, match="already used"):
         produce.produce(m, p, "vol002", "HFS")
 
@@ -63,7 +63,7 @@ def test_bates_resolution_and_citation(m, tmp_path):
     # a page citing the produced pages gets Bates numbers
     doc = named(m, "demand-letter-2026-03-25.pdf")[0]
     page = tmp_path / "p.md"
-    page.write_text(":cite{#d}\n\n" + literate.format_refs([{"id": "d", "doc": doc, "select": {"page": [1, 2]}}]))
+    page.write_text(":cite{#d}\n\n" + literate.format_refs([{"id": "d", "doc": doc, "select": {"page": [1, 2]}}]), encoding="utf-8", newline="\n")
     assert "HFS000124–25" in pages.render(pages.Page(m, page))[0]
 
 
@@ -91,7 +91,7 @@ def test_withhold_redact_and_privilege_log(m, tmp_path):
                                 "2026-03-06_INV-2026-0347_reminder.eml"])
     r = produce.produce(Matter(m.root), p, "vol001", "HFS")
     out = Path(r["path"])
-    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text().splitlines()[1:])}
+    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text(encoding="utf-8").splitlines()[1:])}
 
     slip = pymupdf.open(out / recs[memo]["file"])
     assert slip.page_count == 1 and "withheld" in slip[0].get_text() and "MEMORANDUM" not in slip[0].get_text()
@@ -100,12 +100,12 @@ def test_withhold_redact_and_privilege_log(m, tmp_path):
     email_text = "".join(pg.get_text() for pg in pymupdf.open(out / recs[email]["file"]))
     assert "friendly reminder" not in email_text and "[REDACTED – Privilege]" in email_text
 
-    log = [json.loads(l) for l in (out / "privlog.jsonl").read_text().splitlines()]
+    log = [json.loads(l) for l in (out / "privlog.jsonl").read_text(encoding="utf-8").splitlines()]
     by = {row["treatment"]: row for row in log}
     assert len(log) == 3 and by["withheld"]["privilege"] == "privileged"
     assert "Attorney-client" in by["withheld"]["basis"] and "counsel's request" in by["withheld"]["basis"]
     assert {row["privilege"] for row in log if row["treatment"] == "redacted"} == {"privilege"}
-    assert (out / "privlog.csv").read_text().startswith("bates,date,author")
+    assert (out / "privlog.csv").read_text(encoding="utf-8").startswith("bates,date,author")
 
 
 def test_unplaceable_redaction_stops_production(m, tmp_path):
@@ -144,12 +144,12 @@ def test_privilege_calls_are_a_persons_and_claude_flags(m, tmp_path):
                                 "2026-03-06_INV-2026-0347_reminder.eml"])
     r = produce.produce(Matter(m.root), p, "vol001", "HFS")
     out = Path(r["path"])
-    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text().splitlines()[1:])}
+    recs = {x["doc"]: x for x in map(json.loads, (out / "production.jsonl").read_text(encoding="utf-8").splitlines()[1:])}
     assert recs[memo].get("withheld") == "privileged"
     assert "withheld" not in recs[letter] and "withheld" not in recs[email]
-    assert [row["bates"] for row in map(json.loads, (out / "privlog.jsonl").read_text().splitlines())] == [recs[memo]["begin"]]
+    assert [row["bates"] for row in map(json.loads, (out / "privlog.jsonl").read_text(encoding="utf-8").splitlines())] == [recs[memo]["begin"]]
 
-    check = {row["bates"].split("–")[0]: row for row in map(json.loads, (out / "privilege-check.jsonl").read_text().splitlines())}
+    check = {row["bates"].split("–")[0]: row for row in map(json.loads, (out / "privilege-check.jsonl").read_text(encoding="utf-8").splitlines())}
     assert check[recs[memo]["begin"]]["status"] == "withheld (privileged)"
     assert check[recs[memo]["begin"]]["basis"] == "Collection strategy prepared for counsel"
     assert check[recs[email]["begin"]]["status"] == "open: produced"
