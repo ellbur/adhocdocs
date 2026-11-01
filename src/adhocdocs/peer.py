@@ -162,7 +162,8 @@ def _small_object(store: ObjectStore, h: str) -> bytes | None:
 
 
 def closure(store: ObjectStore, hashes) -> list[str]:
-    """``hashes`` and everything they name, as far as ``store`` has them."""
+    """``hashes`` and everything they name, as far as ``store`` has them
+    (a purged object isn't there, and isn't sent)."""
     out, todo = [], list(hashes)
     seen = set()
     while todo:
@@ -170,6 +171,8 @@ def closure(store: ObjectStore, hashes) -> list[str]:
         if h in seen or not HASH_RE.fullmatch(h):
             continue
         seen.add(h)
+        if not store.has(h):
+            continue
         out.append(h)
         data = _small_object(store, h)
         if data:
@@ -178,6 +181,16 @@ def closure(store: ObjectStore, hashes) -> list[str]:
 
 
 # -- writing what arrives ------------------------------------------------------------------------
+
+
+def _purging(events, pool) -> set:
+    """Objects that purges among these events delete: not to be fetched."""
+    out = set()
+    for ev in events:
+        if ev.get("op") == "purge" and str(ev.get("author", "")).startswith("user:") \
+                and (pool is None or pool.writes_for(ev.get("origin"), ev["author"])):
+            out |= {h for h in ev.get("objects", []) if isinstance(h, str)}
+    return out
 
 
 def store_only(m: Matter) -> ObjectStore:
@@ -214,14 +227,20 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
     if key is None:
         raise SyncError(f"{origin} isn't a member of this matter's pool")
     store = store_only(m)
-    missing = [h for ev in events for h in direct_refs(feed, ev) if not store.has(h)]
+    from . import purge
+    gone = (purge.purged_objects(m) | _purging([{**ev, "origin": origin} for ev in events], pool)
+            if feed == "store" else set())
+    missing = [h for ev in events for h in direct_refs(feed, ev) if not store.has(h) and h not in gone]
     if missing:
         raise SyncError(f"objects missing for {feed}/{origin}: {missing[:3]}")
     log = feed_of(m, feed).log_for(origin)
     log.path.parent.mkdir(parents=True, exist_ok=True)
     gone = pool.members.get(origin)
     limit = gone["upto_feeds"].get(feed) if gone and not gone["active"] and gone.get("upto_feeds") else None
+    from .matter import same_file
     with open(log.path, "a", encoding="utf-8", newline="\n") as f, locked(f):
+        if not same_file(f, log.path):
+            raise SyncError(f"{feed}/{origin}: the log was being rewritten; try again")
         have = log.count()
         if have != start:
             if have > start:        # the events (or some) arrived meanwhile: keep the rest
@@ -237,7 +256,13 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
             if not events:
                 raise SyncError(f"{feed}/{origin}: written after the installation was removed")
         last = log.last_event()
-        check_chain(last, events, key, f"{feed}/{origin}")
+        red = purge.redactions(m) | {h for ev in events if ev.get("op") == "purge" for h in ev.get("redact", [])} \
+            if feed in ("store", "annotations") else set()
+        check_chain(last, events, key, f"{feed}/{origin}", red)
+        if feed == "annotations" and red:
+            # redacted already here: an event that arrives late is kept as its tombstone
+            from .signing import event_hash, is_tombstone, tombstone
+            events = [tombstone(ev, "late") if not is_tombstone(ev) and event_hash(ev) in red else ev for ev in events]
         if feed == "pool":
             # membership is replayed by ID: an origin's IDs must only go up
             prev = last["id"] if last else ""
@@ -263,7 +288,7 @@ def read_events(m: Matter, feed: str, origin: str, start: int, limit: int) -> li
 def after_arrival(m: Matter, feeds):
     """Re-derive what depends on arrived events (adhocdocs.sync.refresh)."""
     from . import sync
-    if set(feeds) & {"annotations", "work", "pool"}:
+    if set(feeds) & {"annotations", "work", "pool", "store"}:
         sync.refresh(Matter(m.root))
 
 
@@ -617,6 +642,10 @@ class _Handler(BaseHTTPRequestHandler):
                         self.wfile.write(block)
                 return
             if cmd == "PUT":
+                from . import purge
+                if h in purge.purged_objects(m):
+                    self.close_connection = True
+                    return self._json(410, {"error": "purged from this matter"})
                 n = int(self.headers.get("Content-Length", 0))
                 got = store.put_stream(_Limited(self.rfile, n))
                 if got != h:
@@ -764,12 +793,15 @@ def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: 
         key = known_key(m, origin, pool, events)
         if key is None:
             raise SyncError(f"{origin} isn't a member of this matter's pool")
-        check_chain(feed_of(m, feed).log_for(origin).last_event(), events, key, f"{feed}/{origin}")
+        from . import purge
+        red = purge.redactions(m) | {h for ev in events if ev.get("op") == "purge" for h in ev.get("redact", [])}
+        check_chain(feed_of(m, feed).log_for(origin).last_event(), events, key, f"{feed}/{origin}", red)
+        gone = purge.purged_objects(m) | _purging([{**ev, "origin": origin} for ev in events], pool)
         need = [h for ev in events for h in direct_refs(feed, ev)]
         seen = set()
         while need:
             h = need.pop()
-            if h in seen:
+            if h in seen or h in gone:
                 continue
             seen.add(h)
             if not store.has(h):

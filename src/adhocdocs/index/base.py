@@ -147,7 +147,12 @@ class Index:
         with self.db:
             state = self.m.state
             for ev in batch:
-                if still_true(ev, state):
+                if ev["op"] == "purge":         # each document, as if withdrawn
+                    for d in ev.get("docs") or []:
+                        w = {**ev, "op": "withdraw", "doc": d}
+                        if still_true(w, state):
+                            self.apply(w)
+                elif still_true(ev, state):
                     self.apply(ev)
                 cursor[ev["log"]] = ev["id"]
             self._set_cursor(cursor)

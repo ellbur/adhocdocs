@@ -307,11 +307,23 @@ class Feed:
         key = self.identity.key
         path = self.dir / f"{origin}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8", newline="\n") as f, locked(f):
-            ev = {"id": new_event_id(after=self.last_id()), "at": now(), **event}
-            ev = sign(ev, key, EventLog(path).last_event())
-            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        while True:
+            with open(path, "a", encoding="utf-8", newline="\n") as f, locked(f):
+                if not same_file(f, path):
+                    continue                # replaced while we waited (a purge's redaction): open it again
+                ev = {"id": new_event_id(after=self.last_id()), "at": now(), **event}
+                ev = sign(ev, key, EventLog(path).last_event())
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+                break
         return {**ev, "feed": self.name, "log": f"{self.name}/{origin}", "origin": origin}
+
+
+def same_file(f, path) -> bool:
+    """Whether the open file ``f`` is still what ``path`` names."""
+    try:
+        return os.path.samestat(os.fstat(f.fileno()), os.stat(path))
+    except FileNotFoundError:
+        return False
 
 
 class MatterNotFound(Exception):
@@ -489,6 +501,7 @@ class State:
     metadata: dict = field(default_factory=dict)    # doc -> metadata object hash
     children: dict = field(default_factory=dict)    # doc -> [child docs]
     by_content: dict = field(default_factory=dict)  # content -> [docs]
+    purged: set = field(default_factory=set)        # docs purged: gone for good (adhocdocs.purge)
 
     @classmethod
     def replay(cls, events) -> "State":
@@ -502,7 +515,8 @@ class State:
         if op == "add-document":
             new = ev["doc"] not in self.documents
             self.documents[ev["doc"]] = ev["content"]
-            self.withdrawn.pop(ev["doc"], None)
+            if ev["doc"] not in self.purged:            # ingesting it again doesn't bring it back
+                self.withdrawn.pop(ev["doc"], None)
             if new:     # the same document ingested on two installations is one document
                 self.by_content.setdefault(ev["content"], []).append(ev["doc"])
                 if ev.get("parent"):
@@ -521,6 +535,10 @@ class State:
             self.withdrawn[ev["old"]] = "superseded"
         elif op == "withdraw":
             self.withdrawn[ev["doc"]] = ev.get("reason", "")
+        elif op == "purge" and str(ev.get("author", "")).startswith("user:"):
+            for d in ev.get("docs") or []:
+                self.purged.add(d)
+                self.withdrawn[d] = "purged"
 
     def live_documents(self) -> list[str]:
         return [d for d in self.documents if d not in self.withdrawn]

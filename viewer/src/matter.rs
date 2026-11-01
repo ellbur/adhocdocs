@@ -26,6 +26,7 @@ pub struct State {
     pub metadata: HashMap<String, String>,   // doc -> metadata object
     pub children: HashMap<String, Vec<String>>,
     pub parent: HashMap<String, String>,
+    pub purged: HashSet<String>,
 }
 
 pub struct Matter {
@@ -308,7 +309,9 @@ fn apply(s: &mut State, ev: &Value) {
                 s.order.push(doc.clone());
             }
             s.documents.insert(doc.clone(), str_("content"));
-            s.withdrawn.remove(&doc);
+            if !s.purged.contains(&doc) {
+                s.withdrawn.remove(&doc); // ingesting a purged document again doesn't bring it back
+            }
             let parent = str_("parent");
             // the same document ingested on two installations is one document
             if new && !parent.is_empty() {
@@ -335,6 +338,13 @@ fn apply(s: &mut State, ev: &Value) {
         }
         "withdraw" => {
             s.withdrawn.insert(str_("doc"));
+        }
+        // gone for good (adhocdocs.purge): its objects are deleted too
+        "purge" if str_("author").starts_with("user:") => {
+            for d in ev["docs"].as_array().into_iter().flatten().filter_map(|d| d.as_str()) {
+                s.purged.insert(d.to_string());
+                s.withdrawn.insert(d.to_string());
+            }
         }
         _ => {}
     }
@@ -374,6 +384,12 @@ mod tests {
         fs::write(dir.join("pool/cutoffs.json"), r#"{"v": 1, "feeds": {"store": {"o_C": 0}}}"#).unwrap();
         m.refresh();
         assert!(!m.live("x"));
+        // a purge, and the same document added again: still gone
+        fs::write(dir.join("pool/cutoffs.json"), "{}").unwrap();
+        fs::write(logs.join("o_D.jsonl"), r#"{"id": "ev_5", "op": "purge", "author": "user:a", "docs": ["y"]}"#.to_string() + "\n"
+            + &ev("ev_6", "add-document", "y")).unwrap();
+        m.refresh();
+        assert!(!m.live("y") && m.live("x"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

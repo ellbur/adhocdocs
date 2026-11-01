@@ -113,6 +113,16 @@ def adhoc(argv=None):
     s = sub.add_parser("retire", help="take published work out of work/ (the history stays)")
     s.add_argument("name")
     s.add_argument("--user", required=True)
+    s = sub.add_parser("purge", help="delete documents from the matter, here and on every installation (irreversible)",
+                       description=PURGE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    s.add_argument("docs", nargs="+", help="document IDs (or doc: locators)")
+    s.add_argument("--user", required=True)
+    s.add_argument("--reason", required=True, help='e.g. "clawback: produced in error"')
+    s.add_argument("--with-duplicates", action="store_true", help="also the documents that share their original")
+    s.add_argument("--yes", action="store_true", help="don't ask first")
+    s = sub.add_parser("purges", help="purges this installation has carried out, and what they leave for you to do")
+    s.add_argument("--ack", metavar="PURGE", help="mark a purge's notice as dealt with")
+    s.add_argument("--user")
     s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)",
                        description=SYNC_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     ss = s.add_subparsers(dest="action", required=True)
@@ -252,6 +262,26 @@ def adhoc(argv=None):
             out(report)
             if not report["ok"]:
                 sys.exit(1)
+    elif a.cmd == "purge":
+        from . import purge
+        docs = [locators.parse("doc:" + d.removeprefix("doc:"), m.objects)["doc"] for d in a.docs]
+        p = purge.plan(m, docs, a.with_duplicates)
+        if not a.yes:
+            print(f"This deletes {len(p['docs'])} document(s) (with attachments), {len(p['objects'])} stored "
+                  f"object(s), and redacts {len(p['redact'])} tag/note event(s), on this installation and every "
+                  "installation of the matter. It can't be undone. Type PURGE to go on: ", end="", file=sys.stderr)
+            if input().strip() != "PURGE":
+                raise ValueError("not purged")
+        out(purge.purge(m, f"user:{a.user}", docs, a.reason, a.with_duplicates))
+    elif a.cmd == "purges":
+        from . import purge
+        if a.ack:
+            if not a.user:
+                raise ValueError("--ack needs --user")
+            out(purge.acknowledge(m, a.ack, f"user:{a.user}"))
+        else:
+            for n in purge.notices(m):
+                out(n)
     elif a.cmd in ("publish", "retire"):
         from . import work
         if a.cmd == "publish":
@@ -274,6 +304,21 @@ def adhoc(argv=None):
             annapi.serve(m, path)
         except KeyboardInterrupt:
             pass
+
+
+PURGE_HELP = """\
+Delete documents from the matter for good: a clawback, or destruction under
+a protective order. On this installation, and on every installation of the
+matter (and the hub) as they sync: originals, text, metadata, the
+documents' attachments, layers made from them, index entries, and the tags
+and notes on them (their events are redacted). A record of the purge stays:
+who, when, why, which document IDs.
+
+What adhocdocs doesn't track it can't purge: the workspace (drafts, exports,
+productions), Claude's transcripts, copies made elsewhere. Every
+installation gets a notice listing what it found there (adhoc purges).
+
+Only a person can purge, on the host."""
 
 
 SYNC_HELP = """\

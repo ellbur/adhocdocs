@@ -230,8 +230,15 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
     (m.root / "work").mkdir(exist_ok=True)
     (m.root / "pool").mkdir(exist_ok=True)
-    from . import annotations
+    from . import annotations, purge
     annotations.hotkeys(m)          # this installation's own, written before the session can only read them
+    purge.enforce(m)
+    for n in purge.pending(m):
+        print(f"Documents were purged from this matter ({n['reason']}, by {n['by']}, {n['at'][:10]}): "
+              f"{len(n['documents'])} document(s)."
+              + (f" Workspace files that mention them: {', '.join(n['workspace_files'][:8])}"
+                 f"{'…' if len(n['workspace_files']) > 8 else ''}." if n["workspace_files"] else "")
+              + f" {n['steps']} When done: adhoc purges --ack {n['purge']} --user <you>", file=sys.stderr)
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)
@@ -347,7 +354,20 @@ def status() -> dict:
         "annotation_api": "running" if _socket_ok(os.environ.get("ADHOC_ANN_SOCKET", "")) else "not running",
         "audit_api": "running" if _socket_ok(os.environ.get("ADHOC_AUDIT_SOCKET", "")) else "not running",
         "sync": _sync_status(Path("/matter/pool/logs")),
+        "purges": _purges(Path("/matter/pool/purges.json")),
     }
+
+
+def _purges(path: Path) -> list:
+    """Purges carried out on this matter, and whether the user has dealt with
+    what they leave in the workspace. Claude can help find and delete those
+    files, when the user asks."""
+    try:
+        import json
+        return [{k: n.get(k) for k in ("purge", "at", "by", "reason", "workspace_files", "published_work",
+                                       "acknowledged")} for n in json.loads(path.read_text(encoding="utf-8"))]
+    except (FileNotFoundError, ValueError):
+        return []
 
 
 def _sync_status(logs: Path) -> dict:

@@ -128,6 +128,8 @@ class Annotations:
         (when someone should look) and ``replaced`` (what the event
         replays as, for the viewer: see :func:`save_replay`)."""
         self.last_id = ev["id"]
+        if ev.get("op") == "redacted":
+            return          # a purge removed what it said (adhocdocs.purge)
         try:
             if self.pool is not None and not self.pool.writes_for(ev.get("origin"), ev.get("author")):
                 raise Refused(f"{ev.get('author')} doesn't write from that installation ({ev.get('origin')}); "

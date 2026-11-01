@@ -39,7 +39,24 @@ def canonical(ev: dict) -> bytes:
 
 
 def event_hash(ev: dict | None) -> str | None:
-    return None if ev is None else "sha256:" + hashlib.sha256(canonical(ev)).hexdigest()
+    """An event's hash, which the next event in its log names. A tombstone
+    (an event redacted by a purge: adhocdocs.purge) keeps the hash of the
+    event it replaced, so the chain still holds."""
+    if ev is None:
+        return None
+    if is_tombstone(ev):
+        return ev["redacted"]
+    return "sha256:" + hashlib.sha256(canonical(ev)).hexdigest()
+
+
+def is_tombstone(ev: dict) -> bool:
+    return ev.get("op") == "redacted" and isinstance(ev.get("redacted"), str)
+
+
+def tombstone(ev: dict, purge: str) -> dict:
+    """What a redacted event becomes: its ID (for cursors), its hash (for the
+    chain), and the purge that redacted it. Nothing it said."""
+    return {"id": ev["id"], "op": "redacted", "redacted": event_hash(ev), "purge": purge}
 
 
 def b64(data: bytes) -> str:
@@ -70,11 +87,20 @@ def verify(ev: dict, public: Ed25519PublicKey) -> bool:
         return False
 
 
-def check_chain(last: dict | None, events: list[dict], public: Ed25519PublicKey, where: str = "log"):
+def check_chain(last: dict | None, events: list[dict], public: Ed25519PublicKey, where: str = "log",
+                redacted=frozenset()):
     """Check events that would follow ``last`` in an origin's log: each signed
-    by the origin, each naming the one before. Raises BadLog."""
+    by the origin, each naming the one before. A tombstone stands in for an
+    event a purge redacted, if ``redacted`` (the hashes purges authorize)
+    has its hash; its signature went with what it said, and the next event
+    still names its hash. Raises BadLog."""
     prev = last
     for i, ev in enumerate(events):
+        if is_tombstone(ev):
+            if ev["redacted"] not in redacted:
+                raise BadLog(f"{where}: event {ev.get('id')} is redacted, but no purge here says so")
+            prev = ev
+            continue
         if not verify(ev, public):
             raise BadLog(f"{where}: event {ev.get('id')} isn't signed by its origin")
         if ev.get("prev") != event_hash(prev):

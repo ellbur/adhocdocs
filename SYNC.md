@@ -331,6 +331,40 @@ numbers back.
 - In a session, Claude reserves through the annotation API, which syncs
   with the hub on the host.
 
+### Purging documents
+
+Sometimes documents must go for good: clawed back after a production made
+in error, or destroyed under a protective order when the case ends
+([`purge.py`](src/adhocdocs/purge.py)). `adhoc purge <doc> --user me
+--reason "…"` (a person, on the host; never Claude) records a signed
+`purge` event, and every installation that has it, the hub included:
+
+- deletes the documents' objects: originals, text layers and their parts,
+  metadata, layers made from them in the workspace, for each document and
+  its attachments (what a live document still uses stays);
+- redacts the annotation events that name them, since tags and notes can
+  hold quoted words. Each becomes a **tombstone** keeping only its ID and
+  hash, so signed logs still check; a tombstone is accepted only where a
+  purge authorizes its hash;
+- treats them as gone for good: out of the state, the indexes and the
+  viewer; ingesting the same file again doesn't bring them back; sync never
+  fetches, sends or accepts their objects again, and an event naming them
+  that arrives late is kept as its tombstone.
+
+A record stays: who purged, when, why, and which document IDs.
+
+**What a purge can't reach** is what the matter doesn't track: the
+workspace (drafts, exports, productions), Claude's transcripts in
+`claude-home`, copies made elsewhere. Each installation gets a notice
+(`adhoc purges`, shown when a session opens, and to Claude in `adhoc
+status`) listing the workspace files and published work that mention the
+documents, and what else to check. `adhoc purges --ack <purge> --user me`
+marks it dealt with.
+
+A document whose original another live document shares (the same file
+from another custodian) can't be purged alone; `--with-duplicates` purges
+them all.
+
 ### Isolation (Principle 2)
 
 Syncing decides who has the matter's documents, so it is an isolation
@@ -441,6 +475,8 @@ On the host (the user's; Claude can't run them in a session):
 | `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |
 | `adhoc sync remove <origin> --user me` | take a member out of the pool |
 | `adhoc sync vouch <origin> --user me` | that member writes for me too (my other machine) |
+| `adhoc purge <doc> --user me --reason "…"` | delete documents everywhere, for good |
+| `adhoc purges [--ack <purge> --user me]` | purges carried out here, and what they leave to do |
 | `adhoc publish <path> --user me`, `adhoc retire <name> --user me` | share work product as the user |
 | `adhoc hub init \| enroll \| revoke \| serve \| matters` | run a hub |
 
@@ -464,12 +500,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 
 ## Open questions
 
-- **Clawback and destruction.** Append-only logs and replicated objects
-  make deletion hard, but the law sometimes requires it: clawing back a
-  privileged document produced by mistake, or destroying documents under a
-  protective order when the case ends. A `purge` event, honored by every
-  member, would delete the objects and blank the content of events that
-  name them, keeping a record that it happened.
 - **A hub that can't read the documents.** Encrypting what the hub stores,
   with keys only members hold, as Syncthing's "untrusted devices" do. It
   costs the hub any server-side features later. Not in the first version.
@@ -482,8 +512,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
   against their settings like any index.
 - **The audit log.** Should a hub collect members' audit logs, for a firm
   that wants one record of every session on a matter?
-- **Who can remove whom.** Any member, or only certain people (the matter's
-  owner, the hub's administrator)?
 
 ## Decided
 
@@ -496,3 +524,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 - Keyboard shortcuts (tag hotkeys) aren't synced.
 - Bates and exhibit numbers are reserved, and the reservation synced, before
   a production or exhibit set uses them.
+- Documents can be purged everywhere, by a person; what's in the workspace
+  and transcripts is left to each installation's user, with a notice.
+- Any member can remove any other, for now.
