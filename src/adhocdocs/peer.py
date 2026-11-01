@@ -28,6 +28,8 @@ Routes, under ``/v1/<matter ID>.<founder>/``:
 ``POST join``                         ``{"secret", "cert", "name"}``: an invitation
                                       used (:mod:`adhocdocs.invite`)
 ``POST invites``                      a member leaves an invitation here (a hub)
+``GET wait?seen=F``                   answers when the logs' fingerprint isn't
+                                      ``F`` any more (a long poll: adhocdocs.watch)
 ====================================  ===========================================
 
 A hub (:mod:`adhocdocs.hub`) also answers ``POST /hub/v1/adopt``, under SNI
@@ -535,6 +537,13 @@ class _Handler(BaseHTTPRequestHandler):
         if segs == ["invites"] and cmd == "POST":
             from . import invite
             return self._json(200, invite.register(m, json.loads(body), who))
+        if segs == ["wait"] and cmd == "GET":
+            # a long poll: answers when this matter's logs change (adhocdocs.watch)
+            from .watch import wait_for_change
+            timeout = min(float(q.get("timeout", ["50"])[0]), 120)
+            seen = q.get("seen", [None])[0]
+            fp = wait_for_change(m, seen, timeout) if seen else wait_for_change(m, None, 0)
+            return self._json(200, {"fingerprint": fp})
         if segs == ["vector"] and cmd == "GET":
             return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m)})
         if len(segs) == 3 and segs[0] == "events" and segs[1] in FEEDS:

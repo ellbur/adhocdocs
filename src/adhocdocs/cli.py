@@ -139,7 +139,10 @@ def adhoc(argv=None):
     x.add_argument("--advertise", action="append", default=[],
                    help="host:port the others should use to reach this one, recorded in the pool; repeatable")
     x.add_argument("--user", help="who is advertising the address (needed with --advertise)")
-    x.add_argument("--every", type=float, default=0, help="also sync with every member every N minutes")
+    x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
+    x.add_argument("--no-watch", action="store_true", help="only serve: don't sync as things change")
+    x = ss.add_parser("watch", help="sync as things change, here or on the members it can reach (runs until stopped)")
+    x.add_argument("--every", type=float, default=5, help="sync with every member at least every N minutes (default 5)")
     ss.add_parser("now", help="sync with every member that says where it listens")
     x = ss.add_parser("push", help="put this matter on a hub (with a code from its administrator), then sync")
     x.add_argument("code", help="the hub code from adhoc hub enroll")
@@ -323,20 +326,17 @@ def _sync(m, a):
         srv = peer.Server([m], host, port)
         print(json.dumps({"serving": m.id, "origin": m.origin, "listen": f"{host}:{srv.address[1]}"}),
               file=sys.stderr, flush=True)
-        if a.every:
+        if not a.no_watch:
             import threading
-            import time
-
-            def loop():
-                while True:
-                    time.sleep(a.every * 60)
-                    for row in peer.sync_all(Matter(m.root)):
-                        out(row)
-            threading.Thread(target=loop, daemon=True).start()
+            from . import watch
+            threading.Thread(target=watch.run, args=(m, a.every * 60), daemon=True).start()
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
             pass
+    elif a.action == "watch":
+        from . import watch
+        sys.exit(watch.run(m, a.every * 60))
 
 
 HUB_HELP = """\

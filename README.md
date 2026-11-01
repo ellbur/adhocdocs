@@ -214,9 +214,12 @@ uv run adhoc --matter ~/matters/demo sync serve --listen 0.0.0.0:7480
 # on theirs: join into a new directory
 uv run adhoc sync join <code> ~/matters/demo --name "Dana's desktop"
 
-# later, on either
+# later, on either: once, or keep in step as things change
 uv run adhoc --matter ~/matters/demo sync now
+uv run adhoc --matter ~/matters/demo sync watch
 ```
+
+While a session is open (`adhoc open`), it keeps in step on its own.
 
 With a hub (an always-on server: `adhoc hub --help`), push the matter to it
 once with `adhoc sync push <code>`. Invitations then go through the hub, and

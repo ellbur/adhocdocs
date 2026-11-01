@@ -377,11 +377,19 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
 - **Relaying:** when two members can't reach each other, they don't need
   to; the logs reach each one through anyone they can reach (usually the
   hub).
-- **When:** `adhoc sync now` syncs with every member that says where it
-  listens; `adhoc sync serve --every N` also does so every N minutes. The
-  viewer refreshes from the feeds, and Claude sees new events through
-  `idx changes` and `ann log --since`. *Not built yet:* syncing as soon as a
-  log changes.
+- **As soon as something changes** ([`watch.py`](src/adhocdocs/watch.py)).
+  A watcher runs beside the matter on the host: `adhoc open` starts one
+  when the matter has a pool, `adhoc sync serve` runs one, and `adhoc sync
+  watch` runs one alone (for a laptop that doesn't listen). When this
+  installation's logs grow, from work here or from events another member
+  sent, it syncs with every member that says where it listens; passing on
+  what it received is what carries changes between members that can't
+  reach each other. And it keeps a long poll open to each member it can
+  reach, which answers when that member's logs change, so a laptop hears of
+  others' changes within a second or two, usually from the hub. Every five
+  minutes it syncs with everyone anyway. `adhoc sync now` syncs once.
+  The viewer refreshes from the feeds, and Claude sees new events through
+  `idx changes` and `ann log --since`.
 
 *Why not Syncthing itself?* The single-writer logs and immutable objects
 would sync fine as Syncthing folders. But Syncthing doesn't know which
@@ -398,7 +406,8 @@ On the host (the user's; Claude can't run them in a session):
 |---|---|
 | `adhoc sync invite --user me [--address host:port]` | an invitation code (founds the pool the first time) |
 | `adhoc sync join <code> <dir>` | join with it, into a new matter directory, and sync |
-| `adhoc sync serve [--listen …] [--advertise host:port --user me] [--every N]` | be reachable by the other members |
+| `adhoc sync serve [--listen …] [--advertise host:port --user me]` | be reachable by the other members (and sync as things change) |
+| `adhoc sync watch` | sync as things change, without listening (a laptop) |
 | `adhoc sync now` | sync with every member that says where it listens |
 | `adhoc sync push <hub code> --user me` | put the matter on a hub |
 | `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |

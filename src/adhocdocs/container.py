@@ -262,6 +262,12 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
                                       "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
                                 m.root / "run" / "audit-api.log"))
+        from . import pool as poolmod
+        if poolmod.founded(m) and not os.environ.get("ADHOC_NO_SYNC"):
+            # keep in step with the matter's other installations while working (adhocdocs.watch);
+            # a watcher already running for this matter keeps it, and this one exits
+            started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "sync", "watch"],
+                                 m.root / "run" / "sync.log"))
         if viewer:
             from .view import annotate_command, viewer_binary
             started.append(spawn([viewer_binary(), "--matter", str(m.root), "--user", user,
