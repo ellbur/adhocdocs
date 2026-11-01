@@ -65,6 +65,7 @@ ATTACH_FILENAME = 0x3704
 ATTACH_METHOD = 0x3705
 ATTACH_LONG_FILENAME = 0x3707
 ATTACH_MIME_TAG = 0x370E
+ATTACH_CONTENT_ID = 0x3712
 SMTP_ADDRESS = 0x39FE
 INTERNET_CPID = 0x3FDE
 MESSAGE_CODEPAGE = 0x3FFD
@@ -441,7 +442,9 @@ def to_eml(msg: Message, source: str, depth: int = 0) -> bytes:
             maintype, _, subtype = mime.strip().lower().partition("/")
             if not subtype or maintype in ("multipart", "message"):
                 maintype, subtype = "application", "octet-stream"
-            m.add_attachment(a.data, maintype=maintype, subtype=subtype, filename=name or f"attachment-{i}")
+            cid = ap.get(ATTACH_CONTENT_ID)
+            cid = f"<{cid.strip().strip('<>')}>" if isinstance(cid, str) and cid.strip() else None
+            m.add_attachment(a.data, maintype=maintype, subtype=subtype, filename=name or f"attachment-{i}", cid=cid)
     _fix_boundaries(m)
     m["X-Adhoc-Converted-From"] = source
     for a in msg.attachments:

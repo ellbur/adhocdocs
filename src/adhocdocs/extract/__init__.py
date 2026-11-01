@@ -111,6 +111,18 @@ def _raised_spans(line: str, pos: int, raised: list) -> str:
     return "".join(out)
 
 
+def _image(seg: dict) -> str:
+    """An inline image (an ``image`` segment), shown from the image's own
+    document, or a figure saying it isn't in the message. What it says is
+    CSS (``data-cid``), so it isn't taken for the document's text."""
+    cid = html.escape(seg["cid"])
+    if not seg.get("content"):
+        return f'<figure class="adhoc-inline-image missing" data-cid="{cid}"></figure>'
+    src = html.escape(seg["content"])
+    return (f'<figure class="adhoc-inline-image" data-cid="{cid}">'
+            f'<img src="/image/{src}" alt="inline image cid:{cid}"></figure>')
+
+
 def text_presentation(text: str, segments: list) -> str:
     """A plain HTML rendering of layer text, every line a span carrying its
     layer offset, for flow-mode display of content without pages."""
@@ -120,9 +132,14 @@ def text_presentation(text: str, segments: list) -> str:
             kinds_at.append(seg)
     raised = [(seg["start"], seg["end"]) for seg in segments if seg["kind"] in RAISED_KINDS]
     titles = {seg["start"]: seg["title"] for seg in segments if seg["kind"] in NOTE_KINDS and seg.get("title")}
+    images = [seg for seg in segments if seg["kind"] == "image"]
     out = ['<article class="adhoc-flow">']
     pos = 0
-    for line in text.split("\n"):
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        end = pos + len(line)
+        last = i == len(lines) - 1
+        out += [_image(s) for s in images if s["start"] == s["end"] == pos]
         classes = sorted({s["kind"] for s in kinds_at if s["start"] <= pos < s["end"] or (s["start"] == pos and s["end"] == pos)})
         cls = f' class="{" ".join(classes)}"' if classes else ""
         if pos in titles:     # shown by CSS (::before), so it isn't selected or quoted as the document's text
@@ -131,7 +148,11 @@ def text_presentation(text: str, segments: list) -> str:
             out.append(f"<p{cls}>{_raised_spans(line, pos, raised)}</p>")
         else:
             out.append(f"<p{cls}><br></p>")
-        pos += len(line) + 1
+        # a [cid:…] marker: the image goes after its line; one at the very end, last
+        out += [_image(s) for s in images if pos <= s["start"] <= end and s["start"] < s["end"]]
+        if last:
+            out += [_image(s) for s in images if s["start"] == s["end"] > pos]
+        pos = end + 1
     out.append("</article>")
     return "\n".join(out)
 
@@ -151,6 +172,11 @@ def _zip_kind(data) -> str:
     if "xl/workbook.xml" in names:
         return "xlsx"
     return "zip"
+
+
+# An image by its first bytes (an inline image often has no file name):
+# PNG, JPEG, GIF, TIFF (both byte orders)
+IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"II*\x00", b"MM\x00*")
 
 
 def kind_for(name: str | None, data: bytes, zip_kind=_zip_kind) -> str:
@@ -185,6 +211,8 @@ def kind_for(name: str | None, data: bytes, zip_kind=_zip_kind) -> str:
         return "xml"
     if n.endswith((".txt", ".text", ".md")):
         return "text"
+    if data.startswith(IMAGE_SIGNATURES):
+        return "image"
     head = data[:2000]
     if head.lstrip().lower().startswith((b"<!doctype html", b"<html")):
         return "html"

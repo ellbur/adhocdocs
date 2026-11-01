@@ -10,6 +10,7 @@
 //!   /api/overview              what the matter holds, for the landing page
 //!   /page/<doc>/<n>?w=…        a page image, rendered by MuPDF
 //!   /presentation/<layer>      a layer's presentation, sanitized
+//!   /image/<content>           an email's inline image, by its content hash
 //!   /pane/<content>/<path>     web pane content, sanitized when it arrived
 //!
 //! Every document and layer is checked against the matter's live documents.
@@ -127,6 +128,7 @@ impl Handler {
             ["api", "overview"] => self.overview(),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
             ["presentation", layer] => self.presentation(layer),
+            ["image", content] => self.image(content, &query(q)),
             ["pane", content, rest @ ..] => self.pane(content, &rest.join("/")),
             _ => not_found("no such route"),
         }
@@ -439,6 +441,27 @@ impl Handler {
         }
     }
 
+    /// An inline image a presentation shows (an email's `image` segment):
+    /// served only while a live document in the matter has that content and
+    /// is an image, so a purged or withdrawn one shows as missing. PNG, JPEG
+    /// and GIF as they are; anything else as MuPDF renders its first page.
+    fn image(&mut self, content: &str, q: &HashMap<String, String>) -> Response {
+        let (doc, bytes) = {
+            let m = self.matter.lock().unwrap();
+            let doc = m.state.documents.iter()
+                .filter(|(d, c)| c.as_str() == content && m.live(d) && m.metadata(d)["kind"] == "image")
+                .map(|(d, _)| d.clone()).min();
+            let Some(doc) = doc else { return not_found("no such image in this matter") };
+            let bytes = m.bytes(content);
+            (doc, bytes)
+        };
+        let Some(bytes) = bytes else { return not_found("image not in the store") };
+        match image_mime(&bytes) {
+            Some(mime) => ok(mime, bytes),
+            None => self.page(&doc, "1", q),
+        }
+    }
+
     fn presentation(&self, id: &str) -> Response {
         let m = self.matter.lock().unwrap();
         if m.layer(id).is_none() {
@@ -502,6 +525,19 @@ fn exhibits_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
         }
     }
     out
+}
+
+/// The image types a web view shows as they are.
+fn image_mime(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else {
+        None
+    }
 }
 
 /// Remove scripts, event handlers, frames, objects and remote resources.
@@ -602,6 +638,14 @@ mod tests {
         assert!(out.contains("remote image, not loaded: https://e.com/x.png"));
         assert!(out.contains(r#"href="loc:doc:sha256:ab@sha256:cd#char=1,2""#), "{}", out);
         assert!(out.contains(r#"data-text="doc:sha256:ab""#) && out.contains(r#"action="svc:triage""#) && out.contains("checkbox"));
+    }
+
+    #[test]
+    fn sanitize_keeps_inline_images() {
+        let out = sanitize(r#"<figure class="adhoc-inline-image" data-cid="a@x"><img src="/image/sha256:ab" alt="inline image cid:a@x"></figure>"#);
+        assert!(out.contains(r#"src="/image/sha256:ab""#) && out.contains(r#"data-cid="a@x""#), "{}", out);
+        assert_eq!(image_mime(b"\x89PNG\r\n\x1a\nrest"), Some("image/png"));
+        assert_eq!(image_mime(b"II*\x00"), None);
     }
 
     #[test]
