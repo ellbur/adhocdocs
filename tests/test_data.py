@@ -284,3 +284,26 @@ def test_png_and_csv_outputs(m, tmp_path):
     pages.add_interp_ref(m, p, "pic", "pic")
     pages.add_interp_ref(m, p, "tab", "tab")
     pages.export(pages.Page(m, p), "docx", tmp_path / "p.docx")
+
+
+def test_search_interpretations(m, tmp_path):
+    run_ledger(m)
+    led = doc_named(m, "ledger.txl")
+    header, items = interp.search(m, "bellwether")
+    assert header["of"] == "interpretations" and header["exhaustive"]
+    [it] = items
+    assert it["unofficial"] and it["interp"] == "ledger"
+    [hit] = it["hits"]
+    assert hit["ptr"] == "/records/1/party" and hit["record"] == "/records/1"
+    assert hit["evidence"] == f"doc:{led}#bytes=32,56"                # quote this, not the hit
+    assert interp.search(m, "harrowgate /p 1250")[1]                  # /p: the same record
+    assert not interp.search(m, "harrowgate /p 42")[1]
+    assert not interp.search(m, "party")[1]                           # keys aren't searched
+    with pytest.raises(interp.InterpError, match="field"):
+        interp.search(m, "kind:other")
+    csvp = tmp_path / "csv.py"
+    csvp.write_text("print('who,what'); print('dk,signed for pallet 3')\n")
+    interp.run(m, [led], "tab", [sys.executable, str(csvp)], "A table", type_="csv")
+    header, items = interp.search(m, "pallet", only=["tab"])
+    assert header["coverage"]["searched"] == 1
+    assert items[0]["hits"][0]["row"] == 1 and items[0]["hits"][0]["column"] == "what"

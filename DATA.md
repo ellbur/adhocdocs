@@ -99,6 +99,18 @@ column, and the bytes or value behind a row can be quoted. This is how an
 interpretation earns trust: each decoded record points at bytes anyone can
 check.
 
+**Searching them.** `interp search` runs the query language of `search`
+(words, phrases, prefixes, Boolean, `w/N`, `/s`, `/p`) over the outputs,
+exhaustively. JSON is searched value by value (keys aren't), and `/p`
+means "in the same record". Each hit names the reading, where in its output
+(a pointer and its record, a CSV row and column, or a text line), and the
+evidence locator its record gives, if any. Hits are marked
+`"unofficial": true`: they are places in Claude's readings, so what gets
+quoted is the evidence, not the hit. Field filters (`from:`, `tag:`) are
+refused: they describe documents. Pictures aren't searched, and the
+coverage says how many were left out. It is a separate search on purpose,
+so a reading never turns up among `search`'s results.
+
 **Showing them.** `interp view` puts one in a viewer pane and `interp
 render` writes HTML: a table, a tree (collapsible, no scripts), text, a
 value or a picture. Every rendering is a captioned figure: *Interpretation
@@ -136,10 +148,14 @@ Read as records, the largest payment went to :interp{#top-party}.
 - **Interpretations are not text layers.** Layers are literal
   ([TEXTLAYERS.md](TEXTLAYERS.md)), and search hits and quotations come
   from layers. Keeping interpretations out of the store and the indexes
-  means no hit or quotation can come from one by accident. The cost is that
-  `search` doesn't reach them. Their outputs are plain files in the
-  workspace, so Claude can `grep` them, and say it is searching its own
-  readings.
+  means no hit or quotation can come from one by accident. They are
+  searched separately (`interp search`), with every hit labeled as a
+  reading and pointing at its evidence. Nothing stops Claude building its
+  own index of them for a task (Principle 3), as long as it says it is
+  searching its readings.
+- **`interp search` scans at query time** rather than keeping an index:
+  outputs are usually small, so it is exhaustive and never stale. A very
+  large decoded output would want a cached index like `keyword`'s.
 - **Decoders are Claude's code, run in the container,** like any other
   script Claude writes. Nothing about them widens access (Principle 2).
 - **Hex is the display rule for bytes.** It is lossless and conventional.
@@ -154,8 +170,8 @@ Read as records, the largest payment went to :interp{#top-party}.
 
 ## Not built yet
 
-- Searching interpretations as their own corpus, with hits labeled as
-  readings.
+- Semantic search of interpretations, and showing `interp search` hits in
+  a list pane.
 - Pointers into XML (an XPath subset), and pointers into CSV and
   spreadsheets by header name rather than cell.
 - Interpretations travelling with published pages: publish the

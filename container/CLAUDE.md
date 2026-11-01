@@ -26,7 +26,7 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `page` | literate pages: memos and chronologies whose quotations are references |
 | `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
 | `raw` | files of unknown format or schema: bytes (info, strings, hex), JSON/XML schemas |
-| `interp` | your own decoders' readings of such files, recorded and shown as yours |
+| `interp` | your own decoders' readings of such files, recorded, searched (`interp search`) and shown as yours |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
 | `work` | publish work product for the matter's other installations |
 | `idx` | index status; why a search may be incomplete |

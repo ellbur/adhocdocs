@@ -665,6 +665,9 @@ adhocdocs doesn't know, kept apart from the documents' own text. See DATA.md.
   interp ls                          the interpretations, newest first
   interp show N                      the record, and the start of the output
   interp check [N]                   still holds (inputs, files) and reruns to the same output
+  interp search QUERY [--name N]...  search the outputs, with search's query language (no field
+                                     filters); /p means the same record. Hits are places in your
+                                     readings, each with the evidence locator its record gives
   interp render N [--ptr P] [--as A] [-o out.html]
   interp view N [--ptr P] [--as A] [--pane P]   show it in the viewer
 
@@ -696,6 +699,10 @@ def interp(argv=None):
     s = sub.add_parser("check")
     s.add_argument("name", nargs="?")
     s.add_argument("--no-rerun", action="store_true")
+    s = sub.add_parser("search", help="search interpretations' outputs (search's query language, no field filters)")
+    s.add_argument("query")
+    s.add_argument("--name", action="append", help="only this interpretation (repeatable)")
+    s.add_argument("--limit", type=int, help="most hits to print per interpretation")
     for name in ("render", "view"):
         s = sub.add_parser(name)
         s.add_argument("name")
@@ -738,6 +745,11 @@ def interp(argv=None):
                 out(r)
             if bad:
                 sys.exit(1)
+        elif a.cmd == "search":
+            header, items = im.search(m, a.query, a.name, a.limit)
+            out(header)
+            for it in items:
+                out(it)
         elif a.cmd == "render":
             doc, _ = im.page_html(m, a.name, a.ptr, a.as_)
             if a.out:

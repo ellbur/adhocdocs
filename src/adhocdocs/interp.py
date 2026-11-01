@@ -497,3 +497,170 @@ def hex_html(m, loc: dict, data: bytes) -> str:
     a = loc["select"]["bytes"][0]
     text = raw.hexdump_text(data, a)
     return f'<pre class="adhoc-hex">{html.escape(text)}</pre>'
+
+
+# -- searching ---------------------------------------------------------------------------------
+
+def searchable(m, rec: dict) -> tuple[str, list[tuple[int, dict]]] | None:
+    """An interpretation's output as text to search, and where each line of
+    it came from: ``(text, [(line start, where)])``. JSON becomes one line
+    per value (keys aren't searched), with a blank line between records
+    (the items of the innermost array), so ``/p`` means "in the same
+    record"; ``where`` is the value's ``ptr`` and its ``record``. CSV is one
+    line per cell (``row``, ``column``), text its own lines (``line``).
+    Pictures have no text: None."""
+    t = rec["output"]["type"]
+    if t in ("svg", "png"):
+        return None
+    value = value_of(m, rec)
+    lines: list[tuple[str, dict]] = []
+    if t == "json":
+        def walk(v, path):
+            if isinstance(v, dict):
+                for k, x in v.items():
+                    if k not in EVIDENCE_KEYS:
+                        walk(x, path + [k])
+            elif isinstance(v, list):
+                for i, x in enumerate(v):
+                    walk(x, path + [i])
+            elif v is not None:
+                ints = [i for i, p in enumerate(path) if isinstance(p, int)]
+                record = format_ptr(path[:ints[-1] + 1]) if ints else ""
+                lines.append((_cell(v), {"ptr": format_ptr(path), "record": record}))
+        walk(value, [])
+    elif t == "csv":
+        header = value[0] if value else []
+        for r, row in enumerate(value[1:], 1):
+            for c, cell in enumerate(row):
+                lines.append((cell, {"row": r, "column": header[c] if c < len(header) else c}))
+    else:
+        lines = [(line, {"line": n}) for n, line in enumerate(value.split("\n"), 1)]
+    out, where, pos, last = [], [], 0, None
+    for text, w in lines:
+        text = text.replace("\n", " ")
+        if out and w.get("record", last) != last:
+            out.append("")                   # a blank line: a new record, so a new paragraph
+            pos += 1
+        last = w.get("record")
+        where.append((pos, w))
+        out.append(text)
+        pos += len(text) + 1
+    return "\n".join(out), where
+
+
+def format_ptr(path) -> str:
+    from .structured import format_pointer
+    return format_pointer(path)
+
+
+def _check_query(node):
+    from . import query as Q
+    if isinstance(node, Q.Field):
+        raise InterpError(f"{node.name}: is a field of documents; interpretations are searched by their text only")
+    for attr in ("items",):
+        for x in getattr(node, attr, ()):
+            _check_query(x)
+    if isinstance(node, Q.Not):
+        _check_query(node.item)
+
+
+def _eval(node, toks, offs, units):
+    from . import query as Q
+    if isinstance(node, Q.All):
+        return True, []
+    if isinstance(node, (Q.Words, Q.Near)):
+        sp = [(offs[i][0], offs[j - 1][1]) for i, j in Q.spans(node, toks, units)]
+        return bool(sp), sp
+    if isinstance(node, Q.And):
+        out = []
+        for x in node.items:
+            ok, sp = _eval(x, toks, offs, units)
+            if not ok:
+                return False, []
+            out += sp
+        return True, out
+    if isinstance(node, Q.Or):
+        res, out = False, []
+        for x in node.items:
+            ok, sp = _eval(x, toks, offs, units)
+            res, out = res or ok, out + sp
+        return res, out
+    if isinstance(node, Q.Not):
+        return not _eval(node.item, toks, offs, units)[0], []
+    raise TypeError(node)
+
+
+def _evidence_at(m, rec: dict, ptr: str) -> str | None:
+    """The evidence link of the innermost object around a value that has one."""
+    from .structured import parse_pointer
+    v, found = value_of(m, rec), None
+    for tok in [None] + parse_pointer(ptr):
+        if tok is not None:
+            v = v[int(tok)] if isinstance(v, list) else v.get(tok) if isinstance(v, dict) else None
+        if isinstance(v, dict) and any(k in v for k in EVIDENCE_KEYS):
+            found = v
+    return _evidence(m, rec, found) if found else None
+
+
+def search(m, q: str, only: list[str] | None = None, limit: int | None = None) -> tuple[dict, list[dict]]:
+    """Search interpretations' outputs with the query language of ``search``
+    (words, phrases, prefixes, Boolean, w/N, pre/N, /s, /p; no field
+    filters). Exhaustive over what it reports searching. Boolean operators
+    apply per interpretation, proximity within one. Every hit is a place
+    in Claude's reading, never in a document: it says which reading, where
+    in its output, and the evidence locator the decoder gave, if any."""
+    from bisect import bisect_right
+    from . import query as Q, textnorm
+    node = Q.parse(q)
+    _check_query(node)
+    chosen = only or names(m)
+    coverage = {"interpretations": len(chosen), "searched": 0, "pictures": 0, "stale": []}
+    items = []
+    for name in chosen:
+        rec = load(m, name)
+        got = searchable(m, rec)
+        if got is None:
+            coverage["pictures"] += 1
+            continue
+        coverage["searched"] += 1
+        stale = not check(m, name, rerun=False)["ok"]
+        if stale:
+            coverage["stale"].append(name)
+        text, where = got
+        tokens = textnorm.tokenize(text)
+        toks = [t for t, _, _ in tokens]
+        offs = [(s, e) for _, s, e in tokens]
+        units = None
+        if any(isinstance(n, Q.Near) and n.unit != "w" for n in _nodes(node)):
+            flat = [x for se in offs for x in se]
+            units = Q.Units(text, flat)
+        ok, spans = _eval(node, toks, offs, units)
+        if not ok:
+            continue
+        from .search import snippet
+        starts = [p for p, _ in where]
+        hits = []
+        for s, e in sorted(set(spans)):
+            w = where[bisect_right(starts, s) - 1][1]
+            hit = {**w, "text": text[s:e], "snippet": snippet(text, s, e)}
+            if "ptr" in w:
+                ev = _evidence_at(m, rec, w["ptr"])
+                if ev:
+                    hit["evidence"] = ev
+            hits.append(hit)
+        items.append({"interp": name, "title": rec["title"], "unofficial": True,
+                      "inputs": [i["doc"] for i in rec["inputs"]], **({"stale": True} if stale else {}),
+                      "hits": hits[:limit] if limit else hits, **({"more_hits": len(hits) - limit} if limit and len(hits) > limit else {})})
+    header = {"type": "search", "of": "interpretations", "query": q, "parsed": Q.to_text(node), "exhaustive": True,
+              "coverage": coverage, "matches": {"interpretations": len(items), "hits": sum(len(i["hits"]) for i in items)},
+              "note": "hits are in Claude's readings, not in documents: quote the evidence, not the hit"}
+    return header, items
+
+
+def _nodes(node):
+    yield node
+    for x in getattr(node, "items", ()):
+        yield from _nodes(x)
+    for attr in ("item", "left", "right"):
+        if hasattr(node, attr):
+            yield from _nodes(getattr(node, attr))

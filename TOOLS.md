@@ -61,7 +61,8 @@ them.
   `ptr=` locators quote a JSON value's own text.
 - **Interpretations.** `interp run` records Claude's own decoder and its
   reading (a table, tree, value, text or chart), reproducibly; `interp
-  check`, `render`, `view`. Pages show them with `:interp`, captioned as
+  check`, `render`, `view`, and `interp search`, whose hits are labeled as
+  readings and point at their evidence. Pages show them with `:interp`, captioned as
   Claude's, never as quotations.
 
 ## Annotation
