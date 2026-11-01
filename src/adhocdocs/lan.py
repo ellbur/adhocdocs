@@ -36,21 +36,23 @@ EVERY = 30
 WINDOW = 600
 
 
-def tag(m: Matter, at: float | None = None) -> str:
+def tag(m: Matter, port: int, at: float | None = None) -> str:
+    """Over the window and the announced port: a packet heard can't be sent
+    again pointing somewhere else."""
     key = hashlib.sha256(("adhoc-lan-v1:" + peer.pool_key(m)).encode()).digest()
     window = int((at if at is not None else time.time()) // WINDOW)
-    return hmac.new(key, str(window).encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.new(key, f"{window}:{port}".encode(), hashlib.sha256).hexdigest()[:32]
 
 
-def tags(m: Matter) -> set[str]:
+def tags(m: Matter, port: int) -> set[str]:
     """This window's tag and the last one's, so a packet sent just before the
     window turned still counts."""
     now = time.time()
-    return {tag(m, now), tag(m, now - WINDOW)}
+    return {tag(m, port, now), tag(m, port, now - WINDOW)}
 
 
 def packet(m: Matter, port: int) -> bytes:
-    return json.dumps({"adhoc": 1, "t": tag(m), "p": port}, separators=(",", ":")).encode()
+    return json.dumps({"adhoc": 1, "t": tag(m, port), "p": port}, separators=(",", ":")).encode()
 
 
 def _targets(target):
@@ -88,7 +90,7 @@ class Announcer:
         self.stopping.set()
 
 
-def probe(m: Matter, address: str, timeout=5) -> str:
+def probe(m: Matter, address: str, timeout=2) -> str:
     """Which origin answers for this matter at ``address`` (by its certificate)."""
     import ssl
     host, port = peer.split_address(address)
@@ -126,9 +128,17 @@ class Listener:
     """Hear announcements; for one of this matter's members, call
     ``on_member(member, address)``."""
 
+    PER_SOURCE = 6          # packets a minute from one address that get looked at
+    AGAIN = 120             # seconds before the same address is probed again
+    QUEUE = 8
+
     def __init__(self, m: Matter, on_member, port=PORT):
         self.root, self.on_member, self.port = m.root, on_member, port
         self.stopping = threading.Event()
+        self.heard: dict[str, list[float]] = {}      # source ip -> recent packet times
+        self.probed: dict[str, float] = {}           # address -> when last probed
+        import queue
+        self.todo = queue.Queue(self.QUEUE)          # probes wait here; full means dropped
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
@@ -137,18 +147,40 @@ class Listener:
         self.sock.settimeout(1.0)
 
     def handle(self, data: bytes, ip: str):
+        """Cheap checks only: probing happens on the worker, a few at a time,
+        so packets from anyone on the network can't make this open
+        connections at their pace."""
+        now = time.time()
+        recent = [t for t in self.heard.get(ip, []) if now - t < 60]
+        if len(recent) >= self.PER_SOURCE:
+            return
+        self.heard[ip] = recent + [now]
+        if len(self.heard) > 1024:
+            self.heard = {k: v for k, v in self.heard.items() if v and now - v[-1] < 60}
         try:
             msg = json.loads(data)
             t, port = str(msg["t"]), int(msg["p"])
+            if not 0 < port < 65536:
+                return
         except (ValueError, KeyError, TypeError):
             return
         m = Matter(self.root)
         try:
-            if t not in tags(m):
+            if t not in tags(m, port):
                 return
         except peer.SyncError:
             return              # no pool yet
         address = f"{ip}:{port}"
+        if now - self.probed.get(address, 0) < self.AGAIN:
+            return
+        self.probed[address] = now
+        try:
+            self.todo.put_nowait(address)
+        except Exception:
+            pass                # busy: it'll be announced again
+
+    def _probe(self, address: str):
+        m = Matter(self.root)
         try:
             origin = probe(m, address)
         except Exception:
@@ -161,7 +193,20 @@ class Listener:
         if known != address:
             self.on_member(p.members[origin], address)
 
+    def _work(self):
+        import queue
+        while not self.stopping.is_set():
+            try:
+                address = self.todo.get(timeout=1)
+            except queue.Empty:
+                continue
+            try:
+                self._probe(address)
+            except Exception:
+                pass
+
     def run(self):
+        threading.Thread(target=self._work, daemon=True).start()
         while not self.stopping.is_set():
             try:
                 data, (ip, _) = self.sock.recvfrom(2048)

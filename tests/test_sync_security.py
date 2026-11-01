@@ -232,3 +232,128 @@ def test_someone_elses_pool_under_a_matters_id_doesnt_take_its_place(tmp_path):
         assert set(real.state.live_documents()) == set(Matter(a.root).state.live_documents())
     finally:
         srv.stop()
+
+
+# -- second review: who writes for whom, and removals -------------------------------------------
+
+
+def _three(tmp_path):
+    from test_sync import copy_logs
+    from adhocdocs.matter import write_toml
+    a = Matter.create(tmp_path / "a")
+    poolmod.found(a, ALICE, "Alice")
+    ms = []
+    for n in ("bob", "mallory"):
+        x = Matter.create(tmp_path / n, matter_id=a.id)
+        write_toml(x.root / "matter.toml", {**x.config, "founder": a.origin})
+        poolmod.add_member(a, ALICE, x.identity.cert_path().read_text(encoding="ascii"), n)
+        ms.append(Matter(x.root))
+    for x in ms:
+        copy_logs(a, x)
+    return Matter(a.root), ms[0], ms[1]
+
+
+def test_a_backdated_claim_doesnt_take_a_person_over(tmp_path):
+    from test_sync import copy_logs
+    a, bob, mal = _three(tmp_path)
+    annotations.write(bob, "user:bob", {"op": "define-tag", "tag": "bobs"})          # bob claims himself
+    # mallory claims bob too, dated before bob's claim, around the write path
+    log = mal.pool_log.log_for(mal.origin)
+    own = next(e for e in a.pool_log.read() if e.get("member") == mal.origin)
+    ev = sign({"id": own["id"][:-1] + "Z", "at": "x", "op": "bind-user", "user": "user:bob", "member": mal.origin,
+               "author": "user:bob"}, mal.identity.key, log.last_event())
+    with open(log.path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(ev) + "\n")
+    for x in (bob, mal):
+        copy_logs(x, a)
+    a = Matter(a.root)
+    assert "bobs" in annotations.Annotations.load(a).definitions          # bob's work still counts
+    p = poolmod.Pool.load(a)
+    assert sorted(p.users["user:bob"]) == sorted([bob.origin, mal.origin])
+    from adhocdocs import sync
+    (d,) = sync.disputes(a)                                                 # and it's plain to see
+    assert d["kind"] == "person-disputed" and d["author"] == "user:bob"
+
+
+def test_a_same_person_vouch_cant_be_used_by_another_member(tmp_path, monkeypatch):
+    """Members see the vouch in the pool log, but only the invitation's secret
+    makes its proof."""
+    from test_sync import copy_logs
+    a, bob, mal = _three(tmp_path)
+    secret = "s3cret"
+    k, pub = poolmod.vouch_key(secret)
+    a.pool_log.append(op="bind-user", user=ALICE, vouch_key=pub, author=ALICE)
+    copy_logs(a, mal)
+    vouch = next(e for e in Matter(mal.root).pool_log.read() if e.get("vouch_key"))
+    from adhocdocs.signing import b64
+    # mallory re-adds herself, and makes up a proof
+    mal.pool_log.append(op="add-member", member=mal.origin, cert=mal.identity.cert_path().read_text(encoding="ascii"),
+                        name="again", role="member", addresses=[], author=ALICE, users=[ALICE])
+    mal.pool_log.append(op="bind-user", user=ALICE, member=mal.origin, vouch_key=vouch["vouch_key"],
+                        proof=b64(b"x" * 64), author=ALICE)
+    copy_logs(mal, a)
+    p = poolmod.Pool.load(Matter(a.root))
+    assert mal.origin not in p.users.get(ALICE, [])
+    assert any("added already" in x["reason"] for x in p.ignored)
+    # with the secret, the proof checks
+    poolmod.prove(bob, secret, ALICE)
+    copy_logs(bob, a)
+    assert bob.origin in poolmod.Pool.load(Matter(a.root)).users[ALICE]
+
+
+def test_a_removal_cant_be_redone_with_another_cutoff(tmp_path):
+    from test_sync import copy_logs
+    a, bob, mal = _three(tmp_path)
+    text_doc(bob, "b.txt", "bob's earlier work")
+    copy_logs(bob, a)
+    poolmod.remove_member(a, ALICE, bob.origin)
+    copy_logs(a, mal)
+    # mallory removes bob again, cutting all his work
+    mal.pool_log.append(op="remove-member", member=bob.origin, upto={"pool": 0, "store": 0}, author="user:mallory")
+    copy_logs(mal, a)
+    from adhocdocs import pool as pm
+    pm.save_cutoffs(Matter(a.root))
+    docs = Matter(a.root).state.live_documents()
+    assert any(Matter(a.root).objects.get_object(Matter(a.root).state.metadata[d])["name"] == "b.txt" for d in docs)
+
+
+def test_an_installation_that_joined_as_the_same_person_can_vouch(tmp_path):
+    a = Matter.create(tmp_path / "a")
+    text_doc(a, "a.txt", "x")
+    srv, addr = serve(a)
+    try:
+        invite.join(invite.create(a, ALICE, [addr], same_person=True)["code"], tmp_path / "desk")
+        desk = Matter(tmp_path / "desk")
+        invite.join(invite.create(Matter(a.root), ALICE, [addr])["code"], tmp_path / "tablet")
+        tablet = Matter(tmp_path / "tablet")
+        peer.sync_with(desk, addr, a.origin)
+        poolmod.vouch(desk, ALICE, tablet.origin)          # the desk, not the laptop, vouches
+        peer.sync_with(desk, addr, a.origin)
+        p = poolmod.Pool.load(Matter(a.root))
+        assert sorted(p.users[ALICE]) == sorted([a.origin, desk.origin, tablet.origin])
+        assert p.disputed == {}
+    finally:
+        srv.stop()
+
+
+def test_a_long_poll_always_ends(pair):
+    a, b, srv, addr = pair
+    p = peer.Peer(b, addr, a.origin, timeout=10)
+    fp = p.json("GET", "wait?timeout=0")["fingerprint"]          # nothing will change meanwhile
+    t = time.time()
+    for bad in ("nan", "-5", "x"):
+        assert p.json("GET", f"wait?timeout={bad}&seen={fp}")["fingerprint"] == fp
+    assert time.time() - t < 3                                     # each answered at once
+    p.close()
+
+
+def test_the_viewer_hears_of_local_membership_changes(pair, tmp_path):
+    """A vouch made here changes what counts: replay.json follows at once."""
+    a, b, srv, addr = pair
+    b.annotation_log.append(op="define-tag", tag="b-as-alice", author=ALICE)     # around the write path
+    peer.sync_with(b, addr, a.origin)
+    rp = json.loads((a.root / "annotations/replay.json").read_text(encoding="utf-8"))
+    assert any(v == [] for v in rp["replace"].values())
+    poolmod.vouch(Matter(a.root), ALICE, b.origin)
+    rp = json.loads((a.root / "annotations/replay.json").read_text(encoding="utf-8"))
+    assert all(v != [] for v in rp["replace"].values()) or rp["replace"] == {}

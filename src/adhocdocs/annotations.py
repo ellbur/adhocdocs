@@ -23,7 +23,10 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 ``reserve-numbers`` ``series`` (``bates:<prefix>`` or ``exhibit:<prefix>``), ``first``,
                    ``last``, optional ``name`` (the production or set): a range taken
                    before it's used, so two installations don't number the same
-``release-numbers`` ``reservation`` (the reserve event's ID): given back unused
+``release-numbers`` ``reservation`` (the reserve event's ID): given back unused, by
+                   whoever reserved them, from the same installation
+``use-numbers``    ``reservation``: the numbers are on documents now, and can't be
+                   given back
 =================  =========================================================
 
 Entities are the entity layer's known entities (ENTITIES.md). Each field
@@ -70,6 +73,8 @@ def target_key(target: dict) -> str:
 def is_user(author: str) -> bool:
     return author.startswith("user:")
 
+
+MAX_RESERVATION = 1_000_000
 
 # What a feed adds to an event as it reads it; not part of the event.
 _READ_TAGS = ("feed", "log", "origin")
@@ -286,6 +291,10 @@ class Annotations:
             r = self.reservations.get(ev["reservation"])
             if r:
                 r["released"] = ev["at"]
+        elif op == "use-numbers":
+            r = self.reservations.get(ev["reservation"])
+            if r:
+                r["used"] = ev["at"]
 
     def ranges(self, series: str) -> list[dict]:
         """The reservations in a series that stand (not released)."""
@@ -351,18 +360,25 @@ class Annotations:
                 raise Refused("a series is bates:<prefix> or exhibit:<prefix>")
             if not (isinstance(f, int) and isinstance(l, int) and 1 <= f <= l):
                 raise Refused(f"not a range of numbers: {f!r} to {l!r}")
+            if l - f >= MAX_RESERVATION:
+                raise Refused(f"at most {MAX_RESERVATION:,} numbers at once")
+            if f > self.next_number(ev["series"]) + MAX_RESERVATION:
+                raise Refused(f"{f} is too far past the next free number ({self.next_number(ev['series'])})")
             clash = next((r for r in self.ranges(ev["series"]) if r["first"] <= l and f <= r["last"]), None)
             if clash:
                 raise Refused(f"{ev['series'].split(':', 1)[1]} {clash['first']}–{clash['last']} "
                               f"{'is' if clash['first'] == clash['last'] else 'are'} reserved already"
                               + (f" (for {clash['name']}, by {clash['by']})" if clash.get("name") else f" (by {clash['by']})")
                               + f"; the next free number is {self.next_number(ev['series'])}")
-        elif op == "release-numbers":
+        elif op in ("release-numbers", "use-numbers"):
             r = self.reservations.get(ev.get("reservation"))
             if r is None or r.get("released"):
-                raise Refused(f"no reservation {ev.get('reservation')} to release")
-            if author == CLAUDE and is_user(r["by"]):
-                raise Refused(f"that reservation is {r['by']}'s; Claude can't release it")
+                raise Refused(f"no reservation {ev.get('reservation')}")
+            # only whoever reserved them, from where they reserved them
+            if author != r["by"] or (ev.get("origin") and r.get("origin") and ev["origin"] != r["origin"]):
+                raise Refused(f"that reservation is {r['by']}'s, made on another installation or by someone else")
+            if op == "release-numbers" and r.get("used"):
+                raise Refused("those numbers are on documents already; they can't be given back")
         if op in ("define-entity", "edit-entity") and ev.get("date") is not None and not ENTITY_DATE.fullmatch(str(ev["date"])):
             raise Refused(f"an entity's date is YYYY-MM-DD, YYYY-MM or YYYY, not {ev['date']!r}")
         if op == "define-entity":
@@ -463,6 +479,7 @@ OPS = {
     "delete-entity": (("entity",), ()),
     "reserve-numbers": (("series", "first", "last"), ("name",)),
     "release-numbers": (("reservation",), ()),
+    "use-numbers": (("reservation",), ()),
 }
 
 
@@ -535,7 +552,7 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
         if not (op == "edit-tag" and key is not None and not any(k in ev for k in ("color", "group", "description"))):
             pending.append(ev)      # (a new hotkey alone is this installation's business: no event)
         for p in pending:
-            ann.check({**p, "at": now()})
+            ann.check({**p, "at": now(), "origin": m.origin})     # writing makes the origin anyway
             ann.apply({**p, "id": "pending", "at": now()})
         written = [m.annotation_log.append(**p) for p in pending]
         if key is not None:

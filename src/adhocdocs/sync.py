@@ -40,7 +40,24 @@ def conflicts(m: Matter, refresh=True) -> list[dict]:
             annotations.save_replay(m, ann)
         except OSError:
             pass        # read-only here (a session): the host keeps it current
-    return ann.conflicts + work.forks(m)
+    return ann.conflicts + work.forks(m) + disputes(m)
+
+
+def disputes(m: Matter) -> list[dict]:
+    """People claimed by installations that don't vouch for each other: one
+    side is writing as someone it isn't (adhocdocs.pool)."""
+    from . import pool
+    if not pool.founded(m):
+        return []
+    p = pool.Pool.load(m)
+    out = []
+    for user, groups in sorted(p.disputed.items()):
+        names = [", ".join(p.members[o]["name"] for o in g if o in p.members) for g in groups]
+        out.append({"kind": "person-disputed", "author": user, "groups": groups,
+                    "reason": f"{user} is claimed separately by {' and by '.join(names)}: one of them isn't who it "
+                              "says. Everything both write as them counts until it's settled; remove the "
+                              "installation that isn't theirs (adhoc sync remove)."})
+    return out
 
 
 def refresh(m: Matter):

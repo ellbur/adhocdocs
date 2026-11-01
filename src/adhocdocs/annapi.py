@@ -62,15 +62,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path not in ("/write", "/publish", "/retire", "/reserve", "/release"):
+        if self.path not in ("/write", "/publish", "/retire", "/reserve", "/release", "/use"):
             return self._reply(404, {"error": "not found"})
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             m = Matter(self.matter.root)          # fresh state for every request
-            if self.path in ("/reserve", "/release"):
+            if self.path in ("/reserve", "/release", "/use"):
                 from . import numbers
                 if self.path == "/release":
                     return self._reply(200, numbers.release(m, annotations.CLAUDE, str(req.get("reservation", ""))))
+                if self.path == "/use":
+                    return self._reply(200, numbers.use(m, annotations.CLAUDE, str(req.get("reservation", ""))))
                 local = [(int(a), int(b), str(c) if c else None) for a, b, c in req.get("local", [])]
                 return self._reply(200, numbers.reserve(m, annotations.CLAUDE, str(req["series"]), int(req["count"]),
                                                         req.get("start"), req.get("name"), local,

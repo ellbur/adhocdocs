@@ -60,7 +60,8 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
     if same_person:
         # whoever joins with this writes for the same person: vouched for now, by an installation of theirs
         poolmod.claim(m, author)
-        m.pool_log.append(op="bind-user", user=author, invitation=_digest(secret), author=author)
+        _, pub = poolmod.vouch_key(secret)
+        m.pool_log.append(op="bind-user", user=author, vouch_key=pub, author=author)
     hubs = [x for x in p.active() if x["role"] == "hub" and x["addresses"] and x["origin"] != m.origin]
     if hubs and not addresses:
         # through the hub, which is always there: the invitation works while this one is off
@@ -93,7 +94,8 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
             invites[_digest(secret)] = record
             _save(m, invites)
         through = m.origin
-    body = {"m": m.id, "f": m.config["founder"], "o": through, "a": addrs, "r": role, "s": secret}
+    body = {"m": m.id, "f": m.config["founder"], "o": through, "a": addrs, "r": role, "s": secret,
+            **({"u": author} if same_person else {})}
     code = PREFIX + base64.urlsafe_b64encode(json.dumps(body, separators=(",", ":")).encode()).rstrip(b"=").decode()
     return {"code": code, "matter": m.id, "role": role, "addresses": addrs, "expires_in_hours": hours,
             "through": "the hub" if through != m.origin else "this installation"}
@@ -152,7 +154,8 @@ def accept(m: Matter, req: dict) -> dict:
     from .origin import cert_origin
     with open(m.sync_dir / ".lock", "w", encoding="utf-8", newline="\n") as lf, locked(lf):
         invites = _load(m)
-        inv = invites.get(_digest(str(req.get("secret", ""))))
+        # only the secret's hash comes: whoever accepts can't prove it's the person
+        inv = invites.get(str(req.get("digest", "")))
         if inv is None:
             raise PermissionError("no such invitation")
         origin, _ = cert_origin(req["cert"].encode())
@@ -163,8 +166,7 @@ def accept(m: Matter, req: dict) -> dict:
         if time.time() > inv["expires"]:
             raise PermissionError("that invitation has expired")
         poolmod.add_member(m, inv["by"], req["cert"], str(req.get("name") or origin)[:200], inv["role"],
-                           [str(a) for a in req.get("addresses", [])][:8],
-                           invitation=_digest(str(req["secret"])) if inv.get("same_person") else None)
+                           [str(a) for a in req.get("addresses", [])][:8])
         inv["used"] = {"origin": origin, "at": now()}
         _save(m, invites)
     return {"matter": m.id, "founder": m.config.get("founder"), "member": origin}
@@ -183,7 +185,7 @@ def join(code: str, path, name: str | None = None, addresses=()) -> dict:
     cfg["founder"] = inv["f"]
     write_toml(m.root / "matter.toml", cfg)
     m = Matter(m.root)
-    req = {"secret": inv["s"], "cert": m.identity.cert_path().read_text(encoding="ascii"),
+    req = {"digest": _digest(inv["s"]), "cert": m.identity.cert_path().read_text(encoding="ascii"),
            "name": name or socket.gethostname(), "addresses": list(addresses)}
     errors = []
     for address in inv["a"]:
@@ -196,5 +198,9 @@ def join(code: str, path, name: str | None = None, addresses=()) -> dict:
         finally:
             peer.close()
         result = sync_with(m, address, inv["o"])
+        if inv.get("u"):
+            # the same person as the inviter: prove it holds the secret their vouch key came from
+            poolmod.prove(Matter(m.root), inv["s"], inv["u"])
+            result = sync_with(Matter(m.root), address, inv["o"])
         return {"matter": str(m.root), "id": m.id, "origin": m.origin, "joined_through": inv["o"], **result}
     raise InviteError("couldn't reach the inviting installation: " + "; ".join(errors))

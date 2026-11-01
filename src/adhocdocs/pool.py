@@ -11,19 +11,31 @@ it, ``user:<id>``), ``prev`` and ``sig``:
                    or ``hub``), ``addresses`` (``host:port`` where it listens)
 ``remove-member``  ``member``
 ``set-addresses``  ``member`` (the event's own origin), ``addresses``
-``bind-user``      ``user`` (``user:<id>``), ``member``: that installation writes
-                   for that person
+``bind-user``      ``user`` (``user:<id>``), and ``member`` (that installation
+                   writes for that person), or ``vouch_key`` (whoever proves
+                   they hold an invitation's secret will), or ``member`` with
+                   ``vouch_key`` and ``proof`` (the proof)
 =================  ==============================================================
 
 **People and installations.** An event authored ``user:alice`` counts only
-if it comes from an installation bound to Alice (annotations, published
-work). The first installation to write as a person claims them (a
-``bind-user`` of itself, written automatically); after that, only an
-installation already bound to Alice can bind another to her: her laptop
-vouching for her desktop (``adhoc sync vouch``, or ``invite
---same-person``). So a member can't write as someone who works elsewhere.
-A person no installation has claimed is anyone's to write as, which is how
-a matter worked before it had a pool.
+if it comes from an installation that writes for Alice (annotations,
+published work). An installation comes to write for a person by
+*claiming* them (a ``bind-user`` of itself, written automatically the
+first time it writes as someone nobody has claimed), or by being
+*vouched for* by an installation that already writes for them: her laptop
+vouching for her desktop (``adhoc sync vouch``), or an invitation made
+with ``--same-person``, whose joiner proves it holds the invitation's
+secret. A person no installation has claimed is anyone's to write as,
+which is how a matter worked before it had a pool.
+
+None of this depends on the order of events, since event IDs are chosen
+by whoever writes them: who writes for whom is worked out from all the
+claims and vouches at once. So a member can't take a person over by
+backdating a claim. What a member *can* do, short of per-person keys, is
+claim a person someone else already claimed: then both write for them,
+and the person is **disputed**, reported by ``adhoc sync conflicts`` to
+everyone, so the impersonation is plain to see. (The write path refuses
+to do this; it takes modified code.)
 
 **Who can change membership.** The founder (``founder`` in ``matter.toml``,
 carried in every invitation) is the first member, by its own
@@ -50,17 +62,22 @@ class Pool:
         self.founder = founder
         self.cutoffs: dict[str, int] = {}      # removed origin -> how many of its pool events count
         self.users: dict[str, list[str]] = {}  # user:<id> -> the installations that write for them
-        self._vouched: dict[str, str] = {}     # invitation digest -> the person it's for
-        self._invited: list[tuple] = []        # (add-member event, digest)
+        self.disputed: dict[str, list[list[str]]] = {}   # user -> the separate groups claiming them
+        self._claims: list[tuple] = []         # (user, member): an installation's claim of itself
+        self._vouches: list[tuple] = []        # (user, member, by)
+        self._keys: dict[str, tuple] = {}      # invitation vouch key -> (user, by)
+        self._proofs: list[tuple] = []         # (user, member, key)
         self.members: dict[str, dict] = {}     # origin -> member (``active`` False once removed)
         self.ignored: list[dict] = []          # events that didn't count, and why
 
     @classmethod
     def load(cls, m: Matter) -> "Pool":
-        return cls.replay(m.config.get("founder"), list(m.pool_log.read()))
+        cfg = m.config
+        key = f"{cfg.get('id')}.{cfg.get('founder')}"
+        return cls.replay(cfg.get("founder"), list(m.pool_log.read()), key)
 
     @classmethod
-    def replay(cls, founder, events) -> "Pool":
+    def replay(cls, founder, events, matter_key: str = "") -> "Pool":
         """The pool the events describe.
 
         An event's ID is chosen by whoever wrote it, so a removed member could
@@ -72,6 +89,7 @@ class Pool:
         cutoffs: dict = {}
         for _ in range(8):
             p = cls(founder)
+            p._matter_key = matter_key
             seen: dict[str, int] = {}
             for ev in events:
                 o = ev.get("origin")
@@ -84,12 +102,7 @@ class Pool:
                     p.apply(ev)
                 except (KeyError, TypeError, AttributeError, ValueError) as e:
                     p._ignore(ev, f"malformed: {type(e).__name__}")
-            # an invitation "for the same person" binds whoever accepted it,
-            # wherever the vouch and the acceptance fall in the order
-            for ev, digest in p._invited:
-                user = p._vouched.get(digest)
-                if user and ev["member"] in p.members and ev["member"] not in p.users.get(user, []):
-                    p.users.setdefault(user, []).append(ev["member"])
+            p._people()
             new = {o: x["upto"] for o, x in p.members.items() if not x["active"] and x.get("upto") is not None}
             if new == cutoffs:
                 break
@@ -123,18 +136,21 @@ class Pool:
                 return self._ignore(ev, f"bad certificate: {e}")
             if origin != ev["member"]:
                 return self._ignore(ev, "the certificate is for another origin")
+            if origin in self.members:
+                # once removed, an installation joins again as a new one
+                return self._ignore(ev, f"{origin} was added already")
             if ev.get("role", "member") not in ROLES:
                 return self._ignore(ev, f"no role {ev.get('role')!r}")
             self.members[origin] = {"origin": origin, "cert": ev["cert"], "name": ev.get("name") or origin,
                                     "role": ev.get("role", "member"), "addresses": list(ev.get("addresses", [])),
                                     "added_by": by, "author": ev.get("author"), "at": ev["at"], "active": True}
             for u in ev.get("users") or []:          # "the same person as me": the inviter vouches
-                self._bind(ev, u, origin, by)
-            if isinstance(ev.get("invitation"), str):
-                self._invited.append((ev, ev["invitation"]))
+                if isinstance(u, str) and u.startswith("user:"):
+                    self._vouches.append((u, origin, by))
         elif op == "remove-member":
             x = self.members.get(ev["member"])
-            if x is None:
+            if x is None or not x["active"]:
+                # removed once, for good: a second removal can't move what counts
                 return self._ignore(ev, f"{ev['member']} isn't a member")
             x["active"] = False
             x["removed_at"], x["removed_by"] = ev["at"], ev.get("author")
@@ -146,29 +162,65 @@ class Pool:
             if ev.get("member") != by:
                 return self._ignore(ev, "a member sets only its own addresses")
             self.members[by]["addresses"] = list(ev.get("addresses", []))
-        elif op == "bind-user" and isinstance(ev.get("invitation"), str):
-            # a vouch for whoever accepts an invitation, made by an installation of that person
-            if by in self.users.get(ev["user"], []):
-                self._vouched[ev["invitation"]] = ev["user"]
-            else:
-                return self._ignore(ev, f"{by} doesn't write for {ev['user']}")
         elif op == "bind-user":
-            if ev.get("member") not in self.members:
-                return self._ignore(ev, f"{ev.get('member')} isn't a member")
-            self._bind(ev, ev["user"], ev["member"], by)
+            user = ev.get("user")
+            if not isinstance(user, str) or not user.startswith("user:"):
+                return self._ignore(ev, f"not a person: {user!r}")
+            key, member = ev.get("vouch_key"), ev.get("member")
+            if key and member is None:
+                self._keys.setdefault(str(key), (user, by))      # for whoever holds the invitation's secret
+            elif key and member == by:
+                if _proof_ok(str(key), str(ev.get("proof", "")), self._matter_key, by):
+                    self._proofs.append((user, by, str(key)))
+                else:
+                    self._ignore(ev, "the proof doesn't check")
+            elif member == by:
+                self._claims.append((user, by))
+            elif member in self.members:
+                self._vouches.append((user, member, by))
+            else:
+                self._ignore(ev, f"{member} isn't a member")
 
-    def _bind(self, ev, user, member, by):
-        if not isinstance(user, str) or not user.startswith("user:"):
-            return self._ignore(ev, f"not a person: {user!r}")
-        bound = self.users.get(user)
-        if bound and member in bound:
-            return
-        # the first claim is the installation's own; after that, a bound one vouches
-        if (not bound and member == by) or (bound and by in bound):
-            self.users.setdefault(user, []).append(member)
-        else:
-            return self._ignore(ev, f"{by} can't say {member} writes for {user}"
-                                    + (f" (that's {', '.join(bound)})" if bound else ""))
+    _matter_key = ""
+
+    def _people(self):
+        """Who writes for whom, from all claims and vouches at once (none of it
+        depends on order): an installation that claimed a person, and any an
+        installation of theirs vouched for, as far as vouches reach."""
+        vouches = list(self._vouches)
+        for user, member, key in self._proofs:
+            if key in self._keys and self._keys[key][0] == user:
+                vouches.append((user, member, self._keys[key][1]))
+        users: dict[str, set] = {}
+        for user, member in self._claims:
+            users.setdefault(user, set()).add(member)
+        changed = True
+        while changed:
+            changed = False
+            for user, member, by in vouches:
+                if by in users.get(user, ()) and member not in users[user]:
+                    users[user].add(member)
+                    changed = True
+        self.users = {u: sorted(ms) for u, ms in users.items()}
+        # separate claims of one person: groups no vouch connects
+        self.disputed = {}
+        for user, ms in users.items():
+            parent = {x: x for x in ms}
+
+            def find(x):
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+            for u, member, by in vouches:
+                if u == user and member in parent and by in parent:
+                    parent[find(member)] = find(by)
+            roots = {find(c) for u, c in self._claims if u == user}
+            if len(roots) > 1:
+                groups: dict[str, list] = {}
+                for x in ms:
+                    groups.setdefault(find(x), []).append(x)
+                self.disputed[user] = sorted(sorted(g) for r, g in groups.items() if r in roots)
 
     def writes_for(self, origin: str | None, author: str) -> bool:
         """Whether an event by ``author`` from ``origin`` counts: Claude's and
@@ -186,6 +238,39 @@ class Pool:
 
 class PoolError(Exception):
     pass
+
+
+VOUCH = "adhoc-vouch-v1:"
+
+
+def vouch_key(secret: str):
+    """The key an invitation's secret makes: its public half goes in the vouch,
+    and only someone holding the secret can sign with it."""
+    import hashlib
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from .origin import raw_public
+    k = Ed25519PrivateKey.from_private_bytes(hashlib.sha256((VOUCH + secret).encode()).digest())
+    return k, raw_public(k.public_key()).hex()
+
+
+def _proof_ok(key_hex: str, proof: str, matter_key: str, origin: str) -> bool:
+    from .signing import public_key, unb64
+    try:
+        public_key(bytes.fromhex(key_hex)).verify(unb64(proof), f"{VOUCH}{matter_key}:{origin}".encode())
+        return True
+    except Exception:
+        return False
+
+
+def prove(m: Matter, secret: str, user: str) -> dict:
+    """The joiner's side of a same-person invitation: show it holds the
+    secret, which the inviter's vouch key was made from."""
+    from .signing import b64
+    k, pub = vouch_key(secret)
+    proof = b64(k.sign(f"{VOUCH}{m.id}.{m.config['founder']}:{m.origin}".encode()))
+    ev = m.pool_log.append(op="bind-user", user=user, member=m.origin, vouch_key=pub, proof=proof, author=user)
+    changed(m)
+    return ev
 
 
 def founded(m: Matter) -> bool:
@@ -209,6 +294,7 @@ def found(m: Matter, author: str, name: str, addresses=(), role="member") -> dic
         people |= {e["author"] for e in feed.read() if str(e.get("author", "")).startswith("user:")}
     for u in sorted(people):
         m.pool_log.append(op="bind-user", user=u, member=m.origin, author=author)
+    changed(m)
     return ev
 
 
@@ -224,6 +310,7 @@ def claim(m: Matter, author: str):
     bound = p.users.get(author)
     if bound is None:
         m.pool_log.append(op="bind-user", user=author, member=m.origin, author=author)
+        changed(m)
     elif m.origin not in bound:
         names = ", ".join(p.members[o]["name"] for o in bound if o in p.members)
         raise PoolError(f"{author} works on another installation ({names}). To write as them here, have that "
@@ -238,7 +325,9 @@ def vouch(m: Matter, author: str, member: str) -> dict:
         raise PoolError(f"{member} isn't a member")
     if m.origin not in p.users.get(author, []):
         raise PoolError(f"this installation doesn't write for {author}, so it can't vouch for another")
-    return m.pool_log.append(op="bind-user", user=author, member=member, author=author)
+    ev = m.pool_log.append(op="bind-user", user=author, member=member, author=author)
+    changed(m)
+    return ev
 
 
 def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> dict:
@@ -246,8 +335,7 @@ def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> 
                              name=name, role=role, addresses=list(addresses), author=author)
 
 
-def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False,
-               invitation: str | None = None) -> dict:
+def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False) -> dict:
     p = Pool.load(m)
     if not p.is_member(m.origin):
         raise PoolError("this installation isn't a member of the pool, so it can't add one")
@@ -256,8 +344,7 @@ def add_member(m: Matter, author: str, cert: str, name: str, role="member", addr
         return {"member": origin, "already": True}
     return m.pool_log.append(op="add-member", member=origin, cert=cert, name=name, role=role,
                              addresses=list(addresses), author=author,
-                             **({"users": [author]} if same_person and author.startswith("user:") else {}),
-                             **({"invitation": invitation} if invitation else {}))
+                             **({"users": [author]} if same_person and author.startswith("user:") else {}))
 
 
 def remove_member(m: Matter, author: str, origin: str) -> dict:
@@ -271,8 +358,19 @@ def remove_member(m: Matter, author: str, origin: str) -> dict:
             for name, feed in (("pool", m.pool_log), ("store", m.logs["store"]), ("annotations", m.annotation_log),
                                ("work", m.work_log))}
     ev = m.pool_log.append(op="remove-member", member=origin, upto=upto, author=author)
-    save_cutoffs(m)
+    changed(m)
     return ev
+
+
+def changed(m: Matter):
+    """After membership changes here: what depends on who writes for whom, and
+    on removals (the cutoffs, and the replay the viewer follows), now."""
+    from . import annotations
+    try:
+        save_cutoffs(m)
+        annotations.save_replay(Matter(m.root))
+    except OSError:
+        pass
 
 
 def save_cutoffs(m: Matter) -> dict:

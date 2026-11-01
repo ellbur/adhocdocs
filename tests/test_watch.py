@@ -122,4 +122,29 @@ def test_the_tag_names_neither_matter_nor_installation(tmp_path):
     p = lan.packet(Matter(a.root), 7480).decode()
     assert a.id not in p and a.origin not in p and a.id.lower() not in p
     t = time.time()
-    assert lan.tag(Matter(a.root), t) != lan.tag(Matter(a.root), t + lan.WINDOW)
+    assert lan.tag(Matter(a.root), 7480, t) != lan.tag(Matter(a.root), 7480, t + lan.WINDOW)
+    assert lan.tag(Matter(a.root), 7480, t) != lan.tag(Matter(a.root), 7481, t)       # bound to the port
+
+
+def test_heard_announcements_cant_be_pointed_elsewhere_or_flood(tmp_path):
+    import json as js
+    from adhocdocs import lan, pool
+    a = Matter.create(tmp_path / "a")
+    pool.found(a, ALICE, "Alice")
+    seen = []
+    li = lan.Listener.__new__(lan.Listener)
+    import queue, threading as th
+    li.root, li.on_member, li.stopping = a.root, None, th.Event()
+    li.heard, li.probed, li.todo = {}, {}, queue.Queue(lan.Listener.QUEUE)
+    good = js.loads(lan.packet(Matter(a.root), 7480))
+    # replayed with another port: the tag doesn't fit
+    li.handle(js.dumps({**good, "p": 22}).encode(), "10.0.0.9")
+    assert li.todo.qsize() == 0
+    # the same packet over and over: looked at once
+    for _ in range(50):
+        li.handle(js.dumps(good).encode(), "10.0.0.9")
+    assert li.todo.qsize() == 1
+    # many sources: the queue stays bounded
+    for i in range(100):
+        li.handle(js.dumps(good).encode(), f"10.0.1.{i}")
+    assert li.todo.qsize() <= lan.Listener.QUEUE

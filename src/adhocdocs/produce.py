@@ -284,12 +284,12 @@ def _produce(m, out, list_file, name, prefix, start, digits, legend, families, w
         if doc in ranged and doc not in whole:
             rec["redactions"] = sorted({a["tag"] for a in ranged[doc]})
         records.append(rec)
-    for r in records:                       # families: BEGATTACH/ENDATTACH span the top parent's family
-        top = r["doc"]
+    for rec in records:                     # families: BEGATTACH/ENDATTACH span the top parent's family
+        top = rec["doc"]
         while _parent(state, top) in {x["doc"] for x in records}:
             top = _parent(state, top)
         fam = [x for x in records if x["doc"] == top or _is_descendant(state, x["doc"], top)]
-        r["begattach"], r["endattach"] = fam[0]["begin"], fam[-1]["end"]
+        rec["begattach"], rec["endattach"] = fam[0]["begin"], fam[-1]["end"]
     header = {"type": "production", "v": 1, "name": name, "prefix": prefix, "digits": digits,
               "reservation": r.get("reservation"),
               "begin": records[0]["begin"] if records else None, "end": records[-1]["end"] if records else None,
@@ -301,6 +301,9 @@ def _produce(m, out, list_file, name, prefix, start, digits, legend, families, w
     check = _privilege_check(out, records, fields, ann, flags)
     ev = m.logs["workspace"].append(op="export", kind="production", name=name, begin=header["begin"], end=header["end"],
                                     record="sha256:" + hashlib.sha256((out / "production.jsonl").read_bytes()).hexdigest())
+    if r.get("reservation"):
+        from . import numbers
+        numbers.use_here(m, r["reservation"])     # stamped: the numbers can't be given back now
     result = {**header, "path": str(out), "event": ev["id"], "privilege_check": check}
     if check["open"]:
         result["warning"] = (f"{check['open']} document(s) flagged for possible privilege were produced; "

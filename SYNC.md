@@ -214,13 +214,22 @@ makes privilege calls) still hold, for every person in the pool.
 - **People belong to installations** ([`pool.py`](src/adhocdocs/pool.py)).
   An event authored `user:alice` (a tag, a note, a publication) counts only
   if it comes from an installation that writes for Alice; from anywhere
-  else it has no effect, and is reported. The first installation to write
-  as a person claims them (founding a pool claims everyone who wrote there
-  before). After that, only one of their installations can add another:
-  `adhoc sync vouch <origin> --user alice`, or an invitation made with
-  `--same-person` (which works through a hub too: the vouch is made with
-  the invitation). So a member can't write as someone who works elsewhere.
-  A person no installation has claimed is anyone's to write as.
+  else it has no effect, and is reported. An installation comes to write
+  for a person by claiming them (the first time it writes as someone nobody
+  has claimed; founding a pool claims everyone who wrote there before), or
+  by being vouched for by one of theirs: `adhoc sync vouch <origin> --user
+  alice`, or an invitation made with `--same-person`, whose joiner proves
+  it holds the invitation's secret (the hub that accepts it sees only the
+  secret's hash, so it can't). A person no installation has claimed is
+  anyone's to write as.
+- **None of it depends on the order of events**, since event IDs are the
+  writer's to choose: who writes for whom is worked out from all the claims
+  and vouches at once, so a backdated claim takes no one over. Short of
+  per-person keys, a member running modified code *can* claim a person
+  someone else already claimed. Then both write for them, and the person is
+  **disputed**: `adhoc sync conflicts` reports it to everyone, so the
+  impersonation is plain to see, and removing the installation that isn't
+  theirs settles it. (The write path refuses to do this.)
 - **Claude's events say where they came from:** `claude`, with the origin
   and, as now, `requested_by`. Claude on Bob's machine can't untag Alice's
   tag, just as it can't untag Bob's.
@@ -307,6 +316,11 @@ numbers back.
 - **With a hub**, reserving syncs with it first, to hear of others'
   reservations, and after, to check no one took the same numbers in the
   meantime, so a clash needs two people reserving at the same moment.
+- **Only whoever reserved numbers can give them back**, from the same
+  installation, and only until they're stamped: a finished production
+  marks its reservation used. A reservation is at most a million numbers,
+  starting no more than a million past the next free one, so no one can
+  push numbering out of reach.
 - **Without one**, two installations that produce before syncing can
   reserve the same numbers. Replay keeps the earlier reservation, and
   `adhoc sync conflicts` reports the later (`numbers-overlap`): that
@@ -382,8 +396,12 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   matter's tag connects, checks the certificate is an active member's, and
   syncs with it there. Someone on the network who already knows a matter's
   ID and founder could recognise the tag, which tells them no more than
-  TLS's SNI does when members sync on that network. `--no-lan` turns it
-  off.
+  TLS's SNI does when members sync on that network. The tag covers the
+  announced port, so a packet heard can't be sent again pointing
+  elsewhere; a watcher looks at a few packets a minute from any one
+  address, probes each address at most every two minutes, and probes on a
+  worker with a short queue, so packets from the network can't make it
+  open connections at their pace. `--no-lan` turns it off.
 - **Relaying:** when two members can't reach each other, they don't need
   to; the logs reach each one through anyone they can reach (usually the
   hub).

@@ -133,3 +133,31 @@ def test_a_session_reserves_through_the_api(two, tmp_path, monkeypatch):
     produce.produce(a, a_list(a, tmp_path, "pa", docs[:1]), "vol001", "HFS")
     (r,) = annotations.Annotations.load(Matter(a.root)).ranges("bates:HFS")
     assert r["by"] == "claude" and r["name"] == "vol001"
+
+
+def test_only_whoever_reserved_numbers_gives_them_back_and_only_unused(two, tmp_path):
+    from adhocdocs.annotations import Refused
+    a, b, docs = two
+    r = produce.produce(a, a_list(a, tmp_path, "pa", docs[:1]), "vol001", "HFS")
+    assert r["reservation"]                                      # the header records it
+    (res,) = annotations.Annotations.load(Matter(a.root)).ranges("bates:HFS")
+    assert res.get("used")
+    with pytest.raises(Refused, match="on documents already"):
+        numbers.release(Matter(a.root), res["by"], res["reservation"])
+    with pytest.raises(Refused, match="someone else"):
+        numbers.release(Matter(a.root), "claude", res["reservation"])
+    held = numbers.reserve(Matter(a.root), ALICE, "bates:XYZ", 10)
+    exchange(a, b)
+    with pytest.raises(Refused, match="another installation|someone else"):
+        numbers.release(Matter(b.root), ALICE, held["reservation"])     # same person, other installation
+    numbers.release(Matter(a.root), ALICE, held["reservation"])
+
+
+def test_reservations_have_limits(two):
+    from adhocdocs.annotations import Refused
+    a, b, docs = two
+    with pytest.raises(Refused, match="at most"):
+        numbers.reserve(a, ALICE, "bates:HFS", 10 ** 15)
+    with pytest.raises(Refused, match="too far"):
+        numbers.reserve(a, ALICE, "bates:HFS", 5, start=10 ** 12)
+    assert annotations.Annotations.load(Matter(a.root)).next_number("bates:HFS") == 1

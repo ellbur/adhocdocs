@@ -198,6 +198,8 @@ def _exhibits(m, out, list_file, name, prefix, start, witness, when, originals, 
     _exhibit_list(out, header, records)
     ev = m.logs["workspace"].append(op="export", kind="exhibits", name=name, first=header["first"], last=header["last"],
                                     record="sha256:" + hashlib.sha256((out / "exhibits.jsonl").read_bytes()).hexdigest())
+    if r:
+        numbers.use_here(m, r["reservation"])     # stamped: the numbers can't be given back now
     return {**header, "path": str(out), "event": ev["id"]}
 
 

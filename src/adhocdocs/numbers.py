@@ -94,6 +94,12 @@ def release(m: Matter, author: str, reservation: str) -> dict:
     return {"released": reservation, "event": ev["id"]}
 
 
+def use(m: Matter, author: str, reservation: str) -> dict:
+    """The numbers are on documents now: they can't be given back."""
+    (ev,) = annotations.write(m, author, {"op": "use-numbers", "reservation": reservation})
+    return {"used": reservation, "event": ev["id"]}
+
+
 def _in_session(m: Matter) -> bool:
     return bool(os.environ.get("ADHOC_ANN_SOCKET")) and not os.access(m.root / "annotations", os.W_OK)
 
@@ -117,3 +123,10 @@ def release_here(m: Matter, reservation: str) -> dict:
         from . import annapi
         return annapi.request(m, {"reservation": reservation}, "/release")
     return release(m, host_author(), reservation)
+
+
+def use_here(m: Matter, reservation: str) -> dict:
+    if _in_session(m):
+        from . import annapi
+        return annapi.request(m, {"reservation": reservation}, "/use")
+    return use(m, host_author(), reservation)

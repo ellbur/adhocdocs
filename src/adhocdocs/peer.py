@@ -25,7 +25,7 @@ Routes, under ``/v1/<matter ID>.<founder>/``:
 ``POST missing``                      ``{"hashes": [...]}``: which it lacks
 ``GET objects/<hash>``                an object's bytes
 ``PUT objects/<hash>``                store an object (checked against its hash)
-``POST join``                         ``{"secret", "cert", "name"}``: an invitation
+``POST join``                         ``{"digest", "cert", "name"}``: an invitation
                                       used (:mod:`adhocdocs.invite`)
 ``POST invites``                      a member leaves an invitation here (a hub)
 ``GET wait?seen=F``                   answers when the logs' fingerprint isn't
@@ -318,6 +318,9 @@ class Server:
 
     def __init__(self, matters: list[Matter], host="0.0.0.0", port=PORT, on_change=None, hub=None):
         self._list = list(matters)
+        self._stamp, self._by_key = None, {}
+        self._waits: dict[str, int] = {}
+        self._wait_lock = threading.Lock()
         self.nonces = _Nonces()
         self.on_change = on_change
         self.hub = hub                      # adhocdocs.hub.Hub: its own routes, under /hub/v1/
@@ -343,17 +346,37 @@ class Server:
         self.httpd.daemon_threads = True
         self.httpd.socket = default.wrap_socket(self.httpd.socket, server_side=True, do_handshake_on_connect=False)
 
+    MAX_WAITS = 4
+
+    def wait_slot(self, origin: str, delta: int) -> bool:
+        """Count a member's long polls; refuse more than a few at once."""
+        with self._wait_lock:
+            n = self._waits.get(origin, 0)
+            if delta > 0 and n >= self.MAX_WAITS:
+                return False
+            self._waits[origin] = n + delta
+            return True
+
     @property
     def matters(self) -> dict[str, Matter]:
-        """The matters served, by :func:`pool_key`: looked up afresh, since a
-        matter's pool can be founded while it's served (its first invitation)."""
-        out = {}
+        """The matters served, by :func:`pool_key`. A matter's pool can be
+        founded while it's served (its first invitation), so this follows
+        ``matter.toml``, rereading only when one changes."""
+        stamp = []
         for m in self._list:
             try:
-                out[pool_key(m)] = m
-            except SyncError:
-                pass            # no pool yet: nothing to sync
-        return out
+                stamp.append((m.root, (m.root / "matter.toml").stat().st_mtime_ns))
+            except FileNotFoundError:
+                stamp.append((m.root, None))
+        if stamp != self._stamp:
+            out = {}
+            for m in self._list:
+                try:
+                    out[pool_key(m)] = m
+                except SyncError:
+                    pass            # no pool yet: nothing to sync
+            self._by_key, self._stamp = out, stamp
+        return self._by_key
 
     def _context(self, identity) -> ssl.SSLContext:
         if identity.dir not in self._contexts:
@@ -539,10 +562,20 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, invite.register(m, json.loads(body), who))
         if segs == ["wait"] and cmd == "GET":
             # a long poll: answers when this matter's logs change (adhocdocs.watch)
+            import math
             from .watch import wait_for_change
-            timeout = min(float(q.get("timeout", ["50"])[0]), 120)
+            try:
+                timeout = float(q.get("timeout", ["50"])[0])
+            except ValueError:
+                timeout = 0
+            timeout = min(max(timeout, 0), 120) if math.isfinite(timeout) else 0
             seen = q.get("seen", [None])[0]
-            fp = wait_for_change(m, seen, timeout) if seen else wait_for_change(m, None, 0)
+            if not self.srv.wait_slot(who, +1):
+                return self._json(429, {"error": "too many waits at once"})
+            try:
+                fp = wait_for_change(m, seen, timeout) if seen else wait_for_change(m, None, 0)
+            finally:
+                self.srv.wait_slot(who, -1)
             return self._json(200, {"fingerprint": fp})
         if segs == ["vector"] and cmd == "GET":
             return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m)})
