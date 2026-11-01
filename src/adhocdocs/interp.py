@@ -657,6 +657,29 @@ def search(m, q: str, only: list[str] | None = None, limit: int | None = None) -
     return header, items
 
 
+def search_list(header: dict, items: list[dict]) -> tuple[dict, list[dict]]:
+    """``interp search`` results as a list file (LISTS.md), one row per hit,
+    grouped by interpretation. A row's locator is the evidence its record
+    points at, so the linked preview opens what can be quoted; a hit with no
+    evidence opens the interpretation's first input, and says so. The header
+    is marked ``"unofficial": true``, and the list display captions it as
+    Claude's readings."""
+    head = {"type": "list", "v": 1, "title": f"Claude's readings: {header['query']}",
+            "columns": ["where", "snippet", "evidence"], "made_by": "interp search", "query": header["query"],
+            "unofficial": True, "note": header["note"],
+            "search": {k: header[k] for k in ("of", "parsed", "exhaustive", "coverage") if k in header}}
+    rows = []
+    for it in items:
+        group = f"{it['title']} ({it['interp']})" + (" · stale" if it.get("stale") else "")
+        for h in it["hits"]:
+            where = (h["ptr"] if "ptr" in h else f"row {h['row']}, {h['column']}" if "row" in h else f"line {h['line']}")
+            ev = h.get("evidence")
+            rows.append({"loc": ev or f"doc:{it['inputs'][0]}", "group": group,
+                         "fields": {"reading": it["interp"], "where": where, "snippet": h["snippet"]["text"],
+                                    "evidence": "linked" if ev else "none: opens the input", "unofficial": True}})
+    return head, rows
+
+
 def _nodes(node):
     yield node
     for x in getattr(node, "items", ()):

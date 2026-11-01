@@ -111,7 +111,12 @@ evidence locator its record gives, if any. Hits are marked
 quoted is the evidence, not the hit. Field filters (`from:`, `tag:`) are
 refused: they describe documents. Pictures aren't searched, and the
 coverage says how many were left out. It is a separate search on purpose,
-so a reading never turns up among `search`'s results.
+so a reading never turns up among `search`'s results. `interp search --list
+F` writes the hits as a list file for `view list F`: a row per hit, grouped
+by reading, each opening the evidence its record points at (or, with no
+evidence, the reading's input, and saying so). The header is marked
+`"unofficial": true`, and the list display captions it as Claude's
+readings.
 
 **Showing them.** `interp view` puts one in a viewer pane and `interp
 render` writes HTML: a table, a tree (collapsible, no scripts), text, a
@@ -172,8 +177,7 @@ Read as records, the largest payment went to :interp{#top-party}.
 
 ## Not built yet
 
-- Semantic search of interpretations, and showing `interp search` hits in
-  a list pane.
+- Semantic search of interpretations.
 - Pointers into XML (an XPath subset), and pointers into CSV and
   spreadsheets by header name rather than cell.
 - Interpretations travelling with published pages: publish the

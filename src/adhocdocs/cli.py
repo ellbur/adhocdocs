@@ -668,6 +668,8 @@ adhocdocs doesn't know, kept apart from the documents' own text. See DATA.md.
   interp search QUERY [--name N]...  search the outputs, with search's query language (no field
                                      filters); /p means the same record. Hits are places in your
                                      readings, each with the evidence locator its record gives
+                                     (--list F writes them as a list file, for view list F:
+                                     captioned as your readings; each row opens its evidence)
   interp render N [--ptr P] [--as A] [-o out.html]
   interp view N [--ptr P] [--as A] [--pane P]   show it in the viewer
 
@@ -703,6 +705,7 @@ def interp(argv=None):
     s.add_argument("query")
     s.add_argument("--name", action="append", help="only this interpretation (repeatable)")
     s.add_argument("--limit", type=int, help="most hits to print per interpretation")
+    s.add_argument("--list", dest="list_file", help="also write the hits as a list file, for view list")
     for name in ("render", "view"):
         s = sub.add_parser(name)
         s.add_argument("name")
@@ -747,6 +750,9 @@ def interp(argv=None):
                 sys.exit(1)
         elif a.cmd == "search":
             header, items = im.search(m, a.query, a.name, a.limit)
+            if a.list_file:
+                lists.write(a.list_file, *im.search_list(header, items))
+                header = {**header, "list": a.list_file}
             out(header)
             for it in items:
                 out(it)

@@ -337,3 +337,28 @@ def test_search_interpretations(m, tmp_path):
     header, items = interp.search(m, "pallet", only=["tab"])
     assert header["coverage"]["searched"] == 1
     assert items[0]["hits"][0]["row"] == 1 and items[0]["hits"][0]["column"] == "what"
+
+
+def test_interp_search_as_a_list(m, tmp_path):
+    import base64
+    from adhocdocs import lists, view
+    run_ledger(m)
+    led = doc_named(m, "ledger.txl")
+    csvp = tmp_path / "csv.py"
+    csvp.write_text("print('who,what'); print('dk,signed for pallet 3')\n")
+    interp.run(m, [led], "tab", [sys.executable, str(csvp)], "A table", type_="csv")
+    header, items = interp.search(m, "bellwether OR pallet")
+    head, rows = interp.search_list(header, items)
+    assert head["unofficial"] and head["made_by"] == "interp search"
+    by = {r["fields"]["reading"]: r for r in rows}
+    assert by["ledger"]["loc"] == f"doc:{led}#bytes=32,56"            # the evidence, not the hit
+    assert by["ledger"]["fields"]["where"] == "/records/1/party"
+    assert by["tab"]["loc"] == f"doc:{led}" and by["tab"]["fields"]["evidence"].startswith("none")
+    assert by["tab"]["fields"]["where"] == "row 1, what"
+    assert {r["group"] for r in rows} == {"Ledger records (ledger)", "A table (tab)"}
+    p = tmp_path / "r.list.jsonl"
+    lists.write(p, head, rows)
+    files, seq = view.list_html(m, p)
+    page = base64.b64decode(files["index.html"]).decode()
+    assert "Interpretation by Claude" in page and "Bellwether" in page
+    assert seq[0].startswith("doc:")
