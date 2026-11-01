@@ -197,6 +197,32 @@ can't change yours.
 Everything Claude writes goes to `<matter>/workspace`: pages, lists,
 exports and productions. Open them from there on your own machine.
 
+### Syncing between machines
+
+A matter can live on several machines, say your laptop, a colleague's
+desktop and a firm server, each with a full copy that works offline.
+Documents, tags, notes, entities and published work sync between them.
+Each workspace stays private: to share a page or chronology, ask Claude to
+publish it (or `adhoc publish`), and it appears in `<matter>/work/`
+everywhere.
+
+```sh
+# on your machine: an invitation, and be reachable while they join
+uv run adhoc --matter ~/matters/demo sync invite --user me --address mylaptop.local:7480
+uv run adhoc --matter ~/matters/demo sync serve --listen 0.0.0.0:7480
+
+# on theirs: join into a new directory
+uv run adhoc sync join <code> ~/matters/demo --name "Dana's desktop"
+
+# later, on either
+uv run adhoc --matter ~/matters/demo sync now
+```
+
+With a hub (an always-on server: `adhoc hub --help`), push the matter to it
+once with `adhoc sync push <code>`. Invitations then go through the hub, and
+everyone syncs through it, whoever else is offline. Treat invitation and hub
+codes as passwords. Details: [SYNC.md](SYNC.md).
+
 ### Afterwards
 
 ```sh
@@ -265,7 +291,7 @@ data system-wide, put `eng.traineddata` in
 - [VIEWER.md](VIEWER.md): the document viewer
 - [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
 - [WINDOWS.md](WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
-- [SYNC.md](SYNC.md): syncing a matter across installations, peer to peer or through a hub (designed, not built)
+- [SYNC.md](SYNC.md): syncing a matter across installations, peer to peer or through a hub
 
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.

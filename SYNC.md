@@ -1,15 +1,8 @@
 # Syncing a Matter Across Installations
 
-*Status: being built, in the steps under "Order of building". Built: step 1,
-one log per installation ([`matter.py`](src/adhocdocs/matter.py),
-[`origin.py`](src/adhocdocs/origin.py)), and step 2, conflicts resolved on
-replay ([`annotations.py`](src/adhocdocs/annotations.py),
-[`sync.py`](src/adhocdocs/sync.py)), step 3, publishing work product
-([`work.py`](src/adhocdocs/work.py)), and step 4, signed logs, the pool and
-sync between members ([`signing.py`](src/adhocdocs/signing.py),
-[`pool.py`](src/adhocdocs/pool.py), [`peer.py`](src/adhocdocs/peer.py),
-[`invite.py`](src/adhocdocs/invite.py)). Decisions still open are at the
-end.*
+*Status: built, in the five steps under "Order of building", with tests for
+each. What isn't built yet is marked *Not built yet* where it comes up.
+Decisions still open are at the end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
 desktop, a firm server. Cloud document platforms solve this by keeping the
@@ -26,8 +19,9 @@ Two things differ from Syncthing:
    matter's one **pool**, and every member learns of every other member.
    There is no chain of pairwise shares to get wrong.
 2. **A hub, optionally.** A pool can include a **hub**: an always-on server
-   with a stable address. Anyone can **push** a matter to it, without its
-   administrator pulling it in, and others join through it. A hub is a
+   with a stable address. Anyone its administrator has enrolled can **push**
+   a matter to it, without the administrator pulling it in, and others join
+   through it. A hub is a
    member like any other, just always reachable.
 
 ## What syncs and what doesn't
@@ -256,16 +250,27 @@ machine, `adhoc sync join <code> <dir>` creates an empty matter, connects
 is added by the inviter, in the name of the person who invited it. Then it
 syncs everything.
 
-**Pushing to a hub.** On a matter with no pool yet, `adhoc sync push
-https://hub.example.com` adds the hub as a member and uploads. A hub accepts
-a new matter from people its administrator has enrolled (a list of user keys,
-or an enrollment token), without the administrator doing anything per
-matter. Invitations from then on name the hub, so new members can join while
-the original laptop is closed.
+**Pushing to a hub** ([`hub.py`](src/adhocdocs/hub.py)). The hub's
+administrator enrolls people (`adhoc hub enroll --person alice`), which
+prints a hub code: the hub's addresses, the hash of its key, and a token.
+On a member, `adhoc sync push <code>` founds the pool if there isn't one,
+sends the hub the pool's membership log, and the hub (checking the pusher
+is a member) makes a replica with an origin of its own. The member adds
+the hub to the pool with the role `hub`, and syncs everything to it. No one
+does anything per matter on the hub. Revoking a person stops their code;
+matters already on the hub are governed by their own pools.
 
-**Leaving and removal.** `remove-member` stops every other member from
-syncing with that installation. It can't recall what was already copied;
-the doc says so plainly, and so does the command.
+**Invitations through the hub.** When the pool has a hub, `adhoc sync
+invite` leaves the invitation there (only its secret's hash) and the code
+names the hub, so a new member can join, and get everything, while the
+inviting laptop is closed. The hub adds the new member in the inviter's
+name.
+
+**Leaving and removal.** `adhoc sync remove` stops every other member from
+syncing with that installation, once they've synced the removal. It can't
+recall what was already copied; the command says so. *Not built yet:*
+events a removed member wrote after its removal can still arrive by way of
+a member that hadn't heard of the removal yet; they should be set aside.
 
 ### Isolation (Principle 2)
 
@@ -328,20 +333,25 @@ matter, uses public discovery servers by default, and is another daemon to
 install. The pool, membership and authorship rules would be ours either
 way, and with them the protocol is small.
 
-## What changes in existing code
+## Commands
 
-- `Matter`: `matter.toml` with the matter ID; `EventLog` per origin; feeds
-  that read the union in replay order; HLC event IDs; signing.
-- `State.replay`, `Annotations.apply` and `check`: replay order, refusal on
-  replay, the conflict cases above.
-- Indexes: vector cursors.
-- The viewer (`matter.rs`, `protocol.rs`) reads per-origin logs.
-- Container mounts: `work/` read-only; `pool/` read-only for `adhoc
-  status`; `sync/` never.
-- Migration: an existing matter's logs become the logs of the installation
-  that holds them. Nothing is rewritten.
-- New: `work` (publish, checkout, log), `adhoc sync` (invite, join, push,
-  status, conflicts, remove), `adhoc hub serve`.
+On the host (the user's; Claude can't run them in a session):
+
+| Command | Does |
+|---|---|
+| `adhoc sync invite --user me [--address host:port]` | an invitation code (founds the pool the first time) |
+| `adhoc sync join <code> <dir>` | join with it, into a new matter directory, and sync |
+| `adhoc sync serve [--listen …] [--advertise host:port --user me] [--every N]` | be reachable by the other members |
+| `adhoc sync now` | sync with every member that says where it listens |
+| `adhoc sync push <hub code> --user me` | put the matter on a hub |
+| `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |
+| `adhoc sync remove <origin> --user me` | take a member out of the pool |
+| `adhoc publish <path> --user me`, `adhoc retire <name> --user me` | share work product as the user |
+| `adhoc hub init \| enroll \| revoke \| serve \| matters` | run a hub |
+
+In a session: `work ls | publish | checkout | log | retire` (publishing goes
+through the annotation API, stamped `claude`), `ann log --cursor`, and
+`adhoc status` for the pool's members.
 
 ## Order of building
 
@@ -354,7 +364,8 @@ way, and with them the protocol is small.
 3. Publishing work product. *Built; tests in [`test_work.py`](tests/test_work.py).*
 4. Signing, the pool log, and sync between two members on a LAN. *Built;
    tests in [`test_peer.py`](tests/test_peer.py), over TLS on localhost.*
-5. The hub, push and invitations through it.
+5. The hub, push and invitations through it. *Built; tests in
+   [`test_hub.py`](tests/test_hub.py).*
 
 ## Open questions
 

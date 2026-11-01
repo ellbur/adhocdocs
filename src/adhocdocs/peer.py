@@ -26,7 +26,11 @@ Routes, under ``/v1/<matter ID>/``:
 ``PUT objects/<hash>``                store an object (checked against its hash)
 ``POST join``                         ``{"secret", "cert", "name"}``: an invitation
                                       used (:mod:`adhocdocs.invite`)
+``POST invites``                      a member leaves an invitation here (a hub)
 ====================================  ===========================================
+
+A hub (:mod:`adhocdocs.hub`) also answers ``POST /hub/v1/adopt``, under SNI
+``adhoc-hub`` and its own key, to take in a matter pushed to it.
 
 **A sync** (:func:`sync_with`) runs from the client: membership first (it
 says whose events to accept), then the other feeds. For each log, whoever
@@ -260,21 +264,33 @@ class _Nonces:
 # -- the server --------------------------------------------------------------------------------------
 
 
+HUB_SNI = "adhoc-hub"
+
+
+def _server_context(identity) -> ssl.SSLContext:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.load_cert_chain(identity.cert_path(), identity.key_path())
+    return ctx
+
+
 class Server:
     """Serves matters to their pools' members on one port."""
 
-    def __init__(self, matters: list[Matter], host="0.0.0.0", port=PORT, on_change=None):
+    def __init__(self, matters: list[Matter], host="0.0.0.0", port=PORT, on_change=None, hub=None):
         self.matters = {m.id: m for m in matters}
         if None in self.matters:
             raise SyncError("a matter without an ID can't be served (open it on the host once)")
         self.nonces = _Nonces()
         self.on_change = on_change
+        self.hub = hub                      # adhocdocs.hub.Hub: its own routes, under /hub/v1/
         self.contexts = {}
+        if hub is not None:
+            self.contexts[HUB_SNI] = _server_context(hub.identity)
         for m in matters:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-            ctx.load_cert_chain(m.identity.cert_path(), m.identity.key_path())
-            self.contexts[sni_name(m.id)] = ctx
+            self.contexts[sni_name(m.id)] = _server_context(m.identity)
+        if not self.contexts:
+            raise SyncError("nothing to serve")
         default = next(iter(self.contexts.values()))
 
         def pick(sock, name, _ctx):
@@ -295,10 +311,7 @@ class Server:
 
     def add(self, m: Matter):
         """Serve another matter (a hub, when one is pushed to it)."""
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-        ctx.load_cert_chain(m.identity.cert_path(), m.identity.key_path())
-        self.contexts[sni_name(m.id)] = ctx
+        self.contexts[sni_name(m.id)] = _server_context(m.identity)
         self.matters[m.id] = m
 
     def serve_forever(self):
@@ -349,9 +362,11 @@ class _Handler(BaseHTTPRequestHandler):
             return None, None, None
         return self.srv.matters[segs[1]], segs[2:], urllib.parse.parse_qs(parts.query)
 
-    def _auth(self, m: Matter, body: bytes | None, join_cert: bytes | None = None) -> str:
+    def _auth(self, m: Matter | None, body: bytes | None, join_cert: bytes | None = None,
+              server_origin: str | None = None) -> str:
         """The requesting origin, if the request is signed by it, fresh, and
-        (except to join) from an active member."""
+        (except to join, with ``join_cert``) from an active member of ``m``'s
+        pool."""
         h = self.headers.get("Authorization", "")
         fields = dict(x.split("=", 1) for x in h.removeprefix("Adhoc ").split(",") if "=" in x)
         try:
@@ -369,7 +384,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not p.is_member(origin):
                 raise PermissionError(f"{origin} isn't a member of this matter's pool")
             _, raw = cert_origin(p.cert(origin))
-        msg = _message(self.command, self.path, ts, nonce, body_hash(body), m.origin)
+        msg = _message(self.command, self.path, ts, nonce, body_hash(body), server_origin or m.origin)
         try:
             public_key(raw).verify(unb64(sig), msg)
         except Exception:
@@ -379,6 +394,8 @@ class _Handler(BaseHTTPRequestHandler):
         return origin
 
     def _handle(self):
+        if self.srv.hub is not None and self.path.startswith("/hub/v1/"):
+            return self._hub()
         m, segs, q = self._route()
         if m is None:
             return self._json(404, {"error": "no such matter here"})
@@ -401,8 +418,29 @@ class _Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
             return self._json(409, {"error": f"{type(e).__name__}: {e}"})
 
+    def _hub(self):
+        """The hub's own routes: adopting a matter pushed to it."""
+        hub = self.srv.hub
+        body = self._body()
+        try:
+            req = json.loads(body)
+            who = self._auth(None, body, req.get("cert", "").encode(), hub.identity.origin)
+            if self.path == "/hub/v1/adopt" and self.command == "POST":
+                m, out = hub.adopt(req, who)
+                if m.id not in self.srv.matters:
+                    self.srv.add(m)
+                return self._json(200, out)
+            return self._json(404, {"error": "no such route"})
+        except PermissionError as e:
+            return self._json(403, {"error": str(e)})
+        except (SyncError, BadLog, poolmod.PoolError, KeyError, ValueError) as e:
+            return self._json(409, {"error": f"{type(e).__name__}: {e}"})
+
     def _dispatch(self, m, segs, q, body, who):
         cmd = self.command
+        if segs == ["invites"] and cmd == "POST":
+            from . import invite
+            return self._json(200, invite.register(m, json.loads(body), who))
         if segs == ["vector"] and cmd == "GET":
             return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m)})
         if len(segs) == 3 and segs[0] == "events" and segs[1] in FEEDS:
@@ -503,16 +541,19 @@ class _Connection(http.client.HTTPSConnection):
 
 
 class Peer:
-    """A connection to one member, checked to be the origin we meant."""
+    """A connection to one member, checked to be the origin we meant.
+    (``sni`` and ``base`` reach a hub's own routes instead.)"""
 
-    def __init__(self, m: Matter, address: str, origin: str, timeout=60):
+    def __init__(self, m: Matter, address: str, origin: str, timeout=60, sni=None, base=None):
         self.m, self.origin = m, origin
         self.host, self.port = split_address(address)
         self.timeout = timeout
+        self.sni = sni or sni_name(m.id)
+        self.base = base or f"/v1/{urllib.parse.quote(m.id)}"
         self.conn = None
 
     def _connect(self):
-        self.conn = _Connection(self.host, self.port, self.origin, sni_name(self.m.id), self.timeout)
+        self.conn = _Connection(self.host, self.port, self.origin, self.sni, self.timeout)
         self.conn.connect()
 
     def close(self):
@@ -521,7 +562,7 @@ class Peer:
             self.conn = None
 
     def request(self, method, route, obj=None, raw=None, stream=None, length=None):
-        path = f"/v1/{urllib.parse.quote(self.m.id)}/{route}"
+        path = f"{self.base}/{route}"
         body = json.dumps(obj).encode() if obj is not None else raw
         signed = None if stream is not None else (body if body is not None else b"")
         headers = {"Authorization": "Adhoc " + auth_header(self.m, method, path, signed, self.origin)}
