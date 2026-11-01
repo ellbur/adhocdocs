@@ -1,8 +1,10 @@
-"""Mailboxes too large for memory: an mbox or PST on disk is copied into the
-store in blocks and read a message at a time, and an interrupted ingest
-finishes when run again."""
+"""Containers too large for memory: a zip, mbox or PST is copied into the
+store in blocks and read from there a member at a time, however it
+arrived, and an interrupted ingest finishes when run again."""
 
 import mailbox
+import os
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -67,11 +69,11 @@ def _streamed(m, path):
     real_read, real_put = Path.read_bytes, ObjectStore.put_bytes
 
     def read_bytes(self):
-        assert self.suffix not in (".mbox", ".pst"), f"{self} read into memory"
+        assert self.suffix not in (".mbox", ".pst", ".zip"), f"{self} read into memory"
         return real_read(self)
 
     def put_bytes(self, data):
-        assert not data.startswith((b"From ", b"!BDN")), "a whole mailbox stored from memory"
+        assert not data.startswith((b"From ", b"!BDN", b"PK\x03\x04")), "a whole container stored from memory"
         return real_put(self, data)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(Path, "read_bytes", read_bytes)
@@ -154,3 +156,120 @@ def test_mailbox_that_breaks_part_way(tmp_path, box, monkeypatch):
     m = Matter(m.root)
     assert len(m.state.children[doc]) == 5
     assert "bad sector" in m.objects.get_object(m.state.metadata[doc])["extraction_error"]
+
+
+# Containers inside containers: zips on disk, and mailboxes that arrive
+# inside a zip or as an attachment. All are stored first and read from the
+# store a member at a time.
+
+def _zip(path, members, compression=zipfile.ZIP_DEFLATED):
+    path.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression) as z:
+        for name, data in members:
+            z.writestr(name, data)
+    return path
+
+
+def _docs_by_part(m, doc):
+    """The family under doc as {part path: content}, recursively."""
+    out = {}
+
+    def walk(d, prefix):
+        for c in m.state.children.get(d, []):
+            obj = m.objects.get_object(c)
+            out[prefix + obj["part"]] = m.state.documents[c]
+            walk(c, prefix + obj["part"] + ">")
+    walk(doc, "")
+    return out
+
+
+def test_zip_on_disk_is_streamed_and_matches_in_memory(tmp_path, box):
+    z = _zip(tmp_path / "in" / "export.zip", [("mail/export.mbox", box.read_bytes()), ("outlook/k.pst", PST.read_bytes()),
+                                              ("loose/one.eml", EML.read_bytes()), ("empty/", b"")])
+    whole = Matter.create(tmp_path / "whole")
+    in_memory = ingest_bytes(whole, z.read_bytes(), z.name, ident(z))
+
+    m = Matter.create(tmp_path / "m")
+
+    def no_read(self, *a, **k):
+        raise AssertionError("a zip member read into memory")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(zipfile.ZipFile, "read", no_read)
+        [doc] = _streamed(m, z)
+    assert doc == in_memory
+    a, b = _docs_by_part(Matter(m.root), doc), _docs_by_part(Matter(whole.root), in_memory)
+    assert a == b
+    assert sum(1 for p in a if p.startswith("mail/export.mbox>")) == N
+    assert sum(1 for p in a if p.startswith("outlook/k.pst>") and p.count(">") == 1) == 5
+
+
+def test_mailbox_attached_to_an_email_is_read_from_the_store(tmp_path, box, monkeypatch):
+    from email.message import EmailMessage
+
+    from adhocdocs.extract import archive, pst
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "a@x.example", "b@x.example", "the mailboxes you asked for"
+    msg.set_content("attached")
+    msg.add_attachment(PST.read_bytes(), maintype="application", subtype="vnd.ms-outlook", filename="k.pst")
+    msg.add_attachment(box.read_bytes(), maintype="application", subtype="mbox", filename="export.mbox")
+
+    def whole(_):
+        raise AssertionError("a mailbox extracted from memory")
+    monkeypatch.setattr(pst, "extract_pst", whole)
+    monkeypatch.setattr(archive, "extract_mbox", whole)
+    m = Matter.create(tmp_path / "m")
+    doc = ingest_bytes(m, msg.as_bytes(), "send.eml", {"source": {"collection": "c", "path": "send.eml"}})
+    m = Matter(m.root)
+    [k, x] = m.state.children[doc]
+    assert len(m.state.children[k]) == 5 and len(m.state.children[x]) == N
+
+    # the same messages as the PST ingested on its own
+    alone = Matter.create(tmp_path / "alone")
+    [p] = ingest_paths(alone, [PST], None, "c")
+    assert set(_docs_by_part(m, k).values()) == set(_docs_by_part(Matter(alone.root), p).values())
+
+
+def test_unreadable_zip_member_loses_only_itself(tmp_path):
+    z = _zip(tmp_path / "in" / "x.zip", [("a.txt", b"first " * 1000), ("b.txt", b"second " * 1000)])
+    raw = bytearray(z.read_bytes())
+    i = raw.index(b"a.txt") + len("a.txt") + 10      # into a.txt's compressed data
+    raw[i] ^= 0xFF
+    z.write_bytes(bytes(raw))
+    m = Matter.create(tmp_path / "m")
+    [doc] = ingest_paths(m, [z], None, "c")
+    m = Matter(m.root)
+    [kid] = m.state.children[doc]
+    assert m.objects.get_object(kid)["part"] == "b.txt"
+    meta = m.objects.get_object(m.state.metadata[doc])
+    assert meta["unreadable"] == 1 and meta["members"] == 1
+    assert not list((m.store_dir / "objects").glob("*.tmp"))
+
+
+def test_zip_kind_from_a_large_file(tmp_path):
+    """A zip's directory is at its end, past the first bytes: file_kind
+    reads it there. Office files stay office files."""
+    import io
+
+    from adhocdocs.extract import kind_for
+    big = _zip(tmp_path / "big", [("filler.bin", os.urandom(200_000)), ("a.txt", b"x")], zipfile.ZIP_STORED)
+    assert file_kind(big, None) == "zip" == kind_for(None, big.read_bytes())
+    doc = io.BytesIO()
+    with zipfile.ZipFile(doc, "w") as d:
+        d.writestr("filler.bin", os.urandom(200_000))
+        d.writestr("word/document.xml", "<w/>")
+    (tmp_path / "doc").write_bytes(doc.getvalue())
+    assert file_kind(tmp_path / "doc", None) == "docx"
+
+
+def test_file_nothing_can_extract_is_not_read(tmp_path):
+    f = tmp_path / "in" / "blob.dat"
+    f.parent.mkdir()
+    f.write_bytes(b"\x00\xff" * 100_000)
+
+    def no_read(self):
+        raise AssertionError(f"{self} read into memory")
+    m = Matter.create(tmp_path / "m")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "read_bytes", no_read)
+        [doc] = ingest_paths(m, [f], None, "c")
+    assert m.objects.get_object(m.state.metadata[doc])["kind"] == "other"

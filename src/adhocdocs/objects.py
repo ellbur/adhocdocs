@@ -9,6 +9,7 @@ serialization. Every object is stored in a git-like layout,
 import hashlib
 import json
 import os
+import secrets
 from pathlib import Path
 
 HASH_PREFIX = "sha256:"
@@ -83,24 +84,35 @@ class ObjectStore:
     def put_file(self, path, chunk: int = 1 << 20) -> str:
         """Store a file's bytes without holding them in memory. The file is
         hashed first, so one already in the store is only read, not copied;
-        otherwise it is copied and hashed again on the way, and refused if
-        it changed in between."""
+        otherwise it is copied and refused if it changed in between."""
         with open(path, "rb") as f:
             h = HASH_PREFIX + hashlib.file_digest(f, "sha256").hexdigest()
         if self.has(h):
             return h
-        p = self._path(self.roots[0], h)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        with open(path, "rb") as f:
+            got = self.put_stream(f, chunk)
+        if got != h:
+            raise OSError(f"{path} changed while it was being stored")
+        return h
+
+    def put_stream(self, src, chunk: int = 1 << 20) -> str:
+        """Store what a binary file object reads, without holding it in
+        memory: it is written to a temporary file in the store as it is
+        hashed, then moved into place (or dropped, if already there)."""
+        root = self.roots[0]
+        root.mkdir(parents=True, exist_ok=True)
+        tmp = root / f"incoming-{os.getpid()}-{secrets.token_hex(8)}.tmp"
         try:
             hasher = hashlib.sha256()
-            with open(path, "rb") as src, open(tmp, "wb") as dst:
+            with open(tmp, "wb") as dst:
                 while block := src.read(chunk):
                     hasher.update(block)
                     dst.write(block)
-            if HASH_PREFIX + hasher.hexdigest() != h:
-                raise OSError(f"{path} changed while it was being stored")
-            os.replace(tmp, p)
+            h = HASH_PREFIX + hasher.hexdigest()
+            if not self.has(h):
+                p = self._path(root, h)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(tmp, p)
         finally:
             tmp.unlink(missing_ok=True)
         return h

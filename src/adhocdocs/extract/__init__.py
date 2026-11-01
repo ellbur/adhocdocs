@@ -8,7 +8,8 @@ breaks, otherwise literal.
 
 import html
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from typing import BinaryIO
 from dataclasses import dataclass, field
 
 
@@ -31,7 +32,11 @@ class Layer:
 class Child:
     part: str
     name: str | None
-    data: bytes
+    data: bytes | None = None
+    # Or, for a member too large to hold (a zip member read from disk): a
+    # call opening it as a binary file, to be read while the parent's
+    # children are being iterated.
+    open: Callable[[], BinaryIO] | None = None
 
 
 @dataclass
@@ -107,13 +112,15 @@ def text_presentation(text: str, segments: list) -> str:
     return "\n".join(out)
 
 
-def _zip_kind(data: bytes) -> str:
-    """Office files are zips: tell them apart by what's inside."""
+def _zip_kind(data) -> str:
+    """Office files are zips: tell them apart by what's inside. ``data`` is
+    the bytes, or a path (only the zip's directory is read)."""
     import io
     import zipfile
     try:
-        names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
-    except zipfile.BadZipFile:
+        with zipfile.ZipFile(io.BytesIO(data) if isinstance(data, bytes) else data) as z:
+            names = set(z.namelist())
+    except (zipfile.BadZipFile, OSError):
         return "other"
     if "word/document.xml" in names:
         return "docx"
@@ -122,7 +129,7 @@ def _zip_kind(data: bytes) -> str:
     return "zip"
 
 
-def kind_for(name: str | None, data: bytes) -> str:
+def kind_for(name: str | None, data: bytes, zip_kind=_zip_kind) -> str:
     n = (name or "").lower()
     if data.startswith(b"%PDF") or n.endswith(".pdf"):
         return "pdf"
@@ -137,7 +144,7 @@ def kind_for(name: str | None, data: bytes) -> str:
     if n.endswith((".xlsx", ".xlsm")):
         return "xlsx"
     if data.startswith(b"PK\x03\x04"):
-        return _zip_kind(data)
+        return zip_kind(data)
     if n.endswith((".mbox", ".mbx")) or (data.startswith(b"From ") and b"\nFrom: " in data[:4000]):
         return "mbox"
     if n.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".bmp")):
@@ -174,20 +181,31 @@ def unextracted_kind(name: str | None, data: bytes) -> str:
 
 
 # Containers extract_file reads in place, a member at a time
-STREAMED = ("mbox", "pst")
+STREAMED = ("mbox", "pst", "zip")
 SNIFF = 65536
 
 
 def file_kind(path, name: str | None) -> str:
-    """kind_for, from a file's first bytes: enough for every kind in
-    STREAMED (for the rest, read the file and ask kind_for)."""
+    """kind_for, from a file's first bytes (and a zip's directory): the
+    same answer as kind_for on the whole file for every kind in STREAMED.
+    For the rest, read the file and ask kind_for."""
     with open(path, "rb") as f:
-        return kind_for(name, f.read(SNIFF))
+        return kind_for(name, f.read(SNIFF), zip_kind=lambda _: _zip_kind(path))
+
+
+def unextracted_file_kind(path, name: str | None) -> str:
+    """unextracted_kind, for a file too large to read."""
+    kind = file_kind(path, name)
+    return _EXTRACTED_KIND.get(kind, kind)
 
 
 def extract_file(path, kind: str) -> Extraction:
     """Extract a container on disk (``kind`` in STREAMED) without reading it
-    into memory: ``children`` is a generator."""
+    into memory: ``children`` is a generator, whose zip members come with
+    ``open`` rather than ``data``."""
+    if kind == "zip":
+        from .archive import extract_zip_file
+        return extract_zip_file(path)
     if kind == "mbox":
         from .archive import extract_mbox_file
         return extract_mbox_file(path)
