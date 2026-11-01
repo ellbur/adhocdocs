@@ -36,6 +36,7 @@ Two things differ from Syncthing:
 | Indexes | no | derived, and rebuilt locally from the synced feeds |
 | `claude-home/` (sign-in, transcripts) | **never** | credentials, and each person's own conversations |
 | The audit log (`audit/`) | no | a record of *this* machine's sessions (see open questions) |
+| Hotkeys (`annotations/hotkeys.json`) | no | each person's keyboard shortcuts are their own |
 | Viewer state, `run/` | no | local |
 
 ### The workspace stays private; work product is published
@@ -151,7 +152,7 @@ every installation that has the same events reaches the same state.
 - **The rules are checked again on replay** (`Annotations.replay` in
   [`annotations.py`](src/adhocdocs/annotations.py)). An event that was valid
   where it was written can conflict with one written concurrently
-  elsewhere: the same tag defined twice, the same hotkey, an untag of a tag
+  elsewhere: the same tag defined twice, an untag of a tag
   someone else just applied. Replaying in the common order, each event is
   applied, applied in part, or has no effect, the same way on every
   installation. It stays in its log either way, and `adhoc sync conflicts`
@@ -167,9 +168,11 @@ every installation that has the same events reaches the same state.
     untag of a tag a person re-applied meanwhile, or its edit of a field a
     person set meanwhile, has no effect.
   - **A tag defined on two installations:** the first definition stands,
-    and the second's color, hotkey and description become a conflict to
+    and the second's color and description become a conflict to
     look at. Its applications still count, since it's the same name.
-  - **A hotkey taken twice:** the later tag is defined without it.
+  - **Hotkeys aren't synced:** each installation keeps its own, in
+    `annotations/hotkeys.json`, so they never clash. (Hotkeys an
+    installation set before this, in its tag definitions, stay its own.)
   - **An entity defined on two installations** under the same name and
     kind: the later one's ID becomes an alias of the earlier's, it adds the
     names and fields the earlier lacks, and edits naming either ID land on
@@ -416,8 +419,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
   against their settings like any index.
 - **The audit log.** Should a hub collect members' audit logs, for a firm
   that wants one record of every session on a matter?
-- **Hotkeys** are matter-wide today. With several people, they might be
-  per person.
 - **Who can remove whom.** Any member, or only certain people (the matter's
   owner, the hub's administrator)?
 
@@ -429,3 +430,4 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 - Synced: documents, annotations (tags, notes, entities), published work
   product, membership. Not synced: the workspace, indexes, `claude-home/`.
 - Work product made in the workspace syncs only when published, explicitly.
+- Keyboard shortcuts (tag hotkeys) aren't synced.

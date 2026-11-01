@@ -285,7 +285,14 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
             _ => {}
         }
     }
-    let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"], "hotkey": d["hotkey"],
+    // Hotkeys are this installation's own (annotations/hotkeys.json, not synced:
+    // annotations.hotkeys). Only a matter that hasn't written that file yet
+    // falls back on the ones in tag definitions.
+    let keys: Option<serde_json::Map<String, Value>> = std::fs::read(root.join("annotations/hotkeys.json")).ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v["keys"].as_object().cloned());
+    let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"],
+        "hotkey": match &keys { Some(k) => k.get(d["tag"].as_str().unwrap_or("")).cloned().unwrap_or(Value::Null), None => d["hotkey"].clone() },
         "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
     json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
            "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
@@ -577,6 +584,9 @@ mod tests {
         assert_eq!(st["definitions"][0]["by"], "user:a");
         let tags: Vec<&str> = st["tags"].as_array().unwrap().iter().map(|t| t["tag"].as_str().unwrap()).collect();
         assert_eq!(tags, ["cold"]);
+        assert_eq!(st["definitions"][0]["hotkey"], serde_json::Value::Null);
+        std::fs::write(dir.join("annotations/hotkeys.json"), r#"{"v": 1, "keys": {"hot": "h"}}"#).unwrap();
+        assert_eq!(super::annotation_state(&dir)["definitions"][0]["hotkey"], "h");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

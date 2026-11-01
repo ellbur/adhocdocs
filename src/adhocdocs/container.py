@@ -230,6 +230,8 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
     (m.root / "work").mkdir(exist_ok=True)
     (m.root / "pool").mkdir(exist_ok=True)
+    from . import annotations
+    annotations.hotkeys(m)          # this installation's own, written before the session can only read them
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)

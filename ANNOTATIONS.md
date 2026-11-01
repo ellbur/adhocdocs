@@ -32,9 +32,10 @@ delete tags and notes directly. Everything else stays programmable.
   duplicates. `ann tag --dupes` and `--family` apply a tag to them
   explicitly.
 - **Tag definitions** form the matter's vocabulary: name, description (the
-  review criterion), color, hotkey, and optional exclusive group. A tag must
-  be defined before use, so a typo can't start a new tag, and hotkeys are
-  unique. Applying a tag in a group replaces the group's other tag on that
+  review criterion), color, and optional exclusive group. A tag must be
+  defined before use, so a typo can't start a new tag. **Hotkeys** are
+  unique, and each installation's own: they're kept in
+  `annotations/hotkeys.json`, which isn't synced ([SYNC.md](SYNC.md)). Applying a tag in a group replaces the group's other tag on that
   target, as recorded untag events.
 - **Notes** are Markdown and can reply to other notes, making threads
   anchored in documents. **Claude's notes follow Principle 5**: quotations

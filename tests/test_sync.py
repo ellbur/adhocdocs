@@ -345,17 +345,36 @@ def test_the_same_definition_twice_is_no_conflict(tmp_path):
     assert kinds(a) == kinds(b) == []
 
 
-def test_a_hotkey_taken_twice(tmp_path):
+def test_hotkeys_are_each_installations_own(tmp_path):
     a, b, _ = pair(tmp_path)
     write(a, "user:alice", op="define-tag", tag="hot", hotkey="h")
     write(b, "user:bob", op="define-tag", tag="helpful", hotkey="h")
     exchange(a, b)
-    s = state(b)
-    assert s.definitions["hot"]["hotkey"] == "h" and "hotkey" not in s.definitions["helpful"]
-    assert kinds(b) == ["hotkey-taken"]
-    # the user can give it another
-    write(b, "user:bob", op="edit-tag", tag="helpful", hotkey="j")
-    assert state(b).definitions["helpful"]["hotkey"] == "j"
+    sa, sb = state(a), state(b)
+    assert sa.definitions["hot"]["hotkey"] == "h" and "hotkey" not in sa.definitions["helpful"]
+    assert sb.definitions["helpful"]["hotkey"] == "h" and "hotkey" not in sb.definitions["hot"]
+    assert kinds(a) == kinds(b) == []
+    # no event carries a hotkey, and changing one writes nothing to sync
+    assert not any("hotkey" in e for e in Matter(a.root).annotation_log.read())
+    n = Matter(b.root).annotation_log.log_for(b.origin).count()
+    write(b, "user:bob", op="edit-tag", tag="hot", hotkey="j")
+    assert Matter(b.root).annotation_log.log_for(b.origin).count() == n
+    assert state(b).definitions["hot"]["hotkey"] == "j"
+    with pytest.raises(Refused, match="in use"):
+        write(b, "user:bob", op="edit-tag", tag="helpful", hotkey="j")
+
+
+def test_hotkeys_from_before_stay_with_the_installation_that_set_them(tmp_path):
+    """Matters from before kept hotkeys in tag definitions: each installation
+    keeps those it set, and doesn't take on others'."""
+    a, b, _ = pair(tmp_path)
+    a.annotation_log.append(op="define-tag", tag="hot", hotkey="h", author="user:alice")
+    b.annotation_log.append(op="define-tag", tag="cold", hotkey="c", author="user:bob")
+    for m in (a, b):
+        annotations.hotkeys_path(m).unlink(missing_ok=True)
+    exchange(a, b)
+    assert annotations.hotkeys(Matter(a.root)) == {"hot": "h"}
+    assert state(b).definitions["cold"]["hotkey"] == "c" and "hotkey" not in state(b).definitions["hot"]
 
 
 def test_exclusive_groups_hold_across_installations(tmp_path):
@@ -480,13 +499,13 @@ def test_rules_hold_against_a_log_that_broke_them(tmp_path):
 def test_sync_conflicts_command(tmp_path, capsys):
     from adhocdocs.cli import adhoc
     a, b, _ = pair(tmp_path)
-    write(a, "user:alice", op="define-tag", tag="hot", hotkey="h")
-    write(b, "user:bob", op="define-tag", tag="warm", hotkey="h")
+    write(a, "user:alice", op="define-tag", tag="hot", color="red")
+    write(b, "user:bob", op="define-tag", tag="hot", color="blue")
     copy_logs(b, a)
     (a.root / "annotations/replay.json").unlink()
     adhoc(["--matter", str(a.root), "sync", "conflicts"])
     (row,) = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
-    assert row["kind"] == "hotkey-taken" and row["origin"] == b.origin and row["tag"] == "warm"
+    assert row["kind"] == "defined-twice" and row["origin"] == b.origin and row["tag"] == "hot"
     assert (a.root / "annotations/replay.json").exists()
     adhoc(["--matter", str(a.root), "sync", "status"])
     st = json.loads(capsys.readouterr().out)

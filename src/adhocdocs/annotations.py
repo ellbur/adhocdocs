@@ -6,7 +6,7 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 ``op``:
 
 =================  =========================================================
-``define-tag``     ``tag``, and optional ``color``, ``hotkey``, ``group``,
+``define-tag``     ``tag``, and optional ``color``, ``group``,
                    ``description``
 ``edit-tag``       ``tag`` and the fields that change
 ``tag``/``untag``  ``tag``, ``target`` (a JSON locator)
@@ -85,12 +85,18 @@ class Annotations:
         self.conflicts: list[dict] = []          # events that read differently on replay
         self.replaced: dict[str, list] = {}      # event ID -> the events it replays as
         self.last_id: str | None = None
+        self.hotkeys: dict[str, str] = {}        # tag -> key, this installation's own (hotkeys())
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
         a = cls()
         for ev in m.annotation_log.read():
             a.replay(ev)
+        a.hotkeys = hotkeys(m)
+        for t, d in a.definitions.items():
+            d.pop("hotkey", None)
+            if t in a.hotkeys:
+                d["hotkey"] = a.hotkeys[t]
         return a
 
     # -- replay: the rules again, for events from every installation -------------------
@@ -133,9 +139,15 @@ class Annotations:
         op = ev["op"]
         if ev.get("entity") in self.entity_alias:
             ev = {**ev, "entity": self.entity_alias[ev["entity"]]}
+        if op in ("define-tag", "edit-tag") and "hotkey" in ev:
+            # hotkeys are each installation's own (hotkeys()); in events from
+            # before that they're ignored, and replay as if not there
+            ev = {k: v for k, v in ev.items() if k != "hotkey"}
+            if op == "edit-tag" and not any(k in ev for k in ("color", "group", "description")):
+                return []
         if op == "define-tag":
             d = self.definitions.get(ev["tag"])
-            fields = ("color", "hotkey", "group", "description")
+            fields = ("color", "group", "description")
             if d is not None:
                 if all(ev.get(k) == d.get(k) for k in fields):
                     return []           # defined the same way twice: nothing to see
@@ -143,12 +155,6 @@ class Annotations:
                 self._conflict(ev, "defined-twice", f"tag {ev['tag']!r} was already defined by {d['by']}; "
                                                     f"this definition's {theirs or 'fields'} weren't used")
                 return []
-        if op in ("define-tag", "edit-tag") and ev.get("hotkey"):
-            taken = next((t for t, o in self.definitions.items() if t != ev["tag"] and o.get("hotkey") == ev["hotkey"]), None)
-            if taken:
-                self._conflict(ev, "hotkey-taken", f"hotkey {ev['hotkey']!r} was already {taken!r}'s; "
-                                                   f"{ev['tag']!r} was defined without it")
-                ev = {k: v for k, v in ev.items() if k != "hotkey"}
         if op == "untag" and ev["tag"] not in self.tags.get(target_key(ev["target"]), {}):
             return []                   # untagged twice
         if op == "tag" and ev["author"] == CLAUDE and is_privilege_call(ev["tag"]):
@@ -199,11 +205,11 @@ class Annotations:
         op = ev["op"]
         self.last_id = ev["id"]
         if op == "define-tag":
-            self.definitions[ev["tag"]] = {k: ev[k] for k in ("tag", "color", "hotkey", "group", "description") if k in ev} \
+            self.definitions[ev["tag"]] = {k: ev[k] for k in ("tag", "color", "group", "description") if k in ev} \
                 | {"by": ev["author"], "at": ev["at"]}
         elif op == "edit-tag":
             d = self.definitions.setdefault(ev["tag"], {"tag": ev["tag"], "by": ev["author"]})
-            d.update({k: ev[k] for k in ("color", "hotkey", "group", "description") if k in ev})
+            d.update({k: ev[k] for k in ("color", "group", "description") if k in ev})
         elif op == "tag":
             self.tags.setdefault(target_key(ev["target"]), {})[ev["tag"]] = {
                 "tag": ev["tag"], "target": ev["target"], "by": ev["author"], "at": ev["at"], "event": ev["id"],
@@ -277,16 +283,12 @@ class Annotations:
         if op == "define-tag":
             if ev["tag"] in self.definitions:
                 raise Refused(f"tag {ev['tag']!r} is already defined; use edit-tag")
-            if ev.get("hotkey") and any(d.get("hotkey") == ev["hotkey"] for d in self.definitions.values()):
-                raise Refused(f"hotkey {ev['hotkey']!r} is already in use")
         elif op == "edit-tag":
             d = self.definitions.get(ev["tag"])
             if d is None:
                 raise Refused(f"no tag {ev['tag']!r}")
             if author == CLAUDE and is_user(d["by"]):
                 raise Refused(f"tag {ev['tag']!r} was defined by {d['by']}; Claude can't edit it")
-            if ev.get("hotkey") and any(t != ev["tag"] and o.get("hotkey") == ev["hotkey"] for t, o in self.definitions.items()):
-                raise Refused(f"hotkey {ev['hotkey']!r} is already in use")
         elif op in ("tag", "untag"):
             if op == "tag" and author == CLAUDE and is_privilege_call(ev["tag"]) and not replaying:
                 raise Refused(f"privilege calls are a lawyer's: Claude can't apply {ev['tag']!r}, even when asked. "
@@ -464,13 +466,64 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
         if op == "reply" and ev["parent"] in ann.notes:
             # so a reply keeps its place if another installation deletes the parent
             ev["target"] = ann.notes[ev["parent"]]["target"]
-        pending.append(ev)
+        key = ev.pop("hotkey", None) if op in ("define-tag", "edit-tag") else None
+        if key is not None:
+            key = str(key)
+            taken = next((t for t, k in ann.hotkeys.items() if k == key and t != ev["tag"]), None)
+            if taken:
+                raise Refused(f"hotkey {key!r} is already in use (by {taken!r})")
+            if op == "edit-tag" and ev["tag"] not in ann.definitions:
+                raise Refused(f"no tag {ev['tag']!r}")
+        if not (op == "edit-tag" and key is not None and not any(k in ev for k in ("color", "group", "description"))):
+            pending.append(ev)      # (a new hotkey alone is this installation's business: no event)
         for p in pending:
             ann.check({**p, "at": now()})
             ann.apply({**p, "id": "pending", "at": now()})
         written = [m.annotation_log.append(**p) for p in pending]
+        if key is not None:
+            save_hotkeys(m, {**ann.hotkeys, ev["tag"]: key})
         save_replay(m, ann)
         return written
+
+
+def hotkeys_path(m: Matter):
+    return m.root / "annotations" / "hotkeys.json"
+
+
+def hotkeys(m: Matter) -> dict[str, str]:
+    """This installation's tag hotkeys, ``{tag: key}``. Keyboard shortcuts
+    are each installation's own, and aren't synced: they live in
+    ``annotations/hotkeys.json``, beside the logs, which sync never copies.
+
+    Before that, hotkeys were part of tag definitions. The first time, the
+    ones in this installation's own events (``define-tag``/``edit-tag``,
+    in the logs of its origin and of the matter it was migrated from) are
+    taken as its own. Others' are not."""
+    p = hotkeys_path(m)
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get("keys", {})
+    except FileNotFoundError:
+        pass
+    mine = {o for o in (m.config.get("legacy_origin"),
+                        m.identity.origin if (m.sync_dir / "origin.json").exists() else None) if o}
+    keys: dict[str, str] = {}
+    for ev in m.annotation_log.read():
+        if ev.get("origin") in mine and ev["op"] in ("define-tag", "edit-tag") and ev.get("hotkey") \
+                and ev["hotkey"] not in keys.values():
+            keys[ev["tag"]] = ev["hotkey"]
+    try:
+        save_hotkeys(m, keys)
+    except OSError:
+        pass                # read-only here (a session): the host writes it
+    return keys
+
+
+def save_hotkeys(m: Matter, keys: dict):
+    p = hotkeys_path(m)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"v": 1, "keys": keys}, indent=1, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    tmp.replace(p)
 
 
 def replay_path(m: Matter):
