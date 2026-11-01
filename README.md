@@ -16,6 +16,8 @@ at, and sends back what you select.
 
 It runs on Linux for now. Windows is in progress: see [WINDOWS.md](WINDOWS.md).
 
+**This software is a proof of concept and is not intended or suitable for production use. Using this software with real client documents may violate professional obligations to safeguard client information.**
+
 ## Setting up
 
 You need [uv](https://docs.astral.sh/uv/), which brings its own Python.
