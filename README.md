@@ -58,7 +58,7 @@ uv run adhoc --matter ~/matters/smith-v-jones ingest \
 Adding documents works for these formats:
 - PDF, including scans, which are OCRed
 - images
-- email (`.eml`, `.mbox`), with attachments
+- email (`.eml`, `.mbox`, Outlook `.msg` and `.pst`/`.ost`), with attachments
 - `.docx` and `.xlsx`
 - CSV, HTML and text
 - zip archives

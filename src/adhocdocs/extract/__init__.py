@@ -125,6 +125,10 @@ def kind_for(name: str | None, data: bytes) -> str:
         return "pdf"
     if n.endswith(".eml"):
         return "email"
+    if n.endswith((".pst", ".ost")) or data.startswith(b"!BDN"):
+        return "pst"
+    if n.endswith(".msg") or (data.startswith(b"\xd0\xcf\x11\xe0") and "__substg1.0_".encode("utf-16-le") in data):
+        return "msg"
     if n.endswith(".docx"):
         return "docx"
     if n.endswith((".xlsx", ".xlsm")):
@@ -154,7 +158,8 @@ def kind_for(name: str | None, data: bytes) -> str:
 
 
 # kind_for's names for formats whose extractors report another kind
-_EXTRACTED_KIND = {"xlsx": "spreadsheet", "csv": "spreadsheet", "zip": "archive", "mbox": "mailbox"}
+_EXTRACTED_KIND = {"xlsx": "spreadsheet", "csv": "spreadsheet", "zip": "archive", "mbox": "mailbox",
+                   "pst": "mailbox", "msg": "email"}
 
 
 def unextracted_kind(name: str | None, data: bytes) -> str:
@@ -188,6 +193,12 @@ def extract(name: str | None, data: bytes) -> Extraction:
     if kind == "mbox":
         from .archive import extract_mbox
         return extract_mbox(data)
+    if kind == "pst":
+        from .pst import extract_pst
+        return extract_pst(data)
+    if kind == "msg":
+        from .msg import extract_msg
+        return extract_msg(data)
     if kind == "csv":
         from .simple import extract_csv
         return extract_csv(name, data)
