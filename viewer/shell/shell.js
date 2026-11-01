@@ -708,7 +708,9 @@ class DocumentPane {
   async renderText() {
     const layer = this.currentLayer();
     const [t, segs] = await Promise.all([layerText(layer.id), segments(layer.id)]);
-    const lineKinds = segs.filter((s) => ["header", "quoted", "signature"].includes(s.kind));
+    const noteKinds = ["footnote", "endnote", "comment", "header-footer"];   // a .docx's text outside its body
+    const lineKinds = segs.filter((s) => ["header", "quoted", "signature", ...noteKinds].includes(s.kind));
+    const titles = new Map(segs.filter((s) => noteKinds.includes(s.kind) && s.title).map((s) => [s.start, s.title]));
     const labels = new Map(segs.filter((s) => s.kind === "line").map((s) => [s.start, s.label]));
     const box = el("div", { class: "textmode" });
     let pos = 0, page = 1;
@@ -718,6 +720,7 @@ class DocumentPane {
         const n = cpLen(line);
         const kinds = lineKinds.filter((s) => s.start <= pos && pos < s.end).map((s) => s.kind);
         const div = el("div", { class: "ln " + kinds.join(" ") });
+        if (titles.has(pos)) div.dataset.title = titles.get(pos);   // shown by CSS, so selections don't take it
         const lbl = labels.get(pos);
         if (lbl) div.append(el("span", { class: "lbl" }, lbl));
         const span = el("span", { "data-s": pos });

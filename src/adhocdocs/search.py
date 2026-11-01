@@ -146,7 +146,7 @@ class Searcher:
 
     def segment_kinds(self, layer, s: int, e: int) -> list[str]:
         return sorted({g["kind"] for g in self.segments(layer) if g["start"] <= s and e <= g["end"]
-                       and g["kind"] in ("header", "body", "quoted", "signature", "footnote", "comment",
+                       and g["kind"] in ("header", "body", "quoted", "signature", "footnote", "endnote", "comment",
                                          "header-footer", "table", "cell", "insertion", "deletion")})
 
     # -- keyword -------------------------------------------------------------------------

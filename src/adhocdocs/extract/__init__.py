@@ -91,18 +91,26 @@ class TextBuilder:
         return Layer(view, self.text, segs, self.geometry, presentation, primary, styles=self.styles)
 
 
+# Segments for what a document shows outside its body (a .docx's notes,
+# comments, headers and footers), set apart when displayed
+NOTE_KINDS = ("footnote", "endnote", "comment", "header-footer")
+
+
 def text_presentation(text: str, segments: list) -> str:
     """A plain HTML rendering of layer text, every line a span carrying its
     layer offset, for flow-mode display of content without pages."""
     kinds_at = []
     for seg in segments:
-        if seg["kind"] in ("header", "quoted", "signature", "heading"):
+        if seg["kind"] in ("header", "quoted", "signature", "heading", *NOTE_KINDS):
             kinds_at.append(seg)
+    titles = {seg["start"]: seg["title"] for seg in segments if seg["kind"] in NOTE_KINDS and seg.get("title")}
     out = ['<article class="adhoc-flow">']
     pos = 0
     for line in text.split("\n"):
         classes = sorted({s["kind"] for s in kinds_at if s["start"] <= pos < s["end"] or (s["start"] == pos and s["end"] == pos)})
         cls = f' class="{" ".join(classes)}"' if classes else ""
+        if pos in titles:     # shown by CSS (::before), so it isn't selected or quoted as the document's text
+            cls += f' data-title="{html.escape(titles[pos])}"'
         if line:
             out.append(f'<p{cls}><span data-o="{pos}">{html.escape(line)}</span></p>')
         else:
