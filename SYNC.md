@@ -4,8 +4,11 @@
 one log per installation ([`matter.py`](src/adhocdocs/matter.py),
 [`origin.py`](src/adhocdocs/origin.py)), and step 2, conflicts resolved on
 replay ([`annotations.py`](src/adhocdocs/annotations.py),
-[`sync.py`](src/adhocdocs/sync.py)), and step 3, publishing work product
-([`work.py`](src/adhocdocs/work.py)). Decisions still open are at the
+[`sync.py`](src/adhocdocs/sync.py)), step 3, publishing work product
+([`work.py`](src/adhocdocs/work.py)), and step 4, signed logs, the pool and
+sync between members ([`signing.py`](src/adhocdocs/signing.py),
+[`pool.py`](src/adhocdocs/pool.py), [`peer.py`](src/adhocdocs/peer.py),
+[`invite.py`](src/adhocdocs/invite.py)). Decisions still open are at the
 end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
@@ -209,9 +212,11 @@ every installation that has the same events reaches the same state.
 The annotation rules (Claude can't change a person's work; only a person
 makes privilege calls) still hold, for every person in the pool.
 
-- **People are members too.** The pool log binds each person (`user:<id>`,
-  with a display name) to the installations they use. An event authored
-  `user:alice` is accepted only from an installation bound to Alice.
+- **People are members too.** *Not built yet:* the pool log would bind each
+  person (`user:<id>`, with a display name) to the installations they use,
+  and an event authored `user:alice` would count only from an installation
+  bound to Alice. Until then, a member installation is trusted to say which
+  person it writes for.
 - **Claude's events say where they came from:** `claude`, with the origin
   and, as now, `requested_by`. Claude on Bob's machine can't untag Alice's
   tag, just as it can't untag Bob's.
@@ -227,18 +232,29 @@ makes privilege calls) still hold, for every person in the pool.
 The **pool log** (`pool/logs/`) records membership, replicated like any
 other feed:
 
-- `add-member` (an origin's key, a name, its role (`member` or `hub`), the
-  addresses where it listens), `bind-user`, `remove-member`,
-  `set-addresses`. Each is signed by a member.
+- `add-member` (an origin's certificate, a name, its role (`member` or
+  `hub`), the addresses where it listens), `remove-member`, `set-addresses`
+  ([`pool.py`](src/adhocdocs/pool.py)). Each is signed by a member.
+- **Who counts as a member:** the founder (in `matter.toml`, and in every
+  invitation), by its own `add-member`; after that, an event counts only if
+  its installation is a member when it's replayed. So everyone agrees on
+  the members, and an installation that was removed can't add itself back.
+- **Founding** a pool (the first `adhoc sync invite`, or `serve
+  --advertise`) seals the installation's existing logs: events written
+  before signing existed are signed in place, IDs unchanged. After that the
+  logs are shared, and are never rewritten.
 - Because membership is replicated, joining through any one member is
   joining the pool. Every member learns of every other, and connects to
   whoever it can reach.
 
-**Joining.** A member makes an invitation: `adhoc sync invite` prints a
-code holding the matter ID, a one-time secret and addresses to try (the
-hub's, if there is one). On the new machine, `adhoc sync join <code>`
-creates an empty matter, connects, proves the secret, and is added by the
-member that answered. Then it syncs everything.
+**Joining** ([`invite.py`](src/adhocdocs/invite.py)). A member makes an
+invitation: `adhoc sync invite` prints a code holding the matter ID, its
+founder, the inviting origin, addresses to try and a one-time secret (kept
+on the inviter only as a hash, for three days by default). On the new
+machine, `adhoc sync join <code> <dir>` creates an empty matter, connects
+(checking the inviter is the origin the code names), proves the secret, and
+is added by the inviter, in the name of the person who invited it. Then it
+syncs everything.
 
 **Pushing to a hub.** On a matter with no pool yet, `adhoc sync push
 https://hub.example.com` adds the hub as a member and uploads. A hub accepts
@@ -259,8 +275,8 @@ control, like opening a session:
 - **Only the user, on the host,** can create a pool, invite, join, push to
   a hub, or remove a member. No tool in the container can, and the sync
   keys and peer state are never mounted.
-- **Claude can observe** sync state (`adhoc status` reports the pool, its
-  members and when each last synced), not change it.
+- **Claude can observe** sync state (`adhoc status` in a session reports
+  the pool's members, from `pool/`, mounted read-only), not change it.
 - Publishing work product is *not* an isolation control: it shares work
   with installations that already hold the documents. So Claude can
   publish.
@@ -269,22 +285,41 @@ control, like opening a session:
 
 ## Transport
 
-- **Mutually authenticated TLS** between members. Each side checks the
-  other's key against the pool log. There are no passwords and no shared
-  accounts.
-- **Discovery:** the addresses in the pool log, local network broadcast,
-  and the hub. No public discovery servers by default: they would tell a
-  third party which machines share a matter.
+Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
+[`signing.py`](src/adhocdocs/signing.py).
+
+- **TLS 1.3, pinned to the origin.** Each installation serves with a
+  certificate for its origin key. A client doesn't check it against any
+  authority: it checks that the server's key hashes to the origin it meant
+  to reach. One port serves several matters; the client names the matter by
+  SNI.
+- **Signed requests.** Every request is signed by the client's origin key,
+  over the method, path, time, a nonce, the body and the server's origin, so
+  it can't be replayed or redirected. The server answers active members
+  only (and `/join`, for an installation with an invitation). There are no
+  passwords and no shared accounts.
+- **The exchange:** the client asks for the server's counts and log heads
+  per feed and origin. For each log, whoever has more sends the rest:
+  objects first (only those the other lacks; large originals are streamed),
+  then the events. Membership goes first, since it says whose events to
+  accept. Every event is checked against its origin's key and the event
+  before it.
+- **A log that doesn't check is refused, alone.** A bad signature, a broken
+  chain, or a fork (two copies of an origin's log that differ: the same
+  count with different last events, or a next event that doesn't follow) is
+  reported under `refused`, and the other logs still sync.
+- **Discovery:** the addresses members record in the pool log (`adhoc sync
+  serve --advertise`). No public discovery servers: they would tell a third
+  party which machines share a matter. *Not built yet:* finding members on
+  the local network.
 - **Relaying:** when two members can't reach each other, they don't need
   to; the logs reach each one through anyone they can reach (usually the
   hub).
-- **The exchange:** each side sends its vector per feed, then the events
-  the other lacks, then the objects those events name that the other
-  lacks. Large originals go in resumable chunks. A hub is the same protocol
-  behind an ordinary HTTPS port.
-- **Live while open:** members sync on a timer and when a log changes. The
+- **When:** `adhoc sync now` syncs with every member that says where it
+  listens; `adhoc sync serve --every N` also does so every N minutes. The
   viewer refreshes from the feeds, and Claude sees new events through
-  `idx changes` and `ann log --since`.
+  `idx changes` and `ann log --since`. *Not built yet:* syncing as soon as a
+  log changes.
 
 *Why not Syncthing itself?* The single-writer logs and immutable objects
 would sync fine as Syncthing folders. But Syncthing doesn't know which
@@ -317,7 +352,8 @@ way, and with them the protocol is small.
 2. Replay rules and `adhoc sync conflicts`. *Built; tests in
    [`test_sync.py`](tests/test_sync.py).*
 3. Publishing work product. *Built; tests in [`test_work.py`](tests/test_work.py).*
-4. Signing, the pool log, and sync between two members on a LAN.
+4. Signing, the pool log, and sync between two members on a LAN. *Built;
+   tests in [`test_peer.py`](tests/test_peer.py), over TLS on localhost.*
 5. The hub, push and invitations through it.
 
 ## Open questions

@@ -26,7 +26,7 @@ def text_doc(m, name, body, custodian="x"):
                                                  "source": {"collection": "c", "path": name}})
 
 
-SYNCED = ("store/logs", "annotations/logs", "work/logs")
+SYNCED = ("store/logs", "annotations/logs", "work/logs", "pool/logs")
 
 
 def copy_logs(src: Matter, dst: Matter, origins=None):

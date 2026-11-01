@@ -9,6 +9,7 @@ Layout::
       annotations/logs/<origin>.jsonl   tags, notes and entities
       work/logs/<origin>.jsonl          published work product (adhocdocs.work)
       work/<name>                       published files, laid out from that feed (derived)
+      pool/logs/<origin>.jsonl          the installations it syncs among (adhocdocs.pool)
       sync/                             this installation's identity (host only; adhocdocs.origin)
       audit/                            what each session did (host only; see adhocdocs.audit)
       workspace/                        work product (read-write in the container)
@@ -142,16 +143,29 @@ class EventLog:
         if not seen:
             raise ValueError(f"cursor {since} not found in {self.path}")
 
-    def last_id(self) -> str | None:
-        """ID of the last event, reading only the end of the file."""
+    def last_event(self) -> dict | None:
+        """The last event, reading only the end of the file (or more of it,
+        for a long line)."""
         if not self.path.exists():
             return None
         with open(self.path, "rb") as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
-            f.seek(max(0, size - 65536))
-            lines = [l for l in f.read().splitlines() if l.strip()]
-        return json.loads(lines[-1])["id"] if lines else None
+            back = 65536
+            while True:
+                f.seek(max(0, size - back))
+                data = f.read()
+                lines = [l for l in data.splitlines() if l.strip()]
+                if not lines:
+                    return None
+                if len(lines) > 1 or back >= size:
+                    return json.loads(lines[-1])
+                back *= 4
+
+    def last_id(self) -> str | None:
+        """ID of the last event, reading only the end of the file."""
+        last = self.last_event()
+        return last["id"] if last else None
 
     def count(self) -> int:
         if not self.path.exists():
@@ -241,11 +255,14 @@ class Feed:
             return {**ev, "feed": self.name, "log": self.name}
         if self.identity is None:
             raise PermissionError(f"the {self.name} feed is read-only here")
+        from .signing import sign
         origin = self.identity.origin
+        key = self.identity.key
         path = self.dir / f"{origin}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8", newline="\n") as f, locked(f):
             ev = {"id": new_event_id(after=self.last_id()), "at": now(), **event}
+            ev = sign(ev, key, EventLog(path).last_event())
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
         return {**ev, "feed": self.name, "log": f"{self.name}/{origin}", "origin": origin}
 
@@ -289,6 +306,7 @@ class Matter:
         self.annotation_log = Feed("annotations", self.root / "annotations" / "logs", identity=self.identity,
                                    legacy=self.root / "annotations" / "log.jsonl")
         self.work_log = Feed("work", self.root / "work" / "logs", identity=self.identity)
+        self.pool_log = Feed("pool", self.root / "pool" / "logs", identity=self.identity)
         self.indexes_dir = self.adhoc_dir / "indexes"
         self._state = None
 
@@ -334,7 +352,7 @@ class Matter:
     @classmethod
     def create(cls, root: Path, matter_id: str | None = None) -> "Matter":
         root = Path(root)
-        for d in ("store/objects", "store/logs", "annotations/logs", "work/logs", "workspace/.adhoc/objects"):
+        for d in ("store/objects", "store/logs", "annotations/logs", "work/logs", "pool/logs", "workspace/.adhoc/objects"):
             (root / d).mkdir(parents=True, exist_ok=True)
         (root / "workspace/.adhoc/log.jsonl").touch()
         if not (root / "matter.toml").exists():

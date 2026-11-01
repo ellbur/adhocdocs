@@ -13,6 +13,7 @@ Inside the session:
 /matter/store         read-only           originals, layers, provenance logs
 /matter/annotations   read-only           tags and notes (writes go through the API)
 /matter/work          read-only           published work product (publishing goes through the API)
+/matter/pool          read-only           the installations the matter syncs among, for ``adhoc status``
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
                                           sign-in (``<matter>/claude-home``)
@@ -135,7 +136,8 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
     root = m.root
     bridged = volumes is not None
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
-           "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name}
+           "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name,
+           "ADHOC_MATTER_ID": m.id or "", "ADHOC_POOL_FOUNDER": m.config.get("founder", "")}
     tty = ["-it"] if sys.stdin.isatty() else ["-i"]
     args = ["run", "--rm", *tty, "--name", name, "--hostname", "adhoc",
             "--network", "none",          # loopback only: no route out, no DNS
@@ -144,6 +146,7 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
             *_bind(root / "store", "/matter/store", ro=True, bridged=bridged),
             *_bind(root / "annotations", "/matter/annotations", ro=True, bridged=bridged),
             *_bind(root / "work", "/matter/work", ro=True, bridged=bridged),
+            *_bind(root / "pool", "/matter/pool", ro=True, bridged=bridged),
             *_bind(root / "workspace", "/matter/workspace", bridged=bridged),
             *_bind(root / "claude-home", "/home/adhoc/.claude", bridged=bridged)]
     if bridged:
@@ -226,6 +229,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         build_image()
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
     (m.root / "work").mkdir(exist_ok=True)
+    (m.root / "pool").mkdir(exist_ok=True)
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)
@@ -334,4 +338,18 @@ def status() -> dict:
         "viewer": "running" if _socket_ok(os.environ.get("ADHOC_VIEW_SOCKET", "")) else "not running",
         "annotation_api": "running" if _socket_ok(os.environ.get("ADHOC_ANN_SOCKET", "")) else "not running",
         "audit_api": "running" if _socket_ok(os.environ.get("ADHOC_AUDIT_SOCKET", "")) else "not running",
+        "sync": _sync_status(Path("/matter/pool/logs")),
     }
+
+
+def _sync_status(logs: Path) -> dict:
+    """Who the matter syncs with, as the pool log says. Sync is the user's to
+    set up, on the host (Principle 2): nothing here can change it."""
+    from .matter import Feed
+    from .pool import Pool
+    p = Pool(os.environ.get("ADHOC_POOL_FOUNDER") or None)
+    for ev in Feed("pool", logs).read():
+        p.apply(ev)
+    return {"matter_id": os.environ.get("ADHOC_MATTER_ID") or None,
+            "members": [{k: x[k] for k in ("name", "role", "active")} for x in p.members.values()],
+            "note": "Syncing is set up by the user on the host, with adhoc sync; it can't be changed from here."}

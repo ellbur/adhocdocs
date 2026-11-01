@@ -8,11 +8,12 @@ up. Sync itself (the pool, the protocol) builds on these.
 from . import annotations, work
 from .matter import Matter
 
-SYNCED_FEEDS = ("store", "annotations", "work")
+SYNCED_FEEDS = ("pool", "store", "annotations", "work")
 
 
 def feeds(m: Matter) -> dict:
-    return {"store": m.logs["store"], "annotations": m.annotation_log, "work": m.work_log}
+    """The synced feeds, membership first: it says whose events to accept."""
+    return {"pool": m.pool_log, "store": m.logs["store"], "annotations": m.annotation_log, "work": m.work_log}
 
 
 def vector(m: Matter) -> dict:

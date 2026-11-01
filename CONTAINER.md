@@ -84,12 +84,13 @@ on a subscription.
   `/etc/claude-code/CLAUDE.md`). It's kept short, and points at `--help`.
 
 **Mounts:** the store and annotation log read-only (originals can't change,
-and annotation writes go through the API that stamps authorship); the
-workspace read-write; the matter's `claude-home/` as `~/.claude`; and the
+and annotation writes go through the API that stamps authorship); published
+work (`work/`) and the pool's membership (`pool/`) read-only
+([SYNC.md](SYNC.md)); the workspace read-write; the matter's `claude-home/` as `~/.claude`; and the
 viewer and annotation API sockets (the launcher runs `adhoc view` and
 `adhoc ann-api`, and sets `ADHOC_VIEW_SOCKET` and `ADHOC_ANN_SOCKET`); and
 the audit API's socket, read-only, alone in its own directory. There is nothing else: no host home, no other
-matter, no Podman socket.
+matter, no Podman socket, and not `sync/` (the installation's keys and invitations).
 
 **Network: none, plus a proxy on the host.** The session runs with
 `--network none`, so the kernel gives it a loopback interface and nothing

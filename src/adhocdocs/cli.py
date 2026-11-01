@@ -103,10 +103,36 @@ def adhoc(argv=None):
     s = sub.add_parser("retire", help="take published work out of work/ (the history stays)")
     s.add_argument("name")
     s.add_argument("--user", required=True)
-    s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)")
-    s.add_argument("action", choices=["status", "conflicts"],
-                   help="status: this matter's ID, this installation's origin, and the events held from each origin. "
-                        "conflicts: events from different installations that clashed, and how each was resolved")
+    s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)",
+                       description=SYNC_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ss = s.add_subparsers(dest="action", required=True)
+    ss.add_parser("status", help="this matter's ID, this installation's origin, the members, and the events held "
+                                 "from each origin")
+    ss.add_parser("conflicts", help="events from different installations that clashed, how each was resolved, "
+                                    "and published work that forked")
+    x = ss.add_parser("invite", help="an invitation for another installation to join (founds the pool if needed)")
+    x.add_argument("--user", required=True)
+    x.add_argument("--address", action="append", default=[],
+                   help="host:port where this installation listens (adhoc sync serve); repeatable")
+    x.add_argument("--role", choices=["member", "hub"], default="member")
+    x.add_argument("--hours", type=float, default=72, help="how long the invitation works (default 72)")
+    x.add_argument("--name", help="this installation's name, if this founds the pool (default: the host name)")
+    x = ss.add_parser("join", help="join a matter's pool with an invitation, into a new matter directory")
+    x.add_argument("code")
+    x.add_argument("path", help="a new, empty directory for the matter")
+    x.add_argument("--name", help="this installation's name (default: the host name)")
+    x.add_argument("--address", action="append", default=[], help="host:port where this one will listen, if it will")
+    x = ss.add_parser("serve", help="listen for the pool's other members (runs until stopped)")
+    x.add_argument("--listen", default=f"0.0.0.0:7480", help="host:port to listen on (default 0.0.0.0:7480)")
+    x.add_argument("--advertise", action="append", default=[],
+                   help="host:port the others should use to reach this one, recorded in the pool; repeatable")
+    x.add_argument("--user", help="who is advertising the address (needed with --advertise)")
+    x.add_argument("--every", type=float, default=0, help="also sync with every member every N minutes")
+    ss.add_parser("now", help="sync with every member that says where it listens")
+    ss.add_parser("members", help="the pool's members")
+    x = ss.add_parser("remove", help="remove a member: no one syncs with it again (it keeps what it has)")
+    x.add_argument("origin")
+    x.add_argument("--user", required=True)
     s = sub.add_parser("audit-api", help=argparse.SUPPRESS)
     s.add_argument("--socket", required=True)
     s.add_argument("--session", required=True)
@@ -116,6 +142,10 @@ def adhoc(argv=None):
     if a.cmd == "init":
         m = Matter.create(a.path)
         out({"matter": str(m.root)})
+        return
+    if a.cmd == "sync" and a.action == "join":
+        from . import invite
+        out(invite.join(a.code, a.path, a.name, a.address))
         return
     if a.cmd == "setup":
         from . import setup
@@ -186,12 +216,7 @@ def adhoc(argv=None):
         else:
             out(work.retire(m, f"user:{a.user}", a.name))
     elif a.cmd == "sync":
-        from . import sync
-        if a.action == "status":
-            out(sync.status(m))
-        else:
-            for c in sync.conflicts(m):
-                out(c)
+        _sync(m, a)
     elif a.cmd == "audit-api":
         from . import audit
         print(json.dumps({"serving": a.socket, "session": a.session}), file=sys.stderr, flush=True)
@@ -204,6 +229,67 @@ def adhoc(argv=None):
         print(json.dumps({"serving": str(path)}), file=sys.stderr, flush=True)
         try:
             annapi.serve(m, path)
+        except KeyboardInterrupt:
+            pass
+
+
+SYNC_HELP = """\
+Sync this matter with its other installations: laptops, desktops, a hub.
+Every installation keeps a full copy and works offline. Documents, tags,
+notes, entities and published work sync; the workspace doesn't. See SYNC.md.
+
+  adhoc sync invite --user me --address myhost:7480   (on a member) prints a code
+  adhoc sync serve --listen 0.0.0.0:7480              (on a member) to be reached
+  adhoc sync join <code> ~/matters/smith --name "Bob's desktop"   (the new one)
+  adhoc sync now                                      sync with every member
+  adhoc sync status | members | conflicts
+
+An invitation is a password: send it the way you'd send one."""
+
+
+def _sync(m, a):
+    from . import invite, peer, pool, sync
+    if a.action == "status":
+        st = sync.status(m)
+        st["members"] = pool.Pool.load(m).summary(st["origin"])
+        out(st)
+    elif a.action == "conflicts":
+        for c in sync.conflicts(m):
+            out(c)
+    elif a.action == "members":
+        for row in pool.Pool.load(m).summary(m.origin):
+            out(row)
+    elif a.action == "invite":
+        out(invite.create(m, f"user:{a.user}", a.address, a.role, a.hours, a.name))
+    elif a.action == "remove":
+        out(pool.remove_member(m, f"user:{a.user}", a.origin))
+    elif a.action == "now":
+        for row in peer.sync_all(m):
+            out(row)
+    elif a.action == "serve":
+        if a.advertise:
+            if not a.user:
+                raise ValueError("--advertise needs --user")
+            if not pool.founded(m):
+                pool.found(m, f"user:{a.user}", __import__("socket").gethostname(), a.advertise)
+            else:
+                pool.set_addresses(m, f"user:{a.user}", a.advertise)
+        host, port = peer.split_address(a.listen)
+        srv = peer.Server([m], host, port)
+        print(json.dumps({"serving": m.id, "origin": m.origin, "listen": f"{host}:{srv.address[1]}"}),
+              file=sys.stderr, flush=True)
+        if a.every:
+            import threading
+            import time
+
+            def loop():
+                while True:
+                    time.sleep(a.every * 60)
+                    for row in peer.sync_all(Matter(m.root)):
+                        out(row)
+            threading.Thread(target=loop, daemon=True).start()
+        try:
+            srv.serve_forever()
         except KeyboardInterrupt:
             pass
 

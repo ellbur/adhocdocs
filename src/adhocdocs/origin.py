@@ -83,6 +83,19 @@ class Identity:
     def public(self) -> bytes:
         return raw_public(self.key.public_key())
 
+    def cert_path(self) -> Path:
+        """This origin's TLS certificate (made on first use)."""
+        p = self.dir / "keys" / f"{self.origin}.crt"
+        if not p.exists():
+            tmp = p.with_suffix(".tmp")
+            tmp.write_bytes(make_cert(self.key, self.origin))
+            tmp.replace(p)
+        return p
+
+    def key_path(self) -> Path:
+        self.origin
+        return self.dir / "keys" / f"{self.origin}.pem"
+
     def _here(self) -> dict:
         return {**_place(), "path": str(self.matter_root)}
 
@@ -114,3 +127,29 @@ class Identity:
     def _load_key(self):
         with open(self.dir / "keys" / f"{self.origin}.pem", "rb") as f:
             self._key = serialization.load_pem_private_key(f.read(), password=None)
+
+
+def make_cert(key: Ed25519PrivateKey, origin: str) -> bytes:
+    """A self-signed certificate for an origin's key, for TLS. Peers don't
+    check it against any authority: they check that its key hashes to the
+    origin they meant to reach (:func:`cert_origin`)."""
+    import datetime
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, origin)])
+    start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(int.from_bytes(raw_public(key.public_key())[:16], "big") >> 1)
+            .not_valid_before(start).not_valid_after(start.replace(year=2126)).sign(key, None))
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def cert_origin(cert: bytes) -> tuple[str, bytes]:
+    """The origin a certificate (PEM or DER) is for, and its raw public key."""
+    from cryptography import x509
+    c = x509.load_pem_x509_certificate(cert) if cert.lstrip().startswith(b"-----") else x509.load_der_x509_certificate(cert)
+    pub = c.public_key()
+    if not isinstance(pub, Ed25519PublicKey):
+        raise ValueError("not an Ed25519 certificate")
+    raw = raw_public(pub)
+    return origin_id(raw), raw
