@@ -1,8 +1,16 @@
 # adhocdocs
 
-Tools for working with evidentiary documents from Claude Code. You load a
-matter's documents once, then work with Claude in a sealed session that
-sees only that matter. Claude searches, reads, tags, drafts and builds
+Tools for working with evidentiary documents from Claude Code. 
+
+The idea is that we don't need a legal tech platform: Claude is already good at doing everything lawyers do. We just need to give Claude a way to display its results and isolate it so it's safe. Then you just interact with Claude like you would normally.
+
+These tools differ from other legal AI software in that they give Claude maximum freedom to customize its workflow, including by writing custom code for the analysis at hand.
+
+You work with Claude in a sealed session that
+sees only one matter. You "ingest" outside documents into the matter, and Claude can do whatever it wants with them within the confines of its container.
+
+
+Claude searches, reads, tags, drafts and builds
 productions. A document viewer on your desktop shows you what Claude points
 at, and sends back what you select.
 
