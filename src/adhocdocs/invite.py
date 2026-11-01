@@ -94,7 +94,13 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
             invites[_digest(secret)] = record
             _save(m, invites)
         through = m.origin
+    from . import seal
+    try:
+        k = seal.b64(seal.key(m))               # the matter key: with the code, never in a log or at a hub
+    except seal.NoKey:
+        k = None
     body = {"m": m.id, "f": m.config["founder"], "o": through, "a": addrs, "r": role, "s": secret,
+            **({"k": k} if k and role != "hub" else {}),
             **({"u": author} if same_person else {})}
     code = PREFIX + base64.urlsafe_b64encode(json.dumps(body, separators=(",", ":")).encode()).rstrip(b"=").decode()
     return {"code": code, "matter": m.id, "role": role, "addresses": addrs, "expires_in_hours": hours,
@@ -185,6 +191,9 @@ def join(code: str, path, name: str | None = None, addresses=()) -> dict:
     cfg["founder"] = inv["f"]
     write_toml(m.root / "matter.toml", cfg)
     m = Matter(m.root)
+    if inv.get("k"):
+        from . import seal
+        seal.save_key(m, seal.unb64(inv["k"]))
     req = {"digest": _digest(inv["s"]), "cert": m.identity.cert_path().read_text(encoding="ascii"),
            "name": name or socket.gethostname(), "addresses": list(addresses)}
     errors = []

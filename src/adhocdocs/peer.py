@@ -110,10 +110,18 @@ def counts(m: Matter) -> dict:
 
 def heads(m: Matter) -> dict:
     """``{feed: {origin: hash of the last event}}``: two copies of a log with
-    the same count and different heads have forked."""
+    the same count and different heads have forked. (A sealed hub keeps each
+    event's hash beside it: adhocdocs.seal.)"""
+    from .seal import envelope_hash
     from .signing import event_hash
-    return {name: {o: event_hash(feed_of(m, name).log_for(o).last_event()) for o in feed_of(m, name).vector()}
-            for name in FEEDS}
+    sealed = is_sealed(m)
+    return {name: {o: (envelope_hash if sealed and name != "pool" else event_hash)(feed_of(m, name).log_for(o).last_event())
+                   for o in feed_of(m, name).vector()} for name in FEEDS}
+
+
+def is_sealed(m: Matter) -> bool:
+    """A hub's replica that holds only sealed events and objects (adhocdocs.seal)."""
+    return bool(m.config.get("sealed"))
 
 
 # -- what events point at ---------------------------------------------------------------------
@@ -285,9 +293,59 @@ def read_events(m: Matter, feed: str, origin: str, start: int, limit: int) -> li
     return out
 
 
+def append_sealed(m: Matter, feed: str, origin: str, start: int, envelopes: list[dict], pool=None) -> int:
+    """A sealed hub's side of appending: the events are sealed, so it checks
+    what it can (whose log, the order of hashes, the form), and stores them
+    as they are. Members check the rest when they read them."""
+    from .seal import envelope_hash
+    from .signing import is_tombstone
+    pool = pool or poolmod.Pool.load(m)
+    if pool.cert(origin) is None:
+        raise SyncError(f"{origin} isn't a member of this matter's pool")
+    gone = pool.members.get(origin)
+    limit = gone["upto_feeds"].get(feed) if gone and not gone["active"] and gone.get("upto_feeds") else None
+    log = feed_of(m, feed).log_for(origin)
+    log.path.parent.mkdir(parents=True, exist_ok=True)
+    from .matter import same_file
+    with open(log.path, "a", encoding="utf-8", newline="\n") as f, locked(f):
+        if not same_file(f, log.path):
+            raise SyncError(f"{feed}/{origin}: the log was being rewritten; try again")
+        have = log.count()
+        if have != start:
+            if have > start and have - start < len(envelopes):
+                envelopes = envelopes[have - start:]
+            elif have > start:
+                return have
+            else:
+                raise SyncError(f"{feed}/{origin}: this copy has {have} events, not {start}")
+        if limit is not None:
+            envelopes = envelopes[:max(0, limit - have)]
+        prev = envelope_hash(log.last_event())
+        out = []
+        for env in envelopes:
+            ok = isinstance(env, dict) and isinstance(env.get("id"), str) and len(env["id"]) < 64
+            if ok and is_tombstone(env):
+                env = {k: env[k] for k in ("id", "op", "redacted", "purge", "hp") if k in env}
+            elif ok:
+                ok = (isinstance(env.get("h"), str) and HASH_RE.fullmatch(env["h"]) is not None
+                      and isinstance(env.get("sealed"), str) and len(env["sealed"]) < 8 << 20)
+                env = {k: env.get(k) for k in ("id", "h", "hp", "sealed")}
+            if not ok or env.get("hp") != prev:
+                raise BadLog(f"{feed}/{origin}: event {env.get('id') if isinstance(env, dict) else '?'} doesn't "
+                             "follow the one before it")
+            prev = envelope_hash(env)
+            out.append(env)
+        f.write("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in out))
+    return have + len(out)
+
+
 def after_arrival(m: Matter, feeds):
     """Re-derive what depends on arrived events (adhocdocs.sync.refresh)."""
     from . import sync
+    if is_sealed(m):
+        from . import pool
+        pool.save_cutoffs(m) if "pool" in feeds else None
+        return                      # nothing here can be read: nothing to derive
     if set(feeds) & {"annotations", "work", "pool", "store"}:
         sync.refresh(Matter(m.root))
 
@@ -603,7 +661,28 @@ class _Handler(BaseHTTPRequestHandler):
                 self.srv.wait_slot(who, -1)
             return self._json(200, {"fingerprint": fp})
         if segs == ["vector"] and cmd == "GET":
-            return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m)})
+            return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m),
+                                    "sealed": is_sealed(m)})
+        if segs == ["redact"] and cmd == "POST" and is_sealed(m):
+            # a member tells a sealed hub what purges redacted (the hub can't read them)
+            from .purge import _redact
+            hashes = json.loads(body).get("hashes", [])
+            if not isinstance(hashes, list) or len(hashes) > 100000:
+                raise ValueError("hashes must be a list")
+            _redact_sealed(m, {h for h in hashes if isinstance(h, str) and HASH_RE.fullmatch(h)})
+            return self._json(200, {"redacted": True})
+        if segs == ["forget"] and cmd == "POST" and is_sealed(m):
+            # and which objects purges deleted, by their sealed names
+            names = json.loads(body).get("objects", [])
+            if not isinstance(names, list) or len(names) > 100000:
+                raise ValueError("objects must be a list")
+            store = store_only(m)
+            n = 0
+            for h in names:
+                if isinstance(h, str) and HASH_RE.fullmatch(h) and (p := store.path(h)) is not None:
+                    p.unlink(missing_ok=True)
+                    n += 1
+            return self._json(200, {"forgotten": n})
         if len(segs) == 3 and segs[0] == "events" and segs[1] in FEEDS:
             feed, origin = segs[1], segs[2]
             if not is_origin(origin):
@@ -614,7 +693,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"events": read_events(m, feed, origin, start, limit)})
             if cmd == "POST":
                 req = json.loads(body)
-                n = append_remote(m, feed, origin, int(req["from"]), req["events"])
+                if is_sealed(m) and feed != "pool":
+                    n = append_sealed(m, feed, origin, int(req["from"]), req["events"])
+                else:
+                    n = append_remote(m, feed, origin, int(req["from"]), req["events"])
                 if self.srv.on_change:
                     self.srv.on_change(m, feed)
                 else:
@@ -647,6 +729,10 @@ class _Handler(BaseHTTPRequestHandler):
                     self.close_connection = True
                     return self._json(410, {"error": "purged from this matter"})
                 n = int(self.headers.get("Content-Length", 0))
+                if is_sealed(m):
+                    # sealed: named by a blinded hash the hub can't check; members do, on reading
+                    _put_named(store, h, _Limited(self.rfile, n))
+                    return self._json(200, {"stored": h})
                 got = store.put_stream(_Limited(self.rfile, n))
                 if got != h:
                     return self._json(409, {"error": f"the object's bytes hash to {got}, not {h}"})
@@ -661,6 +747,42 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self._handle()
+
+
+def _put_named(store: ObjectStore, name: str, src):
+    import os
+    p = store._path(store.roots[0], name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + f".{secrets.token_hex(6)}.tmp")
+    with open(tmp, "wb") as f:
+        while block := src.read(1 << 20):
+            f.write(block)
+    os.replace(tmp, p)
+
+
+def _redact_sealed(m: Matter, hashes: set):
+    """Tombstone a sealed hub's lines whose hash a purge redacted."""
+    import os
+    from .seal import envelope_hash
+    from .signing import is_tombstone
+    if not hashes:
+        return
+    d = m.root / "annotations" / "logs"
+    for path in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
+        with open(path, "r+", encoding="utf-8", newline="\n") as f, locked(f):
+            lines, out, changed = f.read().splitlines(keepends=True), [], False
+            for line in lines:
+                env = json.loads(line)
+                if not is_tombstone(env) and env.get("h") in hashes:
+                    out.append(json.dumps({"id": env["id"], "op": "redacted", "redacted": env["h"], "purge": "sealed",
+                                           "hp": env.get("hp")}) + "\n")
+                    changed = True
+                else:
+                    out.append(line)
+            if changed:
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text("".join(out), encoding="utf-8", newline="\n")
+                os.replace(tmp, path)
 
 
 class _Limited:
@@ -720,6 +842,7 @@ class Peer:
         self.m, self.origin = m, origin
         self.host, self.port = split_address(address)
         self.timeout = timeout
+        self.k = None                   # the matter key, when this is a sealed hub (adhocdocs.seal)
         self.sni = sni or sni_name(pool_key(m))
         self.base = base or f"/v1/{urllib.parse.quote(pool_key(m))}"
         self.conn = None
@@ -765,18 +888,29 @@ class Peer:
         return out
 
     def fetch_object(self, h: str, store: ObjectStore):
-        r = self.request("GET", f"objects/{h}")
+        from . import seal
+        r = self.request("GET", f"objects/{seal.blind(self.k, h) if self.k else h}")
         if r.status != 200:
             r.read()
             raise SyncError(f"the peer doesn't have {h}")
-        got = store.put_stream(r)
+        try:
+            got = store.put_stream(seal.Unsealer(self.k, h, r) if self.k else r)
+        except Exception as e:
+            if not self.k:
+                raise
+            raise SyncError(f"{h} from the hub doesn't decrypt: {type(e).__name__}")
         if got != h:
             raise SyncError(f"the peer sent bytes hashing to {got} for {h}")
 
     def send_object(self, h: str, store: ObjectStore):
+        from . import seal
         p = store.path(h)
         with open(p, "rb") as f:
-            r = self.request("PUT", f"objects/{h}", stream=f, length=p.stat().st_size)
+            if self.k:
+                r = self.request("PUT", f"objects/{seal.blind(self.k, h)}", stream=seal.Sealer(self.k, h, f),
+                                 length=seal.sealed_size(p.stat().st_size))
+            else:
+                r = self.request("PUT", f"objects/{h}", stream=f, length=p.stat().st_size)
             out = json.loads(r.read() or b"{}")
         if r.status != 200:
             raise SyncError(f"PUT {h}: {r.status} {out.get('error', '')}")
@@ -789,6 +923,12 @@ def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: 
         events = peer.json("GET", f"events/{feed}/{origin}?from={mine}&limit={BATCH}")["events"]
         if not events:
             break
+        if peer.k and feed != "pool":
+            from . import seal
+            try:
+                events = [seal.unseal_event(peer.k, e) for e in events]
+            except Exception as e:
+                raise BadLog(f"{feed}/{origin}: a sealed event from the hub doesn't open ({type(e).__name__})")
         # check before fetching anything they point at
         key = known_key(m, origin, pool, events)
         if key is None:
@@ -820,9 +960,22 @@ def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: 
     while theirs < mine:
         events = read_events(m, feed, origin, theirs, BATCH)
         objs = closure(store, [h for ev in events for h in direct_refs(feed, ev)])
-        for i in range(0, len(objs), 5000):
-            for h in peer.json("POST", "missing", {"hashes": objs[i:i + 5000]})["missing"]:
-                peer.send_object(h, store)
+        if peer.k:
+            from . import seal
+            names = {seal.blind(peer.k, h): h for h in objs}
+        else:
+            names = {h: h for h in objs}
+        listed = list(names)
+        for i in range(0, len(listed), 5000):
+            for n in peer.json("POST", "missing", {"hashes": listed[i:i + 5000]})["missing"]:
+                peer.send_object(names[n], store)
+        if peer.k and feed != "pool":
+            prev = read_events(m, feed, origin, theirs - 1, 1)[0] if theirs else None
+            sealed = []
+            for ev in events:
+                sealed.append(seal.seal_event(peer.k, ev, prev))
+                prev = ev
+            events = sealed
         theirs = peer.json("POST", f"events/{feed}/{origin}", {"from": theirs, "events": events})["count"]
         sent += len(events)
     return sent
@@ -848,6 +1001,13 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
             return 0
 
     try:
+        if peer.json("GET", "vector").get("sealed"):
+            # a sealed hub: what goes is sealed, what comes is opened and checked here (adhocdocs.seal)
+            from . import seal
+            try:
+                peer.k = seal.key(m)
+            except seal.NoKey as e:
+                raise SyncError(str(e))
         for feed in FEEDS:
             # membership can take rounds: an origin's certificate may arrive in another's log
             for _ in range(10 if feed == "pool" else 1):
@@ -883,6 +1043,14 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
                 elif n == t and their_heads.get(feed, {}).get(o) not in (None, mine_heads.get(o)):
                     refused.append({"log": what, "error": f"{what}: the log has forked: the same number of events, "
                                                          "ending differently"})
+        if peer.k:
+            # a sealed hub can't read purges: say what they deleted and redacted
+            from . import purge, seal
+            rec = purge.record(m)
+            if rec["redacted"]:
+                peer.json("POST", "redact", {"hashes": rec["redacted"]})
+            if rec["objects"]:
+                peer.json("POST", "forget", {"objects": [seal.blind(peer.k, h) for h in rec["objects"]]})
     finally:
         peer.close()
     if pulled:

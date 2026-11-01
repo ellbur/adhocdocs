@@ -10,20 +10,39 @@ from test_sync import picture, text_doc
 ALICE, BOB = "user:alice", "user:bob"
 
 
-@pytest.fixture
-def hub(tmp_path):
-    """A hub on localhost: its directory, server and address."""
+@pytest.fixture(params=[True, False], ids=["sealed", "plain"])
+def hub(tmp_path, request):
+    """A hub on localhost: its directory, server and address. Every test runs
+    with a sealed hub (the default: it can't read what it holds) and a plain one."""
     import socket
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
     addr = f"127.0.0.1:{port}"
-    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [addr])
+    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [addr], sealed=request.param)
     srv = peer.Server(h.matters(), "127.0.0.1", port, hub=h)
     srv.start()
     yield h, srv, addr
     srv.stop()
+
+
+def same(replica, m):
+    """The hub holds what the member holds: all of it, for a plain hub; for a
+    sealed one, the same logs and as many objects, and none of it readable."""
+    from adhocdocs import sync
+    if not replica.config.get("sealed"):
+        return picture(replica) == picture(m)
+    m = Matter(m.root)
+    if sync.vector(replica) != sync.vector(m):
+        return False
+    blob = b"".join(p.read_bytes() for p in replica.root.rglob("*") if p.is_file() and "sync" not in p.parts)
+    for d in m.state.live_documents():
+        text = m.objects.get_text(m.state.primary_layer(m.state.documents[d]).text).encode()
+        if text[:40] in blob:
+            return False
+    names = annotations.Annotations.load(m).definitions
+    return not any(f'"{t}"'.encode() in blob for t in names)
 
 
 @pytest.fixture
@@ -40,7 +59,7 @@ def test_push_a_matter_to_the_hub(a, hub):
     r = hubmod.push(a, code, ALICE)
     assert r["pushed"] and r["name"] == "Firm hub"
     (replica,) = h.matters()
-    assert replica.id == a.id and picture(replica) == picture(a)
+    assert replica.id == a.id and same(replica, a)
     roles = {x["name"]: x["role"] for x in poolmod.Pool.load(Matter(a.root)).active()}
     assert roles["Firm hub"] == "hub"
     assert poolmod.Pool.load(replica).is_member(replica.origin)
@@ -123,14 +142,15 @@ def test_the_client_checks_it_reached_the_hub(a, hub, tmp_path):
         hubmod.push(a, wrong, ALICE)
 
 
-def test_a_restarted_hub_serves_what_it_holds(a, tmp_path):
+@pytest.mark.parametrize("sealed", [True, False], ids=["sealed", "plain"])
+def test_a_restarted_hub_serves_what_it_holds(a, tmp_path, sealed):
     import socket
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
     addr = f"127.0.0.1:{port}"
-    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [addr])
+    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [addr], sealed=sealed)
     srv = peer.Server(h.matters(), "127.0.0.1", port, hub=h)
     srv.start()
     hubmod.push(a, h.enroll("alice")["code"], ALICE)
@@ -142,7 +162,7 @@ def test_a_restarted_hub_serves_what_it_holds(a, tmp_path):
         text_doc(a, "later.txt", "written while the hub was down")
         (r,) = [x for x in peer.sync_all(Matter(a.root)) if "pushed" in x]
         assert r["pushed"]
-        assert picture(h2.matters()[0]) == picture(a)
+        assert same(h2.matters()[0], a)
     finally:
         srv.stop()
 
@@ -164,3 +184,58 @@ def test_a_same_person_invitation_through_the_hub(a, hub, tmp_path):
     invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "bob")
     with pytest.raises(annotations.Refused):
         annotations.write(Matter(tmp_path / "bob"), ALICE, {"op": "define-tag", "tag": "nope"})
+
+
+def _sealed_hub(tmp_path):
+    import socket
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [f"127.0.0.1:{port}"])     # sealed: the default
+    srv = peer.Server(h.matters(), "127.0.0.1", port, hub=h)
+    srv.start()
+    return h, srv, f"127.0.0.1:{port}"
+
+
+def test_the_matter_key_never_reaches_the_hub(a, tmp_path):
+    from adhocdocs import seal
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        hubmod.push(a, h.enroll("alice")["code"], ALICE)
+        invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "b")
+        k = seal.key(Matter(a.root))
+        assert seal.key(Matter(tmp_path / "b")) == k              # the invitation carried it
+        everything = b"".join(p.read_bytes() for p in (tmp_path / "hub").rglob("*") if p.is_file())
+        assert k not in everything and seal.b64(k).encode() not in everything
+    finally:
+        srv.stop()
+
+
+def test_a_sealed_hub_keeps_each_log_in_order(a, tmp_path):
+    from adhocdocs import seal
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        hubmod.push(a, h.enroll("alice")["code"], ALICE)
+        (replica,) = h.matters()
+        n = replica.annotation_log.log_for(a.origin).count()
+        junk = {"id": "ev_ZZZZZZZZZZZZZZZZZZZZZZZZZZ", "h": "sha256:" + "0" * 64, "hp": "sha256:" + "1" * 64,
+                "sealed": "AAAA"}
+        p = peer.Peer(Matter(a.root), addr, replica.origin)
+        with pytest.raises(peer.SyncError, match="follow"):
+            p.json("POST", f"events/annotations/{a.origin}", {"from": n, "events": [junk]})
+        p.close()
+    finally:
+        srv.stop()
+
+
+def test_without_the_key_a_sealed_hub_is_no_use(a, tmp_path):
+    from adhocdocs import seal
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        hubmod.push(a, h.enroll("alice")["code"], ALICE)
+        seal.key_path(Matter(a.root)).unlink()
+        (r,) = [x for x in peer.sync_all(Matter(a.root)) if x.get("name") == "Firm hub"]
+        assert "key" in " ".join(r["failed"])
+    finally:
+        srv.stop()

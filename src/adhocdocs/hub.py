@@ -51,11 +51,13 @@ class Hub:
         self.identity = Identity(self.root / "sync", self.root)
 
     @classmethod
-    def init(cls, root, name: str, addresses=()) -> "Hub":
+    def init(cls, root, name: str, addresses=(), sealed=True) -> "Hub":
+        """A new hub. ``sealed`` (the default): it holds matters it can't read
+        (adhocdocs.seal)."""
         root = Path(root)
         (root / "matters").mkdir(parents=True, exist_ok=True)
         if not (root / "hub.json").exists():
-            _write(root / "hub.json", {"name": name, "addresses": list(addresses), "people": {}})
+            _write(root / "hub.json", {"name": name, "addresses": list(addresses), "people": {}, "sealed": sealed})
         h = cls(root)
         h.identity.cert_path()
         return h
@@ -136,7 +138,8 @@ class Hub:
         if new:
             m = Matter.create(path, matter_id=mid)
             cfg = m.config
-            cfg.update(founder=founder, adopted_by=person["name"], adopted=now())
+            cfg.update(founder=founder, adopted_by=person["name"], adopted=now(),
+                   **({"sealed": True} if self.config.get("sealed") else {}))
             write_toml(path / "matter.toml", cfg)
         m = Matter(path)
         if m.config.get("founder") != founder:

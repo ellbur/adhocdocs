@@ -144,21 +144,28 @@ def test_a_member_that_hasnt_heard_cant_bring_it_back(m, tmp_path):
         srv.stop()
 
 
-def test_a_hub_purges_too_and_a_newcomer_never_gets_it(m, tmp_path):
+@pytest.mark.parametrize("sealed", [True, False], ids=["sealed", "plain"])
+def test_a_hub_purges_too_and_a_newcomer_never_gets_it(m, tmp_path, sealed):
     import socket
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
-    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [f"127.0.0.1:{port}"])
+    h = hubmod.Hub.init(tmp_path / "hub", "Firm hub", [f"127.0.0.1:{port}"], sealed=sealed)
     srv = peer.Server(h.matters(), "127.0.0.1", port, hub=h)
     srv.start()
     try:
         hubmod.push(m, h.enroll("alice")["code"], ALICE)
+        from adhocdocs import seal
+        name = seal.blind(seal.key(Matter(m.root)), m.bad) if sealed else m.bad
+        (replica,) = h.matters()
+        assert name in objects(replica)
         purge.purge(Matter(m.root), ALICE, [m.bad], "clawback")
         peer.sync_all(Matter(m.root))
-        (replica,) = h.matters()
-        assert m.bad not in objects(replica)
+        assert name not in objects(replica)
+        if sealed:     # and the tag and note on it are tombstones there too
+            logs = b"".join(p.read_bytes() for p in (replica.root / "annotations/logs").glob("*"))
+            assert logs.count(b'"op": "redacted"') == 2
         invite.join(invite.create(Matter(m.root), ALICE)["code"], tmp_path / "c")
         c = Matter(tmp_path / "c")
         assert m.bad not in objects(c) and m.bad not in c.state.live_documents()

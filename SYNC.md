@@ -279,6 +279,29 @@ the hub to the pool with the role `hub`, and syncs everything to it. No one
 does anything per matter on the hub. Revoking a person stops their code;
 matters already on the hub are governed by their own pools.
 
+**A hub can't read what it holds** ([`seal.py`](src/adhocdocs/seal.py)).
+A matter has a key, made when its pool is founded, kept in each
+installation's `sync/` (never mounted, never in a log) and carried to new
+members inside their invitation code; a hub never gets it. Members send a
+hub (unless it was made `--plain`):
+
+- events sealed: encrypted, with only the event's ID, its hash and the
+  previous event's hash in the clear. That's enough for the hub to keep
+  each log in order, to compare log ends, and to redact by hash. Members
+  decrypt what they fetch and check every signature and chain as always.
+  Membership isn't sealed: the hub needs it to know who may connect;
+- objects encrypted in chunks, under blinded names (an HMAC of the hash),
+  so the hub can't tell which documents it holds by hashing known files.
+  Members check the real hash after decrypting.
+
+A sealed hub can't read purges either, so members tell it what to delete
+and redact when they sync. What it can see: how many events each
+installation wrote and when, and the number and sizes of objects. The
+cost: it can't check that an event in an installation's log was written by
+that installation (the signature is inside), so a member could put junk
+there; the others would refuse that log on reading it, so it disrupts but
+deceives no one.
+
 **Invitations through the hub.** When the pool has a hub, `adhoc sync
 invite` leaves the invitation there (only its secret's hash) and the code
 names the hub, so a new member can join, and get everything, while the
@@ -478,7 +501,7 @@ On the host (the user's; Claude can't run them in a session):
 | `adhoc purge <doc> --user me --reason "…"` | delete documents everywhere, for good |
 | `adhoc purges [--ack <purge> --user me]` | purges carried out here, and what they leave to do |
 | `adhoc publish <path> --user me`, `adhoc retire <name> --user me` | share work product as the user |
-| `adhoc hub init \| enroll \| revoke \| serve \| matters` | run a hub |
+| `adhoc hub init [--plain] \| enroll \| revoke \| serve \| matters` | run a hub (sealed unless `--plain`) |
 
 In a session: `work ls | publish | checkout | log | retire` (publishing goes
 through the annotation API, stamped `claude`), `ann log --cursor`, and
@@ -500,9 +523,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 
 ## Open questions
 
-- **A hub that can't read the documents.** Encrypting what the hub stores,
-  with keys only members hold, as Syncthing's "untrusted devices" do. It
-  costs the hub any server-side features later. Not in the first version.
 - **Partial replicas.** A laptop may not have room for a large matter.
   Every installation would get all logs and text layers, with originals
   fetched by collection or on first view. That trades away some of the
@@ -527,3 +547,4 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 - Documents can be purged everywhere, by a person; what's in the workspace
   and transcripts is left to each installation's user, with a notice.
 - Any member can remove any other, for now.
+- Hubs hold matters sealed, by default: they can't read them.

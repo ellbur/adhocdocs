@@ -285,6 +285,8 @@ def found(m: Matter, author: str, name: str, addresses=(), role="member") -> dic
     if founded(m):
         raise PoolError(f"this matter already has a pool (founded by {m.config['founder']})")
     seal(m)
+    from . import seal as sealmod
+    sealmod.make_key(m)             # the matter key: members have it, a hub never does
     cfg = m.config
     cfg["founder"] = m.origin
     write_toml(m.root / "matter.toml", cfg)

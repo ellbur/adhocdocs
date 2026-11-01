@@ -173,6 +173,8 @@ def adhoc(argv=None):
     x.add_argument("dir")
     x.add_argument("--name", required=True, help="what members will see, e.g. \"Firm hub\"")
     x.add_argument("--address", action="append", default=[], help="host:port members reach it at; repeatable")
+    x.add_argument("--plain", action="store_true",
+                   help="hold matters readably (by default a hub holds them sealed: it can't read them)")
     x = hs.add_parser("enroll", help="a hub code for a person, to push matters here")
     x.add_argument("dir")
     x.add_argument("--person", required=True)
@@ -393,7 +395,9 @@ HUB_HELP = """\
 A hub is an always-on member with a stable address: a firm server, say. It
 holds every matter pushed to it, so members can sync while each other's
 machines are off, and invitations made on a member are left there. It runs
-no sessions.
+no sessions, and it can't read the matters it holds: members send it
+everything encrypted with a key only they have (adhocdocs.seal; --plain
+turns that off).
 
   adhoc hub init /srv/adhoc-hub --name "Firm hub" --address hub.firm.example:7480
   adhoc hub enroll /srv/adhoc-hub --person alice     prints a code for Alice
@@ -408,8 +412,9 @@ Matters already on the hub are governed by their own pools."""
 def _hub(a):
     from . import hub, peer
     if a.action == "init":
-        h = hub.Hub.init(a.dir, a.name, a.address)
-        out({"hub": str(h.root), "name": a.name, "addresses": a.address, "origin": h.identity.origin})
+        h = hub.Hub.init(a.dir, a.name, a.address, sealed=not a.plain)
+        out({"hub": str(h.root), "name": a.name, "addresses": a.address, "origin": h.identity.origin,
+             "sealed": not a.plain})
         return
     h = hub.Hub(a.dir)
     if a.action == "enroll":

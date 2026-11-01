@@ -221,8 +221,9 @@ uv run adhoc --matter ~/matters/demo sync watch
 
 While a session is open (`adhoc open`), it keeps in step on its own.
 
-With a hub (an always-on server: `adhoc hub --help`), push the matter to it
-once with `adhoc sync push <code>`. Invitations then go through the hub, and
+With a hub (an always-on server, which holds matters encrypted so it can't
+read them: `adhoc hub --help`), push the matter to it once with `adhoc sync
+push <code>`. Invitations then go through the hub, and
 everyone syncs through it, whoever else is offline. Treat invitation and hub
 codes as passwords. Details: [SYNC.md](SYNC.md).
 

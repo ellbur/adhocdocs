@@ -229,7 +229,8 @@ def test_someone_elses_pool_under_a_matters_id_doesnt_take_its_place(tmp_path):
         replicas = {m.config["founder"]: m for m in h.matters()}
         assert len(replicas) == 2
         real = replicas[Matter(a.root).config["founder"]]
-        assert set(real.state.live_documents()) == set(Matter(a.root).state.live_documents())
+        from adhocdocs import sync
+        assert sync.vector(real) == sync.vector(Matter(a.root))
     finally:
         srv.stop()
 
