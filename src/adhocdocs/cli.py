@@ -555,13 +555,17 @@ schema no one has told us. See DATA.md.
   raw strings <doc> [--min N] [--limit N]
                                      printable runs (ASCII, UTF-16LE), each with its byte locator
   raw schema <doc>                   JSON/JSON Lines/XML: every path, its types, counts and
-                                     examples (each with a ptr= locator)
+                                     examples (each with a ptr= or xpath= locator)
   raw path <doc>                     the original's path, read-only, for your own decoders
 
 Byte locators (doc:<id>#bytes=start,end) quote an original's bytes; pages
 show them as hex (::q{#id}). ptr= locators (doc:<id>#ptr=/items/3/amount,
-RFC 6901) name a value in JSON and resolve to its text, which quotes
-verbatim like any text. What bytes or fields *mean* is interpretation:
+RFC 6901) name a value in JSON, and xpath= locators
+(doc:<id>#xpath=/orders/order[2]/sku, or …/order[@id='7']/@ref) an element
+or attribute in XML; both resolve to its text, which quotes verbatim like
+any text. In a spreadsheet or CSV, col=<header>&row=N names cells by the
+column's header (row= may be 7-9; col alone is the whole column; header=N
+if the header isn't row 1). What bytes or fields *mean* is interpretation:
 write a decoder and record it with `interp run`.
 """
 
@@ -640,15 +644,15 @@ def raw(argv=None):
             meta = m.objects.get_object(m.state.metadata[doc]) if doc in m.state.metadata else {}
             kind = "xml" if meta.get("kind") == "xml" or meta.get("format") == "xml" else None
         if kind == "xml":
-            res = structured.xml_schema(rawmod.read(m, content), a.paths)
+            res, key = structured.xml_schema(rawmod.read(m, content), a.paths), "xpath"
         elif kind in ("json", "ndjson") and layer is not None:
             text_ = m.objects.get_text(layer.text)
-            res = structured.schema(structured.loads(text_, kind), kind == "ndjson", a.paths)
-            for row in res["paths"]:
-                for ex in row.get("examples", []):
-                    ex["loc"] = locators.format({"doc": doc, "select": {"ptr": ex.pop("ptr")}})
+            res, key = structured.schema(structured.loads(text_, kind), kind == "ndjson", a.paths), "ptr"
         else:
             raise ValueError("raw schema is for JSON, JSON Lines and XML; for other formats see raw info, raw strings, raw hex")
+        for row in res["paths"]:
+            for ex in row.get("examples", []):
+                ex["loc"] = locators.format({"doc": doc, "select": {key: ex.pop(key)}})
         out({"doc": doc, "format": kind, **res})
 
 
@@ -1453,7 +1457,8 @@ Literate pages: Markdown whose quotations are references to document text.
 References can be text ranges (from search hits or `view selection`),
 spreadsheet cells (`sheet=…&cells=B2:D10`, e.g. a grid selection), page
 regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
-(`ptr=/a/0/b`, which become text ranges), an original's bytes (`bytes=0,16`,
+(`ptr=/a/0/b`) or XML (`xpath=/a/b[2]`), which become text ranges, cells
+by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
 
 Format:
@@ -1699,7 +1704,9 @@ def view(argv=None):
         if x.startswith("exh:"):
             from .exhibits import resolve_exhibit
             return locators.format(resolve_exhibit(m, x)[0]["loc"])
-        return locators.format(locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects))
+        parsed = locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects)
+        # the viewer reads canonical selectors: aliases (ptr, xpath, col, pl, label) become what they name
+        return locators.format(locators.expand(m, parsed))
 
     if a.cmd == "serve":
         viewmod.serve(m, a.name, a.command)

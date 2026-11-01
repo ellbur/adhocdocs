@@ -12,6 +12,8 @@ knowing what the data means:
   Lines the first token is the record's number, counting from 0
   (``/12/name``). A key that appears twice in one object makes a pointer
   through it an error rather than a guess.
+- **XML paths** (``xpath=``, :func:`xpath_range`) do the same for XML,
+  with a small subset of XPath.
 - **Schemas** (:func:`schema`): every path in the data with the types and
   counts found there, and a few examples, each with its pointer. That is
   the starting point for working out what the data is, which is
@@ -155,6 +157,153 @@ def pointer_range(text: str, ptr: str, lines: bool = False) -> tuple[int, int]:
     return a, b
 
 
+# -- XML paths ---------------------------------------------------------------------------------
+#
+# ``xpath=`` names an element or attribute in an XML document by a small
+# subset of XPath, and resolves, like ``ptr=``, to the char range of its
+# text in the layer (the file's literal text), so it is quoted verbatim:
+#
+#   /orders/order[2]/sku      steps of element names, [n] counting from 1
+#   /orders/order[@id='2']    the one child whose attribute has this value
+#   /orders/*[3]              any element name
+#   /orders/order[2]/@id      an attribute, last
+#
+# An element's range is its content, between its start and end tags (child
+# markup included, as written); an attribute's is its value, inside the
+# quotes. Names match the local name, so a namespace prefix doesn't have to
+# be written. A step that matches more than one sibling without saying
+# which is an error, as a duplicate key is for ``ptr``.
+
+_XML_NAME = r"[^\s/>=<\"'!?]+"
+_XML_TAG = re.compile(r"<(?P<end>/)?(?P<name>" + _XML_NAME + r")(?P<attrs>(?:\s+[^\s=/>]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(?P<empty>/)?>")
+_XML_ATTR = re.compile(r"(?P<name>[^\s=/>]+)\s*=\s*(?:\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)')")
+_XML_STEP = re.compile(r"(?P<name>\*|[^\[\]/@]+)(?:\[(?:(?P<n>[1-9][0-9]*)|@(?P<attr>[^=\]]+)=(?:'(?P<sq>[^']*)'|\"(?P<dq>[^\"]*)\"))\])?")
+
+
+class XmlNode:
+    __slots__ = ("name", "start", "end", "attrs", "children")
+
+    def __init__(self, name, attrs):
+        self.name, self.attrs, self.children = name, attrs, []
+        self.start = self.end = None
+
+
+def _local(name: str) -> str:
+    return name.rsplit(":", 1)[-1]
+
+
+def xml_tree(text: str) -> XmlNode:
+    """The elements of an XML text with their content ranges and their
+    attributes' value ranges, in code points. Comments, CDATA, processing
+    instructions and the doctype are skipped. Raises PointerError if tags
+    don't nest."""
+    root = XmlNode("#document", {})
+    stack = [root]
+    i = 0
+    while True:
+        j = text.find("<", i)
+        if j < 0:
+            break
+        for opener, closer in (("<!--", "-->"), ("<![CDATA[", "]]>"), ("<?", "?>")):
+            if text.startswith(opener, j):
+                k = text.find(closer, j + len(opener))
+                if k < 0:
+                    raise PointerError(f"not well-formed XML at char {j}: {opener} never closed")
+                i = k + len(closer)
+                break
+        else:
+            if text.startswith("<!", j):        # a doctype, maybe with an internal subset
+                depth, k = 0, j + 2
+                while k < len(text):
+                    c = text[k]
+                    if c == "[":
+                        depth += 1
+                    elif c == "]":
+                        depth -= 1
+                    elif c == ">" and depth <= 0:
+                        break
+                    k += 1
+                i = k + 1
+                continue
+            m = _XML_TAG.match(text, j)
+            if not m:
+                raise PointerError(f"not well-formed XML at char {j}: can't read the tag")
+            if m["end"]:
+                top = stack.pop()
+                if len(stack) == 0 or top.name != m["name"]:
+                    raise PointerError(f"not well-formed XML at char {j}: </{m['name']}> closes <{top.name}>")
+                top.end = j
+            else:
+                attrs = {}
+                base = m.start("attrs")
+                for a in _XML_ATTR.finditer(m["attrs"]):
+                    g = "dq" if a["dq"] is not None else "sq"
+                    attrs.setdefault(_local(a["name"]), []).append((base + a.start(g), base + a.end(g)))
+                node = XmlNode(m["name"], attrs)
+                stack[-1].children.append(node)
+                node.start = m.end()
+                if m["empty"]:
+                    node.end = m.end()
+                else:
+                    stack.append(node)
+            i = m.end()
+    if len(stack) > 1:
+        raise PointerError(f"not well-formed XML: <{stack[-1].name}> is never closed")
+    return root
+
+
+def parse_xpath(path: str) -> list:
+    if not path.startswith("/") or path == "/":
+        raise PointerError(f"an XML path starts with / and names something: {path!r}")
+    steps = path[1:].split("/")
+    out = []
+    for k, step in enumerate(steps):
+        if step.startswith("@"):
+            if k != len(steps) - 1 or len(step) < 2:
+                raise PointerError(f"an attribute (@name) can only be the last step: {path!r}")
+            out.append(("@", step[1:]))
+            continue
+        m = _XML_STEP.fullmatch(step)
+        if not m:
+            raise PointerError(f"not a step this subset of XPath has: {step!r} (name, name[n], name[@a='v'], *)")
+        pred = None
+        if m["n"]:
+            pred = int(m["n"])
+        elif m["attr"]:
+            pred = (m["attr"], m["sq"] if m["sq"] is not None else m["dq"])
+        out.append((m["name"], pred))
+    return out
+
+
+def xpath_range(text: str, path: str) -> tuple[int, int]:
+    """The char range of what an XML path names in ``text``."""
+    node, done = xml_tree(text), ""
+    for name, pred in parse_xpath(path):
+        here = done or "the top"
+        if name == "@":
+            vals = node.attrs.get(_local(pred), [])
+            if not vals:
+                raise PointerError(f"{here} has no attribute {pred!r}")
+            if len(vals) > 1:
+                raise PointerError(f"attribute {pred!r} appears more than once on {here}")
+            return vals[0]
+        kids = [c for c in node.children if name == "*" or _local(c.name) == _local(name)]
+        if isinstance(pred, int):
+            if pred > len(kids):
+                raise PointerError(f"{here} has {len(kids)} {name} element{'s' if len(kids) != 1 else ''}: no [{pred}]")
+            kids = [kids[pred - 1]]
+        elif pred:
+            a, v = pred
+            kids = [c for c in kids if any(text[s:e] == v for s, e in c.attrs.get(_local(a), []))]
+        if not kids:
+            raise PointerError(f"no {name}{'' if pred is None else '[…]'} in {here}")
+        if len(kids) > 1:
+            raise PointerError(f"{len(kids)} {name} elements in {here}; say which, e.g. {name}[1]")
+        node = kids[0]
+        done += "/" + (name if pred is None else f"{name}[{pred}]" if isinstance(pred, int) else f"{name}[@{pred[0]}='{pred[1]}']")
+    return node.start, node.end
+
+
 # -- recognizing -------------------------------------------------------------------------------
 
 def sniff(text: str) -> str | None:
@@ -261,10 +410,13 @@ def schema(data, records_: bool = False, limit_paths: int = 500) -> dict:
 
 def xml_schema(data: bytes, limit_paths: int = 500) -> dict:
     """Element paths in an XML file (``/root/item/@id`` for attributes),
-    with counts and examples of their text. XML has no pointers here yet."""
+    with counts and examples of their text, each with the ``xpath`` that
+    names it (``/root/item[2]/@id``)."""
     from lxml import etree
     paths: dict[str, dict] = {}
     stack: list[str] = []
+    real: list[str] = []                 # the steps to here, each with its [n]
+    seen: list[Counter] = [Counter()]    # per open element: how many of each child name so far
     for event, el in etree.iterparse(__import__("io").BytesIO(data), events=("start", "end"),
                                      resolve_entities=False, no_network=True, huge_tree=True):
         if not isinstance(el.tag, str):
@@ -272,9 +424,14 @@ def xml_schema(data: bytes, limit_paths: int = 500) -> dict:
         tag = etree.QName(el).localname
         if event == "start":
             stack.append(tag)
+            seen[-1][tag] += 1
+            real.append(tag if len(stack) == 1 else f"{tag}[{seen[-1][tag]}]")
+            seen.append(Counter())
             key = "/" + "/".join(stack)
-            items = [(key, None)] + [(key + "/@" + etree.QName(a).localname, v) for a, v in el.attrib.items()]
-            for k, v in items:
+            here = "/" + "/".join(real)
+            items = [(key, None, here)] + [(key + "/@" + etree.QName(a).localname, v, here + "/@" + etree.QName(a).localname)
+                                           for a, v in el.attrib.items()]
+            for k, v, xp in items:
                 p = paths.get(k)
                 if p is None:
                     if len(paths) >= limit_paths:
@@ -282,14 +439,16 @@ def xml_schema(data: bytes, limit_paths: int = 500) -> dict:
                     p = paths[k] = {"path": k, "count": 0, "examples": []}
                 p["count"] += 1
                 if v is not None and len(p["examples"]) < EXAMPLES:
-                    p["examples"].append(_short(v))
+                    p["examples"].append({"value": _short(v), "xpath": xp})
         else:
             key = "/" + "/".join(stack)
             text = (el.text or "").strip()
             p = paths.get(key)
             if p is not None and text and len(el) == 0 and len(p["examples"]) < EXAMPLES:
-                p["examples"].append(_short(text))
+                p["examples"].append({"value": _short(text), "xpath": "/" + "/".join(real)})
             stack.pop()
+            real.pop()
+            seen.pop()
             el.clear()
     return {"shape": "xml", "paths": [{k: v for k, v in p.items() if v != []} for p in paths.values()],
             **({"truncated": True} if len(paths) >= limit_paths else {})}

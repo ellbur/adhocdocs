@@ -65,8 +65,21 @@ standard even when their schema isn't, so:
 - **`raw schema`** lists every path in the data (`/items/*/amount`, with
   `*` for any index), the types and counts found there, how many of its
   parent objects have it, and examples, each with its `ptr=` locator.
-  XML gets element and attribute paths with counts and examples, but no
-  pointers yet.
+  XML gets element and attribute paths with counts and examples, each
+  with its `xpath=` locator.
+- **`xpath=` locators** do for XML what `ptr=` does for JSON, with a small
+  subset of XPath: `/orders/order[2]/sku` (steps of names, `[n]` from 1),
+  `order[@id='7']` (the child with that attribute value), `*`, and a last
+  step `@attr`. An element resolves to its content between its tags, as
+  written (child markup and `&amp;` included); an attribute to its value
+  inside the quotes. Names match without their namespace prefix. A step
+  that matches several siblings without saying which is an error, like a
+  duplicate key.
+- **`col=` locators** name spreadsheet and CSV cells by their column's
+  header, not their letter: `col=Amount&row=7` is `cells=D7` when D1 says
+  "Amount", and stays right when someone's copy has a column inserted.
+  `col` alone is the column below its header; `header=N` says which row
+  the header is in. A header that appears twice is an error.
 
 ### Interpretations
 
@@ -184,8 +197,8 @@ Read as records, the largest payment went to :interp{#top-party}.
 ## Not built yet
 
 - Semantic search of interpretations.
-- Pointers into XML (an XPath subset), and pointers into CSV and
-  spreadsheets by header name rather than cell.
+- `raw schema` for spreadsheets and CSV (each column's header, types and
+  examples, with `col=` locators).
 - Interpretations travelling with published pages: publish the
   interpretation's folder alongside the page (`work publish`) for now.
 - Built-in readers for common structured binaries (SQLite, Parquet, EVTX).
