@@ -6,7 +6,9 @@ A child's ``part`` is its folder path and its position in the folder
 (``Inbox/Vendors/3``), leaving out the root and the "Top of Personal
 Folders" level. Folders' calendar items, contacts and tasks come through
 as emails too, with their subject and body. Deleted items libpff can
-recover (orphans) are counted, not ingested. A message attached to a
+recover (orphans) are counted, not ingested. A PST on disk is read in
+place, a message at a time (:func:`extract_pst_file`), so it needn't fit
+in memory. A message attached to a
 message is read through libpff itself, since pypff has no call for it (see
 :func:`_attached_message`).
 """
@@ -130,7 +132,17 @@ def _attached_message(attachment):
     return new(id(pypff.message), out.value, attachment)
 
 
-def _walk(folder, path: list[str], out: list, top: bool):
+def _count(folder, attr: str) -> int:
+    try:
+        return getattr(folder, attr)
+    except (OSError, IOError):
+        return 0
+
+
+def _walk(folder, path: list[str], top: bool):
+    """Each message as ``(folder path, position, item)``, a folder's own
+    messages before its subfolders'. Items are fetched one at a time, so a
+    folder of any size costs nothing to walk."""
     try:
         name = folder.name
     except (OSError, IOError):
@@ -138,35 +150,56 @@ def _walk(folder, path: list[str], out: list, top: bool):
     # The root has no name; "Top of Personal Folders" (or of the
     # Information Store, or of Outlook data file) is the level below it.
     here = path if (top or not name or (len(path) == 0 and name.lower().startswith("top of "))) else path + [name]
-    try:
-        messages = list(folder.sub_messages)
-    except (OSError, IOError):
-        messages = []
-    for i, item in enumerate(messages, 1):
-        out.append(("/".join(here), i, item))
-        if len(out) >= MAX_MESSAGES:
-            return
-    try:
-        subs = list(folder.sub_folders)
-    except (OSError, IOError):
-        subs = []
-    for sub in subs:
-        _walk(sub, here, out, False)
+    for i in range(_count(folder, "number_of_sub_messages")):
+        try:
+            item = folder.get_sub_message(i)
+        except (OSError, IOError):
+            item = None
+        yield "/".join(here), i + 1, item
+    for j in range(_count(folder, "number_of_sub_folders")):
+        try:
+            sub = folder.get_sub_folder(j)
+        except (OSError, IOError):
+            continue
+        yield from _walk(sub, here, False)
 
 
 def extract_pst(data: bytes) -> Extraction:
+    """A PST in memory (an attachment, a zip member), read in full."""
     import pypff
     f = pypff.file()
     f.open_file_object(io.BytesIO(data))
+    ext = _extraction(f)
+    ext.children = list(ext.children)
+    return ext
+
+
+def extract_pst_file(path) -> Extraction:
+    """A PST on disk, of any size: libpff reads it as needed, and its
+    messages are converted one at a time as ``children`` is iterated.
+    ``metadata`` is complete once the iteration ends."""
+    import pypff
+    f = pypff.file()
+    f.open(str(path))
+    return _extraction(f)
+
+
+def _extraction(f) -> Extraction:
+    meta: dict = {}
+    return Extraction(kind="mailbox", layers=[Layer("native", "", primary=True)],
+                      metadata=meta, children=_children(f, meta))
+
+
+def _children(f, meta: dict):
+    members, failed, unread = 0, 0, 0
+    folders = set()
     try:
-        found: list = []
-        _walk(f.root_folder, [], found, True)
-        children, failed, unread = [], 0, 0
-        folders = set()
-        for folder, i, item in found:
+        for folder, i, item in _walk(f.root_folder, [], True):
             folders.add(folder)
             source = "Outlook PST" + (f", folder {folder}" if folder else "")
             try:
+                if item is None:
+                    raise OSError("libpff could not open it")
                 msg = read_message(item)
                 data = mapi.to_eml(msg, source)
             except Exception as e:      # one bad message shouldn't lose the rest of the mailbox
@@ -175,17 +208,19 @@ def extract_pst(data: bytes) -> Extraction:
                 continue
             subject = msg.props.get(mapi.SUBJECT) or f"message-{i}"
             unread += sum(a.unread for a in msg.attachments)
-            children.append(Child(part=f"{folder}/{i}" if folder else str(i), name=_filename(subject), data=data))
+            members += 1
+            yield Child(part=f"{folder}/{i}" if folder else str(i), name=_filename(subject), data=data)
+            if members + failed >= MAX_MESSAGES:
+                break
+    finally:
         try:
             orphans = f.number_of_orphan_items
         except (OSError, IOError):
             orphans = 0
-    finally:
         f.close()
-    meta = {"members": len(children), "folders": sorted(folders), "unreadable": failed,
-            "unread_attached_messages": unread, "orphans": orphans}
-    return Extraction(kind="mailbox", layers=[Layer("native", "", primary=True)],
-                      metadata={k: v for k, v in meta.items() if v}, children=children)
+        found = {"members": members, "folders": sorted(folders), "unreadable": failed,
+                 "unread_attached_messages": unread, "orphans": orphans}
+        meta.update({k: v for k, v in found.items() if v})
 
 
 def _filename(subject: str) -> str:

@@ -80,6 +80,31 @@ class ObjectStore:
             os.replace(tmp, p)
         return h
 
+    def put_file(self, path, chunk: int = 1 << 20) -> str:
+        """Store a file's bytes without holding them in memory. The file is
+        hashed first, so one already in the store is only read, not copied;
+        otherwise it is copied and hashed again on the way, and refused if
+        it changed in between."""
+        with open(path, "rb") as f:
+            h = HASH_PREFIX + hashlib.file_digest(f, "sha256").hexdigest()
+        if self.has(h):
+            return h
+        p = self._path(self.roots[0], h)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        try:
+            hasher = hashlib.sha256()
+            with open(path, "rb") as src, open(tmp, "wb") as dst:
+                while block := src.read(chunk):
+                    hasher.update(block)
+                    dst.write(block)
+            if HASH_PREFIX + hasher.hexdigest() != h:
+                raise OSError(f"{path} changed while it was being stored")
+            os.replace(tmp, p)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return h
+
     def put_text(self, text: str) -> str:
         return self.put_bytes(text.encode())
 

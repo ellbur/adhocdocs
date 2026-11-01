@@ -61,6 +61,15 @@ passes, a .docx with tracked changes accepted and with them shown.
   is itself an `email`. The converted bytes are stored as the child's
   content and are the same each time, so re-ingesting finds the same
   documents. PSTs are read with libpff, through `libpff-python`.
+- Mailboxes of any size: an mbox or PST given as a file is copied into the
+  store in blocks and read from there a message at a time
+  (`extract_file`), so neither the mailbox nor its list of messages is
+  ever in memory, only one message and its attachments. One that arrives
+  as bytes (an attachment, a zip member) is still read whole. A document's
+  metadata is recorded after its children, so one without metadata is
+  unfinished, and re-running an interrupted ingest carries on from where
+  it stopped. A mailbox that breaks part-way keeps the messages read
+  before the break, and its metadata says where (`extraction_error`).
 - Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet,
   and `sheet=…&cells=B2:D10` a rectangle of cells;
   cells hold the values Excel last calculated, not formulas.

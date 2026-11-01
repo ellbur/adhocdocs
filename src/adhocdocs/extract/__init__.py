@@ -8,6 +8,7 @@ breaks, otherwise literal.
 
 import html
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 
@@ -38,7 +39,9 @@ class Extraction:
     kind: str
     layers: list[Layer] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
-    children: list[Child] = field(default_factory=list)
+    # A list, or for a container read from disk (extract_file) a generator
+    # yielding one child at a time; metadata is complete once it is used up.
+    children: Iterable[Child] = field(default_factory=list)
 
 
 def clean(s: str) -> str:
@@ -168,6 +171,30 @@ def unextracted_kind(name: str | None, data: bytes) -> str:
     named it."""
     kind = kind_for(name, data)
     return _EXTRACTED_KIND.get(kind, kind)
+
+
+# Containers extract_file reads in place, a member at a time
+STREAMED = ("mbox", "pst")
+SNIFF = 65536
+
+
+def file_kind(path, name: str | None) -> str:
+    """kind_for, from a file's first bytes: enough for every kind in
+    STREAMED (for the rest, read the file and ask kind_for)."""
+    with open(path, "rb") as f:
+        return kind_for(name, f.read(SNIFF))
+
+
+def extract_file(path, kind: str) -> Extraction:
+    """Extract a container on disk (``kind`` in STREAMED) without reading it
+    into memory: ``children`` is a generator."""
+    if kind == "mbox":
+        from .archive import extract_mbox_file
+        return extract_mbox_file(path)
+    if kind == "pst":
+        from .pst import extract_pst_file
+        return extract_pst_file(path)
+    raise ValueError(f"{kind} is not read from disk")
 
 
 def extract(name: str | None, data: bytes) -> Extraction:

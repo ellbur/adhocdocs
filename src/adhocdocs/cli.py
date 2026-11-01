@@ -134,10 +134,10 @@ def adhoc(argv=None):
     if a.cmd == "ingest":
         from .ingest import ingest_manifest, ingest_paths
 
-        def report(doc, name, ext):
+        def report(doc, name, ext, children):
             out({"doc": doc, "name": name, "kind": ext.kind,
                  "layers": [{"view": l.view, "chars": len(l.text)} for l in ext.layers],
-                 "children": len(ext.children)})
+                 "children": children})
         if a.manifest:
             ingest_manifest(m, a.manifest, report)
         else:
