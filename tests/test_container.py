@@ -95,3 +95,28 @@ def test_session_guide_names_real_tools():
     named = set(re.findall(r"^\| `(\w+)`", guide, re.M))
     assert named and named <= scripts, named - scripts
     assert len(guide.splitlines()) < 80          # it's loaded into every session: keep it short
+
+
+def test_bridged_session_args(tmp_path):
+    """Windows and macOS: the session mounts the bridge's volumes, not host
+    sockets, and still has no network."""
+    m = Matter.create(tmp_path / "m")
+    args = container.session_args(m, "s1", tmp_path / "run", volumes=("s1-run", "s1-audit"))
+    joined = " ".join(args)
+    assert f"type=bind,source={m.root / 'store'},target=/matter/store,ro" in joined
+    assert f"type=bind,source={m.root / 'workspace'},target=/matter/workspace " in joined
+    assert "-v s1-run:/run/adhoc " in joined and "-v s1-audit:/run/adhoc-audit:ro" in joined
+    assert str(tmp_path / "run") not in joined and "--network none" in joined
+
+
+def test_bridge_args(monkeypatch):
+    monkeypatch.setenv("ADHOC_BRIDGE_TOKEN", "secret-token")
+    args = container.bridge_args("s1", ("s1-run", "s1-audit"))
+    joined = " ".join(args)
+    assert "-p 127.0.0.1::7100" in joined                       # the host's loopback only
+    assert "-v s1-audit:/run/adhoc-audit " in joined            # read-write here: the bridge makes the socket
+    assert "-e ADHOC_BRIDGE_TOKEN " in joined and "secret-token" not in joined
+    assert "--cap-drop=ALL" in joined and "--network" not in joined
+    for name in ("proxy", "annotations", "viewer", "audit"):
+        assert f"--socket {name}=" in joined
+    assert args[args.index("--entrypoint") + 2] == container.IMAGE

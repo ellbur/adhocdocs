@@ -14,7 +14,7 @@ Claude searches, reads, tags, drafts and builds
 productions. A document viewer on your desktop shows you what Claude points
 at, and sends back what you select.
 
-It runs on Linux for now.
+It runs on Linux for now. Windows is in progress: see [WINDOWS.md](WINDOWS.md).
 
 ## Setting up
 
@@ -257,6 +257,7 @@ data system-wide, put `eng.traineddata` in
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer
 - [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
+- [WINDOWS.md](WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
 
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.

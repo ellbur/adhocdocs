@@ -1,7 +1,8 @@
 """The annotation API: the container's only way to write annotations.
 
 The server runs on the host (the launcher starts it with the session) and
-listens on a Unix socket that is mounted into the container. It stamps
+listens on a Unix socket that is mounted into the container (or, on Windows
+and macOS, on a port the bridge reaches: :mod:`adhocdocs.endpoint`). It stamps
 every write ``claude``, whatever the request says, and applies the rules in
 :mod:`adhocdocs.annotations`. The log itself is mounted read-only in the
 container, so this is the only path, and Claude can't write as the user.
@@ -15,12 +16,10 @@ import hashlib
 import http.client
 import json
 import os
-import socket
-import socketserver
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from . import annotations
+from . import annotations, endpoint
 from .matter import Matter
 from .portable import runtime_dir
 
@@ -73,33 +72,19 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": f"{type(e).__name__}: {e}"})
 
 
-class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-    daemon_threads = True
-
-    def get_request(self):
-        sock, _ = super().get_request()
-        return sock, ("annotation-api", 0)   # BaseHTTPRequestHandler wants a (host, port)
-
-
 def serve(m: Matter, path: Path | None = None):
-    path = Path(path or socket_path(m))
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.exists():
-        path.unlink()
     handler = type("Handler", (_Handler,), {"matter": m})
-    with _Server(str(path), handler) as srv:
-        os.chmod(path, 0o660)
+    with endpoint.http_server(path or socket_path(m), handler, "annotation-api", mode=0o660) as srv:
         srv.serve_forever()
 
 
-class _UnixConnection(http.client.HTTPConnection):
+class _Connection(http.client.HTTPConnection):
     def __init__(self, path):
         super().__init__("localhost")
         self._path = path
 
     def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(str(self._path))
+        self.sock = endpoint.connect(self._path)
 
 
 class Unavailable(Exception):
@@ -110,7 +95,7 @@ def request(m: Matter, req: dict) -> dict:
     """Send a write to the API. Raises Unavailable if it isn't running, and
     annotations.Refused if the write was refused."""
     path = socket_path(m)
-    conn = _UnixConnection(path)
+    conn = _Connection(path)
     try:
         body = json.dumps(req).encode()
         conn.request("POST", "/write", body, {"Content-Type": "application/json"})

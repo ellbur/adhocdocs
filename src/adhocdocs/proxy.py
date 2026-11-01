@@ -17,7 +17,6 @@ relay only cuts the session off.
 import argparse
 import asyncio
 import json
-import os
 import sys
 import time
 
@@ -117,17 +116,21 @@ async def handle(reader, writer, allow):
 
 async def serve(listen: str | None, unix: str | None, allow):
     handler = lambda r, w: handle(r, w, allow)
+    cleanup = None
     if unix:
-        if os.path.exists(unix):
-            os.unlink(unix)
-        server = await asyncio.start_unix_server(handler, unix, limit=MAX_HEADER)
-        os.chmod(unix, 0o600)
+        # a Unix socket, or an endpoint file on Windows and macOS (adhocdocs.endpoint)
+        from .endpoint import start_server
+        server, cleanup = await start_server(handler, unix, limit=MAX_HEADER)
     else:
         host, _, port = listen.rpartition(":")
         server = await asyncio.start_server(handler, host or "127.0.0.1", int(port), limit=MAX_HEADER)
     log(listening=unix or listen, allow=list(allow))
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        if cleanup:
+            cleanup()
 
 
 async def relay(listen: str, target: str):

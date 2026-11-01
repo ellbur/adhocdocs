@@ -101,3 +101,17 @@ def stop(p: subprocess.Popen):
     except (ProcessLookupError, PermissionError, OSError):
         pass
 
+
+
+def tesseract() -> str:
+    """The tesseract program: on PATH, else (Windows) where its usual
+    installer puts it without adding it to PATH."""
+    import shutil
+    found = shutil.which("tesseract")
+    if found or not WINDOWS:
+        return found or "tesseract"
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA") and
+                 os.path.join(os.environ["LOCALAPPDATA"], "Programs")):
+        if base and os.path.exists(p := os.path.join(base, "Tesseract-OCR", "tesseract.exe")):
+            return p
+    return "tesseract"

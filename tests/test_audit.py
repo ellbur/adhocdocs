@@ -6,7 +6,6 @@ import http.client
 import json
 import os
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -14,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from adhocdocs import audit, container, proxy
+from adhocdocs import audit, container, endpoint, proxy
 from adhocdocs.matter import Matter
 
 HOOK = Path(__file__).parent.parent / "container" / "audit-hook"
@@ -72,7 +71,7 @@ def _serve(tmp_path):
     threading.Thread(target=audit.serve, args=(m, sock, "ses_1"), daemon=True).start()
     for _ in range(100):                     # the file appears just before the server listens
         try:
-            socket.socket(socket.AF_UNIX).connect(str(sock))
+            endpoint.connect(sock).close()
             break
         except OSError:
             time.sleep(0.05)
@@ -81,8 +80,7 @@ def _serve(tmp_path):
 
 def _post(sock, payload):
     conn = http.client.HTTPConnection("localhost")
-    conn.sock = socket.socket(socket.AF_UNIX)
-    conn.sock.connect(str(sock))
+    conn.sock = endpoint.connect(sock)
     conn.request("POST", "/hook", json.dumps(payload), {"Content-Type": "application/json"})
     r = conn.getresponse()
     return r.status, json.loads(r.read())
@@ -101,7 +99,8 @@ def test_api_and_cli(tmp_path):
 
 
 @pytest.mark.skipif(not shutil.which("curl"), reason="needs curl")
-def test_hook_script(tmp_path):
+def test_hook_script(tmp_path, monkeypatch):
+    monkeypatch.setenv("ADHOC_TRANSPORT", "unix")      # the hook runs in the (Linux) session
     m, sock = _serve(tmp_path)
     env = {**os.environ, "ADHOC_AUDIT_SOCKET": str(sock)}
     run = lambda payload, e=env: subprocess.run([str(HOOK)], input=json.dumps(payload), text=True,

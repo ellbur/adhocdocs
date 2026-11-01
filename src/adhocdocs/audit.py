@@ -34,7 +34,6 @@ that nothing written was changed from inside the session.
 import hashlib
 import json
 import os
-import socketserver
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -208,24 +207,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(400, {"error": f"{type(e).__name__}: {e}"})
 
 
-class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-    daemon_threads = True
-
-    def get_request(self):
-        sock, _ = super().get_request()
-        return sock, ("audit-api", 0)
-
-
 def serve(m: Matter, path: Path, session: str):
-    """The audit API for one session, on a Unix socket: ``POST /hook`` with
-    a hook's JSON payload."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.exists():
-        path.unlink()
+    """The audit API for one session, on a Unix socket (or endpoint file:
+    :mod:`adhocdocs.endpoint`): ``POST /hook`` with a hook's JSON payload."""
+    from . import endpoint
     handler = type("Handler", (_Handler,), {"log": AuditLog(audit_dir(m)), "session": session})
-    with _Server(str(path), handler) as srv:
-        os.chmod(path, 0o600)
+    with endpoint.http_server(path, handler, "audit-api") as srv:
         srv.serve_forever()
 
 
