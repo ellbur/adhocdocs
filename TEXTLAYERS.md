@@ -1,7 +1,7 @@
 # Text Layers
 
 *Status: implemented for PDF (native and OCR), images, email, .docx, .xlsx,
-CSV, HTML and plain text, and for zip and mbox containers, in [`extract/`](src/adhocdocs/extract) and
+CSV, HTML and plain text, Outlook .msg, and for zip, mbox and PST containers, in [`extract/`](src/adhocdocs/extract) and
 [`ingest.py`](src/adhocdocs/ingest.py). Formats and per-format conventions
 are in those docstrings.*
 
@@ -53,6 +53,14 @@ passes, a .docx with tracked changes accepted and with them shown.
 - Zip members and mbox messages are child documents (`part` is the member
   path or message number), so families, custodians and duplicates work as
   for attachments. The container's own layer is empty: extracted, no text.
+- Outlook messages (in a PST, or a .msg file) are converted to RFC 822
+  email and extracted as email, so threading, people and productions treat
+  them like any other ([`extract/mapi.py`](src/adhocdocs/extract/mapi.py)
+  says what the conversion keeps). A PST's messages are child documents
+  whose `part` is the folder path and position (`Inbox/Vendors/3`); a .msg
+  is itself an `email`. The converted bytes are stored as the child's
+  content and are the same each time, so re-ingesting finds the same
+  documents. PSTs are read with libpff, through `libpff-python`.
 - Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet,
   and `sheet=…&cells=B2:D10` a rectangle of cells;
   cells hold the values Excel last calculated, not formulas.

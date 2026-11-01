@@ -36,12 +36,11 @@ the case is about from them: ask the user.
 
 1. **Never type a quotation into durable work.** In pages, notes and
    exports, every quotation is a reference (`:q{#id}` plus a `refs` entry
-   made by `page ref add`), and the renderer fills in the words. To quote
-   a passage you've read, give its words: `page ref add page.md <id> --in
-   <doc> --words "…"` (repeat `--words` to elide); from a search hit or
-   selection, pass its locator. A quotation can also show the words' formatting (`as=rich`), a
-   picture of the page (`as=image`), or spreadsheet cells (`as=table`). In conversation you may quote freely, but say when you're
-   paraphrasing.
+   made by `page ref add`), and the renderer fills in the words. Quote a
+   passage you've read by its words (`page ref add page.md <id> --in <doc>
+   --words "…"`; repeat `--words` to elide), a hit or selection by its
+   locator. Show formatting with `as=rich`, a page picture with `as=image`,
+   cells with `as=table`. In chat, quote freely but say when you paraphrase.
 2. **Searches have coverage.** Every search reports what it searched
    (`coverage`, `exhaustive`). When you tell the user nothing was found,
    say what was searched and what wasn't (unextracted, empty, pending).
@@ -63,9 +62,8 @@ the case is about from them: ask the user.
    flag-privilege <locator>… --basis "…"`; a production lists the flags in
    its *check for possible privilege* report. Call your work that, never a
    privilege log, and say why something may be privileged, not that it is.
-8. **Everything here is recorded** in an audit log on the host. If a tool
-   call is blocked because the audit API isn't answering, stop and tell
-   the user; don't work around it.
+8. **Everything is recorded** in an audit log on the host. If the audit API is
+   down and blocks a tool, stop and tell the user; don't work around it.
 
 ## Explaining a point with a few documents
 
