@@ -61,7 +61,7 @@ from .matter import EventLog, Matter
 from .objects import HASH_PREFIX, ObjectStore
 from .origin import cert_origin, is_origin
 from .portable import locked
-from .signing import BadLog, b64, check_chain, public_key, unb64
+from .signing import BadLog, b64, check_chain, has_hidden, public_key, unb64
 
 PORT = 7480
 BATCH = 2000
@@ -191,14 +191,31 @@ def closure(store: ObjectStore, hashes) -> list[str]:
 # -- writing what arrives ------------------------------------------------------------------------
 
 
-def _purging(events, pool) -> set:
-    """Objects that purges among these events delete: not to be fetched."""
-    out = set()
-    for ev in events:
-        if ev.get("op") == "purge" and str(ev.get("author", "")).startswith("user:") \
-                and (pool is None or pool.writes_for(ev.get("origin"), ev["author"])):
-            out |= {h for h in ev.get("objects", []) if isinstance(h, str)}
-    return out
+def _purged(m: Matter, feed: str, origin: str, events, pool) -> tuple[set, set, set]:
+    """What's purged here, counting purges among ``events`` (a store batch):
+    documents, their contents, and objects already deleted. (A sealed hub
+    can't read purges: members tell it what to drop.)"""
+    from . import purge
+    if is_sealed(m):
+        return set(), set(), set()
+    docs = purge.purged_docs(m)
+    if feed == "store":
+        for ev in events:
+            if ev.get("op") == "purge" and isinstance(ev.get("docs"), list) \
+                    and origin in (pool.users.get(ev.get("author"), []) if pool else [origin]):
+                docs |= {d for d in ev["docs"] if isinstance(d, str)}
+    state = m.state
+    contents = {state.documents[d] for d in docs if d in state.documents} | set(purge.record(m)["contents"])
+    if feed == "store":     # documents purged in the same batch they arrive in
+        contents |= {ev["content"] for ev in events if ev.get("op") == "add-document" and ev.get("doc") in docs}
+    return docs, contents, purge.purged_objects(m)
+
+
+def _refs(feed: str, ev: dict, docs: set, contents: set, objects: set) -> list[str]:
+    """The objects an event needs, leaving out what a purge took."""
+    if feed == "store" and (ev.get("doc") in docs or ev.get("content") in contents):
+        return []
+    return [h for h in direct_refs(feed, ev) if h not in objects]
 
 
 def store_only(m: Matter) -> ObjectStore:
@@ -236,9 +253,8 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
         raise SyncError(f"{origin} isn't a member of this matter's pool")
     store = store_only(m)
     from . import purge
-    gone = (purge.purged_objects(m) | _purging([{**ev, "origin": origin} for ev in events], pool)
-            if feed == "store" else set())
-    missing = [h for ev in events for h in direct_refs(feed, ev) if not store.has(h) and h not in gone]
+    docs, contents, objects = _purged(m, feed, origin, events, pool)
+    missing = [h for ev in events for h in _refs(feed, ev, docs, contents, objects) if not store.has(h)]
     if missing:
         raise SyncError(f"objects missing for {feed}/{origin}: {missing[:3]}")
     log = feed_of(m, feed).log_for(origin)
@@ -264,13 +280,10 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
             if not events:
                 raise SyncError(f"{feed}/{origin}: written after the installation was removed")
         last = log.last_event()
-        red = purge.redactions(m) | {h for ev in events if ev.get("op") == "purge" for h in ev.get("redact", [])} \
-            if feed in ("store", "annotations") else set()
-        check_chain(last, events, key, f"{feed}/{origin}", red)
-        if feed == "annotations" and red:
-            # redacted already here: an event that arrives late is kept as its tombstone
-            from .signing import event_hash, is_tombstone, tombstone
-            events = [tombstone(ev, "late") if not is_tombstone(ev) and event_hash(ev) in red else ev for ev in events]
+        check_chain(last, events, key, f"{feed}/{origin}", lambda ev: purge.may_hide(ev, docs))
+        if feed == "annotations" and docs:
+            # about a purged document, and arriving late: kept here only redacted
+            events = [purge.redact(ev, docs) or ev for ev in events]
         if feed == "pool":
             # membership is replayed by ID: an origin's IDs must only go up
             prev = last["id"] if last else ""
@@ -298,7 +311,6 @@ def append_sealed(m: Matter, feed: str, origin: str, start: int, envelopes: list
     what it can (whose log, the order of hashes, the form), and stores them
     as they are. Members check the rest when they read them."""
     from .seal import envelope_hash
-    from .signing import is_tombstone
     pool = pool or poolmod.Pool.load(m)
     if pool.cert(origin) is None:
         raise SyncError(f"{origin} isn't a member of this matter's pool")
@@ -323,13 +335,12 @@ def append_sealed(m: Matter, feed: str, origin: str, start: int, envelopes: list
         prev = envelope_hash(log.last_event())
         out = []
         for env in envelopes:
-            ok = isinstance(env, dict) and isinstance(env.get("id"), str) and len(env["id"]) < 64
-            if ok and is_tombstone(env):
-                env = {k: env[k] for k in ("id", "op", "redacted", "purge", "hp") if k in env}
-            elif ok:
-                ok = (isinstance(env.get("h"), str) and HASH_RE.fullmatch(env["h"]) is not None
-                      and isinstance(env.get("sealed"), str) and len(env["sealed"]) < 8 << 20)
-                env = {k: env.get(k) for k in ("id", "h", "hp", "sealed")}
+            ok = (isinstance(env, dict) and isinstance(env.get("id"), str) and len(env["id"]) < 64
+                  and isinstance(env.get("h"), str) and HASH_RE.fullmatch(env["h"]) is not None
+                  and isinstance(env.get("sealed"), str) and len(env["sealed"]) < 8 << 20
+                  and isinstance(env.get("e", 0), int) and 0 <= env.get("e", 0) < 1 << 20)
+            if ok:
+                env = {k: env.get(k) for k in ("id", "h", "hp", "sealed")} | {"e": env.get("e", 0)}
             if not ok or env.get("hp") != prev:
                 raise BadLog(f"{feed}/{origin}: event {env.get('id') if isinstance(env, dict) else '?'} doesn't "
                              "follow the one before it")
@@ -664,25 +675,29 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(200, {"matter": m.id, "origin": m.origin, "vector": counts(m), "heads": heads(m),
                                     "sealed": is_sealed(m)})
         if segs == ["redact"] and cmd == "POST" and is_sealed(m):
-            # a member tells a sealed hub what purges redacted (the hub can't read them)
-            from .purge import _redact
-            hashes = json.loads(body).get("hashes", [])
-            if not isinstance(hashes, list) or len(hashes) > 100000:
-                raise ValueError("hashes must be a list")
-            _redact_sealed(m, {h for h in hashes if isinstance(h, str) and HASH_RE.fullmatch(h)})
-            return self._json(200, {"redacted": True})
+            # a member gives a sealed hub the redacted form of events a purge redacted (the hub can't
+            # read either): it must have the same hash, so it's the same event, and readers check
+            # that what it hides is what a purge hides (adhocdocs.purge.may_hide)
+            envs = json.loads(body).get("envelopes", [])
+            if not isinstance(envs, list) or len(envs) > 100000:
+                raise ValueError("envelopes must be a list")
+            return self._json(200, {"replaced": _redact_sealed(m, who, envs)})
         if segs == ["forget"] and cmd == "POST" and is_sealed(m):
             # and which objects purges deleted, by their sealed names
-            names = json.loads(body).get("objects", [])
-            if not isinstance(names, list) or len(names) > 100000:
-                raise ValueError("objects must be a list")
+            req = json.loads(body)
+            names, purge_id = req.get("objects", []), str(req.get("purge", ""))[:64]
+            if not isinstance(names, list) or len(names) > 100000 or not purge_id:
+                raise ValueError("forget needs objects and the purge that deleted them")
             store = store_only(m)
-            n = 0
-            for h in names:
-                if isinstance(h, str) and HASH_RE.fullmatch(h) and (p := store.path(h)) is not None:
-                    p.unlink(missing_ok=True)
-                    n += 1
-            return self._json(200, {"forgotten": n})
+            gone = [h for h in names if isinstance(h, str) and HASH_RE.fullmatch(h) and store.path(h) is not None]
+            for h in gone:
+                store.path(h).unlink(missing_ok=True)
+            if gone:
+                # it can't check the purge (sealed): it keeps a record of who asked, and why
+                with open(m.root / "forgotten.jsonl", "a", encoding="utf-8", newline="\n") as f:
+                    f.write(json.dumps({"by": who, "purge": purge_id, "objects": gone,
+                                        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
+            return self._json(200, {"forgotten": len(gone)})
         if len(segs) == 3 and segs[0] == "events" and segs[1] in FEEDS:
             feed, origin = segs[1], segs[2]
             if not is_origin(origin):
@@ -750,8 +765,13 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def _put_named(store: ObjectStore, name: str, src):
+    """Store a sealed object under its blinded name, once: what's there stays."""
     import os
     p = store._path(store.roots[0], name)
+    if p.exists():
+        while src.read(1 << 20):
+            pass
+        return
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + f".{secrets.token_hex(6)}.tmp")
     with open(tmp, "wb") as f:
@@ -760,29 +780,43 @@ def _put_named(store: ObjectStore, name: str, src):
     os.replace(tmp, p)
 
 
-def _redact_sealed(m: Matter, hashes: set):
-    """Tombstone a sealed hub's lines whose hash a purge redacted."""
+def _redact_sealed(m: Matter, who: str, envs: list) -> int:
+    """Replace a sealed hub's lines with their redacted form: same ID, same
+    hash, the content sealed afresh. Under each log's lock."""
     import os
-    from .seal import envelope_hash
-    from .signing import is_tombstone
-    if not hashes:
-        return
-    d = m.root / "annotations" / "logs"
-    for path in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
-        with open(path, "r+", encoding="utf-8", newline="\n") as f, locked(f):
-            lines, out, changed = f.read().splitlines(keepends=True), [], False
-            for line in lines:
-                env = json.loads(line)
-                if not is_tombstone(env) and env.get("h") in hashes:
-                    out.append(json.dumps({"id": env["id"], "op": "redacted", "redacted": env["h"], "purge": "sealed",
-                                           "hp": env.get("hp")}) + "\n")
-                    changed = True
-                else:
-                    out.append(line)
-            if changed:
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text("".join(out), encoding="utf-8", newline="\n")
-                os.replace(tmp, path)
+    from .matter import same_file
+    want: dict[tuple, dict] = {}
+    for e in envs:
+        if (isinstance(e, dict) and e.get("feed") == "annotations" and is_origin(str(e.get("origin")))
+                and isinstance(e.get("id"), str) and isinstance(e.get("h"), str) and isinstance(e.get("sealed"), str)
+                and len(e["sealed"]) < 8 << 20):
+            want[(e["origin"], e["id"])] = e
+    n = 0
+    for origin in {o for o, _ in want}:
+        path = m.annotation_log.log_for(origin).path
+        if not path.exists():
+            continue
+        while True:
+            with open(path, "r+", encoding="utf-8", newline="\n") as f, locked(f):
+                if not same_file(f, path):
+                    continue
+                lines, out, changed = f.read().splitlines(keepends=True), [], False
+                for line in lines:
+                    env = json.loads(line)
+                    new = want.get((origin, env.get("id")))
+                    if new and new["h"] == env.get("h") and new["sealed"] != env.get("sealed"):
+                        e = new.get("e", 0) if isinstance(new.get("e", 0), int) else 0
+                        out.append(json.dumps({**env, "sealed": new["sealed"], "e": e}) + "\n")
+                        changed = True
+                        n += 1
+                    else:
+                        out.append(line)
+                if changed:
+                    tmp = path.with_suffix(".tmp")
+                    tmp.write_text("".join(out), encoding="utf-8", newline="\n")
+                    os.replace(tmp, path)
+                break
+    return n
 
 
 class _Limited:
@@ -889,16 +923,25 @@ class Peer:
 
     def fetch_object(self, h: str, store: ObjectStore):
         from . import seal
-        r = self.request("GET", f"objects/{seal.blind(self.k, h) if self.k else h}")
-        if r.status != 200:
-            r.read()
-            raise SyncError(f"the peer doesn't have {h}")
-        try:
-            got = store.put_stream(seal.Unsealer(self.k, h, r) if self.k else r)
-        except Exception as e:
-            if not self.k:
-                raise
-            raise SyncError(f"{h} from the hub doesn't decrypt: {type(e).__name__}")
+        if not self.k:
+            r = self.request("GET", f"objects/{h}")
+            if r.status != 200:
+                r.read()
+                raise SyncError(f"the peer doesn't have {h}")
+            got = store.put_stream(r)
+        else:
+            # sealed under some epoch's key: the newest first
+            for epoch in sorted(self.k.keys, reverse=True):
+                r = self.request("GET", f"objects/{seal.blind(self.k, h, epoch)}")
+                if r.status == 200:
+                    break
+                r.read()
+            else:
+                raise SyncError(f"the hub doesn't have {h}")
+            try:
+                got = store.put_stream(seal.Unsealer(self.k, h, r, epoch))
+            except Exception as e:
+                raise SyncError(f"{h} from the hub doesn't decrypt: {type(e).__name__}")
         if got != h:
             raise SyncError(f"the peer sent bytes hashing to {got} for {h}")
 
@@ -907,8 +950,9 @@ class Peer:
         p = store.path(h)
         with open(p, "rb") as f:
             if self.k:
-                r = self.request("PUT", f"objects/{seal.blind(self.k, h)}", stream=seal.Sealer(self.k, h, f),
-                                 length=seal.sealed_size(p.stat().st_size))
+                size = p.stat().st_size
+                r = self.request("PUT", f"objects/{seal.blind(self.k, h)}", stream=seal.Sealer(self.k, h, f, size),
+                                 length=seal.sealed_size(size))
             else:
                 r = self.request("PUT", f"objects/{h}", stream=f, length=p.stat().st_size)
             out = json.loads(r.read() or b"{}")
@@ -934,14 +978,14 @@ def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: 
         if key is None:
             raise SyncError(f"{origin} isn't a member of this matter's pool")
         from . import purge
-        red = purge.redactions(m) | {h for ev in events if ev.get("op") == "purge" for h in ev.get("redact", [])}
-        check_chain(feed_of(m, feed).log_for(origin).last_event(), events, key, f"{feed}/{origin}", red)
-        gone = purge.purged_objects(m) | _purging([{**ev, "origin": origin} for ev in events], pool)
-        need = [h for ev in events for h in direct_refs(feed, ev)]
+        docs, contents, objects = _purged(m, feed, origin, events, pool)
+        check_chain(feed_of(m, feed).log_for(origin).last_event(), events, key, f"{feed}/{origin}",
+                    lambda ev: purge.may_hide(ev, docs))
+        need = [h for ev in events for h in _refs(feed, ev, docs, contents, objects)]
         seen = set()
         while need:
             h = need.pop()
-            if h in seen or h in gone:
+            if h in seen or h in objects:
                 continue
             seen.add(h)
             if not store.has(h):
@@ -962,13 +1006,19 @@ def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: 
         objs = closure(store, [h for ev in events for h in direct_refs(feed, ev)])
         if peer.k:
             from . import seal
-            names = {seal.blind(peer.k, h): h for h in objs}
+            # under any epoch's key, it's there already
+            names = {seal.blind(peer.k, h, e): h for h in objs for e in peer.k.keys}
         else:
             names = {h: h for h in objs}
         listed = list(names)
+        missing: dict[str, int] = {}
         for i in range(0, len(listed), 5000):
             for n in peer.json("POST", "missing", {"hashes": listed[i:i + 5000]})["missing"]:
-                peer.send_object(names[n], store)
+                missing[names[n]] = missing.get(names[n], 0) + 1
+        per = len(peer.k.keys) if peer.k else 1
+        for h, n in missing.items():
+            if n == per:            # missing under every name
+                peer.send_object(h, store)
         if peer.k and feed != "pool":
             prev = read_events(m, feed, origin, theirs - 1, 1)[0] if theirs else None
             sealed = []
@@ -1001,11 +1051,17 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
             return 0
 
     try:
-        if peer.json("GET", "vector").get("sealed"):
+        said = peer.json("GET", "vector").get("sealed")
+        pinned = poolmod.Pool.load(m).members.get(origin, {}).get("sealed")
+        if pinned and not said:
+            # the pool says this hub holds the matter sealed: it doesn't get to stop on its own
+            raise SyncError("the pool says this hub holds the matter sealed, and it now says it doesn't: not syncing "
+                            "with it (adhocdocs.seal)")
+        if said or pinned:
             # a sealed hub: what goes is sealed, what comes is opened and checked here (adhocdocs.seal)
             from . import seal
             try:
-                peer.k = seal.key(m)
+                peer.k = seal.Keyring.of(m)
             except seal.NoKey as e:
                 raise SyncError(str(e))
         for feed in FEEDS:
@@ -1029,6 +1085,9 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
                         progress += k
                 if not progress:
                     break
+            if feed == "pool" and peer.k:
+                from . import seal
+                peer.k = seal.Keyring.of(m)         # a key boxed for this one may just have arrived
             reply = peer.json("GET", "vector")
             theirs, their_heads = reply["vector"], reply.get("heads", {})
             mine_heads = heads(m)[feed]
@@ -1047,10 +1106,20 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
             # a sealed hub can't read purges: say what they deleted and redacted
             from . import purge, seal
             rec = purge.record(m)
-            if rec["redacted"]:
-                peer.json("POST", "redact", {"hashes": rec["redacted"]})
-            if rec["objects"]:
-                peer.json("POST", "forget", {"objects": [seal.blind(peer.k, h) for h in rec["objects"]]})
+            if rec["applied"]:
+                envs = []
+                for o in m.annotation_log.vector():
+                    prev = None
+                    for ev in m.annotation_log.log_for(o).events():
+                        if has_hidden(ev):
+                            envs.append({"feed": "annotations", "origin": o, **seal.seal_event(peer.k, ev, prev)})
+                        prev = ev
+                if envs:
+                    peer.json("POST", "redact", {"envelopes": envs})
+                if rec["objects"]:
+                    peer.json("POST", "forget", {"objects": [seal.blind(peer.k, h, e) for h in rec["objects"]
+                                                         for e in peer.k.keys],
+                                                 "purge": rec["applied"][-1]})
     finally:
         peer.close()
     if pulled:

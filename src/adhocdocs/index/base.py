@@ -92,6 +92,7 @@ class Index:
         if self._db is None:
             self._db = sqlite3.connect(self.dir / "index.sqlite")
             self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.execute("PRAGMA secure_delete=ON")      # what's deleted (a purge) is overwritten
         return self._db
 
     def init_db(self):
@@ -130,6 +131,7 @@ class Index:
         with self.lock():
             cursor = self.cursor()
             self.m.refresh()
+            self.purged_any = False
             batch, n = [], 0
             for ev in self.m.changes(cursor):
                 batch.append(ev)
@@ -141,17 +143,30 @@ class Index:
             if batch:
                 n += self._apply_batch(batch, cursor)
             self._write_manifest(self.cursor())
+            if self.purged_any:
+                self.scrub()
             return n
+
+    def scrub(self):
+        """After a purge: leave no trace of what was removed. Full-text
+        segments merged, the write-ahead log emptied, the file rewritten."""
+        db = self.db
+        for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE 'CREATE VIRTUAL TABLE%fts5%'"):
+            db.execute(f"INSERT INTO {t}({t}) VALUES('optimize')")
+        db.commit()
+        db.execute("VACUUM")
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
     def _apply_batch(self, batch, cursor) -> int:
         with self.db:
             state = self.m.state
             for ev in batch:
-                if ev["op"] == "purge":         # each document, as if withdrawn
+                if ev["op"] == "purge":         # each document it purged here, as if withdrawn
                     for d in ev.get("docs") or []:
                         w = {**ev, "op": "withdraw", "doc": d}
-                        if still_true(w, state):
+                        if d in state.purged and still_true(w, state):
                             self.apply(w)
+                            self.purged_any = True
                 elif still_true(ev, state):
                     self.apply(ev)
                 cursor[ev["log"]] = ev["id"]

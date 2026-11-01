@@ -44,15 +44,20 @@ from pathlib import Path
 from .annotations import Refused
 from .matter import Matter, now
 from .portable import locked
-from .signing import canonical, event_hash, is_tombstone, tombstone
+from .signing import event_hash, has_hidden, hide, is_hidden
 
 LAYER_PARTS = ("text", "offset_map", "segments", "geometry", "presentation")
 
+# what a redacted event keeps in the clear: enough to place it, and to see why
+KEEP = ("id", "prev", "sig", "op", "author", "at", "requested_by")
 
-# -- what a purge removes ---------------------------------------------------------------------
+
+# -- which documents, and which of their objects ---------------------------------------------
 
 
-def plan(m: Matter, docs, with_duplicates=False) -> dict:
+def documents(m: Matter, docs, with_duplicates=False) -> list[str]:
+    """The documents a purge of ``docs`` takes: with their attachments, and
+    (``with_duplicates``) the documents sharing their originals."""
     state = m.state
     want: list[str] = []
 
@@ -69,7 +74,8 @@ def plan(m: Matter, docs, with_duplicates=False) -> dict:
             raise Refused(f"no document {d}")
         add(d)
     while True:                                       # documents sharing an original
-        others = [o for d in list(want) for o in state.by_content.get(state.documents[d], []) if o not in want]
+        others = [o for d in list(want) for o in state.by_content.get(state.documents[d], [])
+                  if o not in want and o not in state.withdrawn]
         if not others:
             break
         if not with_duplicates:
@@ -77,11 +83,19 @@ def plan(m: Matter, docs, with_duplicates=False) -> dict:
                           f"{'…' if len(others) > 3 else ''}); purge them too with --with-duplicates")
         for o in others:
             add(o)
-    contents = {state.documents[d] for d in want}
-    gone = set(want)
+    return want
+
+
+def objects_of(m: Matter, docs) -> list[str]:
+    """The objects that go with ``docs``: each installation works this out
+    for itself, keeping whatever a document that isn't purged still uses (a
+    plain text file's original is its text, two documents can have the same
+    text, and one installation may have a copy another doesn't)."""
+    state = m.state
+    gone = set(docs) | set(record(m)["docs"])
+    contents = {state.documents[d] for d in docs if d in state.documents}
 
     def parts(c):
-        """A content's objects: it, its layers, and their parts."""
         out = [c]
         for l in state.layers.get(c, []):
             out.append(l.id)
@@ -92,29 +106,105 @@ def plan(m: Matter, docs, with_duplicates=False) -> dict:
             out += [lo[k] for k in LAYER_PARTS if lo.get(k)]
         return out
 
-    # what a live document still uses stays (a plain text file's original is
-    # its text, and two documents can have the same text or segments)
     ours = {h for c in contents for h in parts(c)}
     kept = set()
     for d, c in state.documents.items():
-        if d in gone or d in state.withdrawn:
+        if d in gone:
             continue
         kept |= {d, state.metadata.get(d)}
         if c in ours or any(l.text in ours for l in state.layers.get(c, [])):
             kept |= set(parts(c))
-    objects: list[str] = []
-    for h in [x for d in want for x in (d, state.metadata.get(d))] + [h for c in contents for h in parts(c)]:
-        if h and h not in kept and h not in objects:
-            objects.append(h)
-    ids = [d.removeprefix("sha256:") for d in want]
-    redact = [event_hash(ev) for ev in m.annotation_log.read()
-              if not is_tombstone(ev) and any(i in canonical(ev).decode() for i in ids)]
-    return {"docs": want, "objects": objects, "redact": redact}
+    out: list[str] = []
+    for h in [x for d in docs for x in (d, state.metadata.get(d))] + [h for c in contents for h in parts(c)]:
+        if h and h not in kept and h not in out:
+            out.append(h)
+    return out
+
+
+# -- which parts of which events --------------------------------------------------------------
+
+
+def _doc_of(t) -> str | None:
+    return t.get("doc") if isinstance(t, dict) and isinstance(t.get("doc"), str) else None
+
+
+def redact(ev: dict, docs: set) -> dict | None:
+    """``ev`` with what it says about ``docs`` hidden, or None if it says
+    nothing about them. A tag or note on a purged document keeps only what
+    places it (``KEEP``) and which document; an entity keeps everything but
+    the references (``see``) to purged documents, which keep only which
+    document. Signatures and hashes still check (adhocdocs.signing)."""
+    if has_hidden(ev):
+        return None
+    t = ev.get("target")
+    if _doc_of(t) in docs:
+        out = {k: (v if k in KEEP else hide(v)) for k, v in ev.items() if k != "target"}
+        out["target"] = {k: (v if k == "doc" else hide(v)) for k, v in t.items()}
+        return out
+    see = ev.get("see")
+    if isinstance(see, list) and any(_doc_of(x) in docs for x in see):
+        return {**ev, "see": [{k: (v if k == "doc" else hide(v)) for k, v in x.items()} if _doc_of(x) in docs else x
+                              for x in see]}
+    return None
+
+
+def may_hide(ev: dict, docs: set) -> bool:
+    """Whether the parts ``ev`` hides are exactly ones :func:`redact` hides for
+    purged ``docs``: so no one can hide anything else, or hide a part of an
+    event about a document that wasn't purged."""
+    t = ev.get("target")
+    if isinstance(t, dict) and _doc_of(t) in docs:
+        allowed_top = {k for k in ev if k not in KEEP and k != "target"}
+        for k, v in ev.items():
+            if k in KEEP and has_hidden(v):
+                return False
+            if k == "target":
+                if any(has_hidden(x) and not is_hidden(x) for x in v.values()) or is_hidden(v.get("doc")):
+                    return False
+            elif k in allowed_top and has_hidden(v) and not is_hidden(v):
+                return False
+        return True
+    for k, v in ev.items():
+        if k == "see" and isinstance(v, list):
+            for x in v:
+                if has_hidden(x) and not (isinstance(x, dict) and _doc_of(x) in docs
+                                          and all(is_hidden(y) or not has_hidden(y) for y in x.values())):
+                    return False
+        elif has_hidden(v):
+            return False
+    return True
+
+
+def reveal(ev: dict) -> dict | None:
+    """What a redacted event still says, for replay: None if what's hidden
+    is what it was about (a tag or note on a purged document); an entity,
+    without its references to purged documents."""
+    if not has_hidden(ev):
+        return ev
+    t = ev.get("target")
+    if isinstance(t, dict) and any(is_hidden(x) for x in t.values()) or any(is_hidden(v) for v in ev.values()):
+        return None
+    if isinstance(ev.get("see"), list):
+        return {**ev, "see": [x for x in ev["see"] if not has_hidden(x)]}
+    return None
+
+
+# -- purging -------------------------------------------------------------------------------------
+
+
+def preview(m: Matter, docs, with_duplicates=False) -> dict:
+    """What a purge would take here, to show before doing it."""
+    want = documents(m, docs, with_duplicates)
+    gone = set(want)
+    n = sum(1 for ev in m.annotation_log.read() if redact(ev, gone) is not None)
+    return {"docs": want, "objects": objects_of(m, want), "events": n}
+
 
 
 def purge(m: Matter, author: str, docs, reason: str, with_duplicates=False) -> dict:
     """Purge documents, here and (once synced) everywhere. Host only, and
-    only a person: a purge is irreversible."""
+    only a person: a purge is irreversible. The event names the documents;
+    every installation works out what that means for what it holds."""
     if not author.startswith("user:"):
         raise Refused("only a person can purge documents")
     if not reason.strip():
@@ -124,32 +214,39 @@ def purge(m: Matter, author: str, docs, reason: str, with_duplicates=False) -> d
         pool.claim(m, author)
     except pool.PoolError as e:
         raise Refused(str(e))
-    p = plan(m, docs, with_duplicates)
-    names = _names(m, p["docs"])
-    ev = m.logs["store"].append(op="purge", docs=p["docs"], objects=p["objects"], redact=p["redact"],
-                                reason=reason, author=author)
+    want = documents(m, docs, with_duplicates)
+    names = _names(m, want)
+    ev = m.logs["store"].append(op="purge", docs=want, reason=reason, author=author)
     done = enforce(Matter(m.root), names)
-    return {"purge": ev["id"], "documents": len(p["docs"]), "objects": len(p["objects"]),
-            "redacted_events": len(p["redact"]), "notice": done.get("notices", [None])[-1]}
+    applied = done.get("counts", {}).get(ev["id"], {})
+    return {"purge": ev["id"], "documents": len(want), "objects": applied.get("objects", 0),
+            "redacted_events": applied.get("redacted", 0), "notice": (done.get("notices") or [None])[-1]}
 
 
 # -- on every installation ----------------------------------------------------------------------
 
 
 def valid_purges(m: Matter) -> list[dict]:
-    """The purges that count: made by a person, from an installation that
-    writes for them (adhocdocs.pool)."""
+    """The purges that count: by a person, from an installation that writes
+    for them. Once there's a pool, the person must be someone an
+    installation has claimed: an unclaimed name is anyone's to use."""
     from .annotations import _pool
     pl = _pool(m)
     out = []
     for ev in m.logs["store"].read():
         if ev["op"] != "purge" or not str(ev.get("author", "")).startswith("user:"):
             continue
-        if pl is not None and not pl.writes_for(ev.get("origin"), ev["author"]):
+        if not isinstance(ev.get("docs"), list) or not all(isinstance(d, str) for d in ev["docs"]):
             continue
-        if all(isinstance(ev.get(k), list) for k in ("docs", "objects", "redact")):
-            out.append(ev)
+        if pl is not None and ev.get("origin") not in pl.users.get(ev["author"], []):
+            continue
+        out.append(ev)
     return out
+
+
+def purged_docs(m: Matter) -> set[str]:
+    """Every document a purge here counts: what events about them may hide."""
+    return {d for ev in valid_purges(m) for d in ev["docs"]}
 
 
 def _record_path(m: Matter) -> Path:
@@ -157,16 +254,13 @@ def _record_path(m: Matter) -> Path:
 
 
 def record(m: Matter) -> dict:
-    """What has been purged here: ``{"applied", "docs", "objects", "redacted"}``."""
+    """What has been purged here: ``{"applied", "docs", "contents", "objects"}``.
+    The matter's state and the viewer take the purged documents from here."""
     try:
-        return json.loads(_record_path(m).read_text(encoding="utf-8"))
+        r = json.loads(_record_path(m).read_text(encoding="utf-8"))
+        return {"applied": [], "docs": [], "contents": [], "objects": [], **r}
     except (FileNotFoundError, ValueError):
-        return {"applied": [], "docs": [], "objects": [], "redacted": []}
-
-
-def redactions(m: Matter) -> set[str]:
-    """The event hashes purges authorize redacting: what a tombstone may stand for."""
-    return {h for ev in valid_purges(m) for h in ev["redact"]}
+        return {"applied": [], "docs": [], "contents": [], "objects": []}
 
 
 def purged_objects(m: Matter) -> set[str]:
@@ -185,40 +279,113 @@ def _names(m: Matter, docs) -> dict:
 
 def enforce(m: Matter, names: dict | None = None) -> dict:
     """Carry out every purge not carried out here yet. Host only (the store
-    is read-only in a session)."""
+    is read-only in a session). One at a time, under ``store/.purge.lock``."""
+    m.store_dir.mkdir(parents=True, exist_ok=True)
+    with open(m.store_dir / ".purge.lock", "w", encoding="utf-8", newline="\n") as lf, locked(lf):
+        return _enforce(Matter(m.root), names)
+
+
+def _sweep(m: Matter, rec: dict) -> int:
+    """Layers that arrived after a purge for an original it took (an OCR made
+    elsewhere before hearing of it): they go too."""
+    state = m.state
+    gone_docs = set(rec["docs"])
+    live = {c for d, c in state.documents.items() if d not in gone_docs}
+    n = 0
+    keep = {x.text for d2, c2 in state.documents.items() if d2 not in gone_docs for x in state.layers.get(c2, [])}
+    for c in rec["contents"]:
+        if c in live:
+            continue
+        for l in state.layers.get(c, []):
+            parts = [l.id]
+            try:
+                lo = m.objects.get_object(l.id)
+                parts += [lo[k] for k in LAYER_PARTS if lo.get(k)]
+            except KeyError:
+                pass
+            for h in parts:
+                if h in keep:
+                    continue
+                hexd = h.removeprefix("sha256:")
+                for root in (m.store_dir / "objects", m.adhoc_dir / "objects"):
+                    p = root / hexd[:2] / hexd[2:]
+                    if p.exists():
+                        p.unlink()
+                        n += 1
+                if h not in rec["objects"]:
+                    rec["objects"].append(h)
+    return n
+
+
+def _enforce(m: Matter, names: dict | None) -> dict:
     rec = record(m)
     todo = [ev for ev in valid_purges(m) if ev["id"] not in rec["applied"]]
     if not todo:
+        if rec["contents"] and _sweep(m, rec):
+            rec["objects"] = sorted(set(rec["objects"]))
+            tmp = _record_path(m).with_suffix(".tmp")
+            tmp.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8", newline="\n")
+            tmp.replace(_record_path(m))
         return {"applied": []}
-    notices = []
+    notices, counts = [], {}
     for ev in todo:
-        docs = ev["docs"]
+        docs = [d for d in ev["docs"] if d in m.state.documents]
         names_here = {**_names(m, docs), **(names or {})}
         found = _mentions(m, docs)
-        # the objects
-        for h in ev["objects"]:
-            if not (isinstance(h, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", h)):
-                continue
+        objs = objects_of(m, docs)
+        contents = {m.state.documents[d] for d in docs}
+        for h in objs:
             hexd = h.removeprefix("sha256:")
             for root in (m.store_dir / "objects", m.adhoc_dir / "objects"):
                 (root / hexd[:2] / hexd[2:]).unlink(missing_ok=True)
-        # layers made from them in the workspace
-        contents = {m.state.documents.get(d) for d in docs}
-        for c in contents - {None}:
-            for l in m.state.layers.get(c, []):
-                if l.feed == "workspace":
-                    _drop_workspace_layer(m, l)
-        # the events that name them
-        _redact(m, set(ev["redact"]), ev["id"])
         rec["applied"].append(ev["id"])
-        rec["docs"] = sorted(set(rec["docs"]) | set(docs))
-        rec["objects"] = sorted(set(rec["objects"]) | {h for h in ev["objects"] if isinstance(h, str)})
-        rec["redacted"] = sorted(set(rec["redacted"]) | set(ev["redact"]))
+        rec["docs"] = sorted(set(rec["docs"]) | set(ev["docs"]))
+        rec["contents"] = sorted(set(rec["contents"]) | contents)
+        rec["objects"] = sorted(set(rec["objects"]) | set(objs))
+        n = redact_logs(m, set(rec["docs"]))
+        counts[ev["id"]] = {"objects": len(objs), "redacted": n}
         notices.append(_notice(m, ev, names_here, found))
     tmp = _record_path(m).with_suffix(".tmp")
     tmp.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8", newline="\n")
     tmp.replace(_record_path(m))
-    return {"applied": [ev["id"] for ev in todo], "notices": notices}
+    return {"applied": [ev["id"] for ev in todo], "notices": notices, "counts": counts}
+
+
+def redact_logs(m: Matter, docs: set) -> int:
+    """Hide what the annotation events here say about ``docs``, in every
+    installation's log. In place, under each log's lock; if the file was
+    replaced while waiting, open it again (as appenders do)."""
+    from .matter import same_file
+    if not docs:
+        return 0
+    n = 0
+    d = m.root / "annotations" / "logs"
+    for path in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
+        while True:
+            with open(path, "r+", encoding="utf-8", newline="\n") as f, locked(f):
+                if not same_file(f, path):
+                    continue
+                lines = f.read().splitlines(keepends=True)
+                out, changed = [], False
+                for line in lines:
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        out.append(line)
+                        continue
+                    r = redact(ev, docs)
+                    if r is not None:
+                        out.append(json.dumps(r, ensure_ascii=False) + "\n")
+                        changed = True
+                        n += 1
+                    else:
+                        out.append(line)
+                if changed:
+                    tmp = path.with_suffix(".tmp")
+                    tmp.write_text("".join(out), encoding="utf-8", newline="\n")
+                    os.replace(tmp, path)
+                break
+    return n
 
 
 def _drop_workspace_layer(m: Matter, l):
@@ -229,34 +396,6 @@ def _drop_workspace_layer(m: Matter, l):
     for h in [l.id, *[lo[k] for k in LAYER_PARTS if lo.get(k)]]:
         hexd = h.removeprefix("sha256:")
         (m.adhoc_dir / "objects" / hexd[:2] / hexd[2:]).unlink(missing_ok=True)
-
-
-def _redact(m: Matter, hashes: set, purge_id: str):
-    """Replace the events with these hashes by tombstones, in every
-    installation's annotation log here. In place, under each log's lock;
-    appenders check they still have the live file (matter.Feed.append)."""
-    if not hashes:
-        return
-    d = m.root / "annotations" / "logs"
-    for path in sorted(d.glob("*.jsonl")) if d.is_dir() else []:
-        with open(path, "r+", encoding="utf-8", newline="\n") as f, locked(f):
-            lines = f.read().splitlines(keepends=True)
-            out, changed = [], False
-            for line in lines:
-                try:
-                    ev = json.loads(line)
-                except ValueError:
-                    out.append(line)
-                    continue
-                if not is_tombstone(ev) and event_hash(ev) in hashes:
-                    out.append(json.dumps(tombstone(ev, purge_id), ensure_ascii=False) + "\n")
-                    changed = True
-                else:
-                    out.append(line)
-            if changed:
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text("".join(out), encoding="utf-8", newline="\n")
-                os.replace(tmp, path)
 
 
 # -- the notice ----------------------------------------------------------------------------------
@@ -333,6 +472,11 @@ def _notice(m: Matter, ev: dict, names: dict, found: dict) -> dict:
 
 
 def acknowledge(m: Matter, purge_id: str, author: str) -> dict:
+    with open(m.store_dir / ".purge.lock", "w", encoding="utf-8", newline="\n") as lf, locked(lf):
+        return _acknowledge(m, purge_id, author)
+
+
+def _acknowledge(m: Matter, purge_id: str, author: str) -> dict:
     all_ = notices(m)
     hit = [n for n in all_ if n["purge"] == purge_id]
     if not hit:

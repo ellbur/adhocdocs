@@ -163,7 +163,7 @@ class Hub:
         p = poolmod.Pool.load(m)
         if not p.is_member(requester):
             raise PermissionError("the pusher isn't a member of the matter's pool")
-        return m, {"matter": mid, "origin": m.origin, "cert": m.identity.cert_path().read_text(encoding="ascii"),
+        return m, {"matter": mid, "origin": m.origin, "sealed": bool(m.config.get("sealed")), "cert": m.identity.cert_path().read_text(encoding="ascii"),
                    "name": self.config["name"], "addresses": self.config["addresses"], "new": new}
 
 
@@ -212,7 +212,8 @@ def push(m: Matter, code: str, author: str) -> dict:
             hub.close()
         if cert_origin(out["cert"].encode())[0] != out["origin"]:
             raise HubError("the hub's answer doesn't hold together")
-        poolmod.add_member(m, author, out["cert"], out.get("name") or hc.get("n") or "hub", "hub", out["addresses"])
+        poolmod.add_member(m, author, out["cert"], out.get("name") or hc.get("n") or "hub", "hub", out["addresses"],
+                           sealed=bool(out.get("sealed")))
         return {"hub": out["origin"], "name": out.get("name"), **sync_with(Matter(m.root), address, out["origin"])}
     raise HubError("couldn't reach the hub: " + "; ".join(errors))
 

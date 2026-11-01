@@ -11,7 +11,7 @@ from adhocdocs.annotations import CLAUDE, Refused
 from adhocdocs.index import open_index
 from adhocdocs.ingest import ingest_bytes
 from adhocdocs.matter import Matter
-from adhocdocs.signing import is_tombstone
+from adhocdocs.signing import has_hidden as is_tombstone
 from test_peer import ALICE, BOB, serve
 from test_sync import picture, text_doc
 
@@ -60,7 +60,7 @@ def test_a_purge_deletes_the_documents_and_what_names_them(m):
     assert set(m2.state.live_documents()) == {m.keep}
     gone = before - objects(m2)
     assert m.bad in gone and all(k in gone for k in kids) and m2.state.documents[m.bad] in gone
-    # tags and notes on it are tombstones; the rest stand
+    # what the tags and notes on it said is hidden; the rest stand
     events = list(m2.annotation_log.read())
     assert sum(is_tombstone(e) for e in events) == 2
     assert b"attorney advice" not in b"".join(p.read_bytes() for p in (m2.root / "annotations/logs").glob("*"))
@@ -163,9 +163,12 @@ def test_a_hub_purges_too_and_a_newcomer_never_gets_it(m, tmp_path, sealed):
         purge.purge(Matter(m.root), ALICE, [m.bad], "clawback")
         peer.sync_all(Matter(m.root))
         assert name not in objects(replica)
-        if sealed:     # and the tag and note on it are tombstones there too
-            logs = b"".join(p.read_bytes() for p in (replica.root / "annotations/logs").glob("*"))
-            assert logs.count(b'"op": "redacted"') == 2
+        k = seal.key(Matter(m.root)) if sealed else None
+        lines = [json.loads(l) for p in (replica.root / "annotations/logs").glob("*.jsonl")
+                 for l in p.read_text(encoding="utf-8").splitlines()]
+        events = [seal.unseal_event(k, e) for e in lines] if sealed else lines
+        assert sum(is_tombstone(e) for e in events) == 2        # redacted there too
+        assert not any("attorney advice" in json.dumps(e) for e in events)
         invite.join(invite.create(Matter(m.root), ALICE)["code"], tmp_path / "c")
         c = Matter(tmp_path / "c")
         assert m.bad not in objects(c) and m.bad not in c.state.live_documents()
@@ -182,3 +185,90 @@ def test_purge_command(m, capsys):
     adhoc(["--matter", str(m.root), "purges"])
     (n,) = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
     assert n["by"] == ALICE and not n["acknowledged"]
+
+
+# -- third review --------------------------------------------------------------------------------
+
+
+def test_a_purge_does_only_what_its_documents_mean_here(m, tmp_path):
+    """The event names documents; each installation works out the rest. An
+    event that tries to list other objects or events changes nothing more."""
+    m.logs["store"].append(op="purge", docs=[m.bad], objects=[m.state.documents[m.keep]],
+                           redact=["sha256:" + "0" * 64], reason="clawback", author=ALICE)
+    purge.enforce(Matter(m.root))
+    m2 = Matter(m.root)
+    assert m.keep in m2.state.live_documents()
+    assert m2.objects.get_bytes(m2.state.documents[m.keep])
+    ann = annotations.Annotations.load(m2)
+    assert [a["target"]["doc"] for a in ann.applications()] == [m.keep]
+
+
+def test_a_purge_by_someone_unclaimed_doesnt_count(m, tmp_path):
+    from adhocdocs import pool
+    pool.found(m, ALICE, "Alice")
+    m2 = Matter(m.root)
+    m2.logs["store"].append(op="purge", docs=[m.keep], reason="x", author="user:nobody")   # around the write path
+    purge.enforce(Matter(m.root))
+    assert m.keep in Matter(m.root).state.live_documents() and purge.record(Matter(m.root))["docs"] == []
+
+
+def test_only_what_a_purge_hides_may_be_hidden(m):
+    from adhocdocs.signing import BadLog, check_chain, hide, public_key
+    events = list(m.annotation_log.log_for(m.origin).events())
+    docs = {m.bad, *m.state.children[m.bad]}
+    ok = [purge.redact(e, docs) or e for e in events]
+    key = public_key(m.identity.public())
+    check_chain(None, ok, key, may_hide=lambda e: purge.may_hide(e, docs))        # a purge's redaction checks
+    # hiding the tag on the document that wasn't purged: refused
+    keep_tag = next(i for i, e in enumerate(events) if e.get("target", {}).get("doc") == m.keep)
+    bad = list(events)
+    bad[keep_tag] = {**events[keep_tag], "tag": hide(events[keep_tag]["tag"])}
+    with pytest.raises(BadLog, match="hidden"):
+        check_chain(None, bad, key, may_hide=lambda e: purge.may_hide(e, docs))
+    # hiding the document a redacted event is about: refused
+    i = next(i for i, e in enumerate(ok) if purge.redact(events[i], docs))
+    worse = list(ok)
+    worse[i] = {**ok[i], "target": {**ok[i]["target"], "doc": hide(ok[i]["target"]["doc"])}}
+    with pytest.raises(BadLog):
+        check_chain(None, worse, key, may_hide=lambda e: purge.may_hide(e, docs))
+    # dropping an event, or changing an ID: the chain says so
+    with pytest.raises(BadLog):
+        check_chain(None, ok[:1] + ok[2:], key, may_hide=lambda e: purge.may_hide(e, docs))
+    with pytest.raises(BadLog):
+        check_chain(None, [{**ok[0], "id": "ev_" + "1" * 26}] + ok[1:], key, may_hide=lambda e: purge.may_hide(e, docs))
+
+
+def test_no_trace_left_in_the_index_files(m):
+    purge.purge(m, ALICE, [m.bad], "clawback")
+    open_index(Matter(m.root), "keyword").update()
+    d = m.root / "workspace/.adhoc/indexes/keyword"
+    blob = b"".join(p.read_bytes() for p in d.iterdir() if p.is_file())
+    assert b"attorney" not in blob and b"privileged" not in blob
+    assert b"ordinary" in blob                                     # the rest is still there
+
+
+def test_what_arrives_late_about_a_purged_document(m, tmp_path):
+    """b hadn't heard of the purge: it writes a note quoting the document, and
+    OCRs it again. Neither reaches a whole."""
+    from adhocdocs.extract import Extraction, Layer
+    from adhocdocs.ingest import store_layers
+    srv, addr = serve(m)
+    try:
+        invite.join(invite.create(m, ALICE, [addr])["code"], tmp_path / "b")
+        b = Matter(tmp_path / "b")
+        purge.purge(Matter(m.root), ALICE, [m.bad], "clawback")
+        kid = b.state.children[m.bad][0]
+        annotations.write(b, BOB, {"op": "note", "target": f"doc:{kid}", "body": "it says attorney advice"})
+        content = b.state.documents[kid]
+        store_layers(b, content, Extraction(kind="text", layers=[Layer(view="ocr", text="ATTORNEY ADVICE ocr")]))
+        peer.sync_with(Matter(b.root), addr, m.origin)
+        a = Matter(m.root)
+        logs = b"".join(p.read_bytes() for p in (a.root / "annotations/logs").glob("*"))
+        assert b"attorney advice" not in logs
+        assert b"ATTORNEY ADVICE" not in b"".join(p.read_bytes() for p in (a.root / "store/objects").rglob("*")
+                                                  if p.is_file())
+        # and b, once it has the purge, is clean too
+        b2 = Matter(b.root)
+        assert not any(b"ATTORNEY" in p.read_bytes() for p in (b2.root / "store/objects").rglob("*") if p.is_file())
+    finally:
+        srv.stop()

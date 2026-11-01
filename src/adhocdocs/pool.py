@@ -143,7 +143,9 @@ class Pool:
                 return self._ignore(ev, f"no role {ev.get('role')!r}")
             self.members[origin] = {"origin": origin, "cert": ev["cert"], "name": ev.get("name") or origin,
                                     "role": ev.get("role", "member"), "addresses": list(ev.get("addresses", [])),
-                                    "added_by": by, "author": ev.get("author"), "at": ev["at"], "active": True}
+                                    "added_by": by, "author": ev.get("author"), "at": ev["at"], "active": True,
+                                    "sealed": bool(ev.get("sealed")),     # a hub that can't read what it holds
+                                    "box": ev.get("box") if isinstance(ev.get("box"), str) else None}
             for u in ev.get("users") or []:          # "the same person as me": the inviter vouches
                 if isinstance(u, str) and u.startswith("user:"):
                     self._vouches.append((u, origin, by))
@@ -333,11 +335,13 @@ def vouch(m: Matter, author: str, member: str) -> dict:
 
 
 def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> dict:
+    from . import seal
     return m.pool_log.append(op="add-member", member=m.origin, cert=m.identity.cert_path().read_text(encoding="ascii"),
-                             name=name, role=role, addresses=list(addresses), author=author)
+                             name=name, role=role, addresses=list(addresses), author=author, box=seal.box_public(m))
 
 
-def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False) -> dict:
+def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False,
+               sealed: bool = False, box: str | None = None) -> dict:
     p = Pool.load(m)
     if not p.is_member(m.origin):
         raise PoolError("this installation isn't a member of the pool, so it can't add one")
@@ -346,7 +350,9 @@ def add_member(m: Matter, author: str, cert: str, name: str, role="member", addr
         return {"member": origin, "already": True}
     return m.pool_log.append(op="add-member", member=origin, cert=cert, name=name, role=role,
                              addresses=list(addresses), author=author,
-                             **({"users": [author]} if same_person and author.startswith("user:") else {}))
+                             **({"users": [author]} if same_person and author.startswith("user:") else {}),
+                             **({"sealed": True} if sealed else {}),
+                             **({"box": box} if box else {}))
 
 
 def remove_member(m: Matter, author: str, origin: str) -> dict:
@@ -360,6 +366,8 @@ def remove_member(m: Matter, author: str, origin: str) -> dict:
             for name, feed in (("pool", m.pool_log), ("store", m.logs["store"]), ("annotations", m.annotation_log),
                                ("work", m.work_log))}
     ev = m.pool_log.append(op="remove-member", member=origin, upto=upto, author=author)
+    from . import seal
+    seal.rekey(m, author)           # what's sealed from now on, the removed one can't read, even with a hub
     changed(m)
     return ev
 

@@ -17,6 +17,13 @@ from test_peer import ALICE, serve
 from test_sync import text_doc
 
 
+def just_after(event_id: str) -> str:
+    """An ID right after another: one a writer could choose to backdate to."""
+    from adhocdocs.matter import _decode_ulid, _encode_ulid
+    ms, rand = _decode_ulid(event_id[3:])
+    return "ev_" + _encode_ulid(ms, rand + 1)
+
+
 @pytest.fixture
 def pair(tmp_path):
     a = Matter.create(tmp_path / "a")
@@ -86,7 +93,7 @@ def test_a_removed_member_cant_backdate_its_way_back(pair, tmp_path):
     c = Matter.create(tmp_path / "c", matter_id=a.id)
     added = next(e for e in a.pool_log.read() if e.get("member") == b.origin)
     log = b.pool_log.log_for(b.origin)
-    ev = sign({"id": added["id"][:-1] + "Z", "at": "x", "op": "add-member", "member": c.origin,
+    ev = sign({"id": just_after(added["id"]), "at": "x", "op": "add-member", "member": c.origin,
                "cert": c.identity.cert_path().read_text(encoding="ascii"), "name": "puppet", "role": "member",
                "addresses": [], "author": "user:mallory"}, b.identity.key, log.last_event())
     with open(log.path, "a", encoding="utf-8") as f:
@@ -261,7 +268,7 @@ def test_a_backdated_claim_doesnt_take_a_person_over(tmp_path):
     # mallory claims bob too, dated before bob's claim, around the write path
     log = mal.pool_log.log_for(mal.origin)
     own = next(e for e in a.pool_log.read() if e.get("member") == mal.origin)
-    ev = sign({"id": own["id"][:-1] + "Z", "at": "x", "op": "bind-user", "user": "user:bob", "member": mal.origin,
+    ev = sign({"id": just_after(own["id"]), "at": "x", "op": "bind-user", "user": "user:bob", "member": mal.origin,
                "author": "user:bob"}, mal.identity.key, log.last_event())
     with open(log.path, "a", encoding="utf-8") as f:
         f.write(json.dumps(ev) + "\n")

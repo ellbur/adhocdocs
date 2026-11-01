@@ -128,8 +128,15 @@ class Annotations:
         (when someone should look) and ``replaced`` (what the event
         replays as, for the viewer: see :func:`save_replay`)."""
         self.last_id = ev["id"]
-        if ev.get("op") == "redacted":
-            return          # a purge removed what it said (adhocdocs.purge)
+        raw = ev
+        from .signing import has_hidden
+        if has_hidden(ev):
+            from .purge import reveal
+            shown = reveal(ev)          # a purge hid what it said about a purged document
+            if shown is None:
+                self.replaced[ev["id"]] = []
+                return
+            ev = shown
         try:
             if self.pool is not None and not self.pool.writes_for(ev.get("origin"), ev.get("author")):
                 raise Refused(f"{ev.get('author')} doesn't write from that installation ({ev.get('origin')}); "
@@ -140,7 +147,7 @@ class Annotations:
         except Refused as e:
             self._conflict(ev, "refused", str(e))
             out = []
-        if out != [ev]:
+        if out != [raw]:
             self.replaced[ev["id"]] = [_bare(e) for e in out]
         for e in out:
             self.apply(e)

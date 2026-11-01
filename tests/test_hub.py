@@ -234,8 +234,74 @@ def test_without_the_key_a_sealed_hub_is_no_use(a, tmp_path):
     h, srv, addr = _sealed_hub(tmp_path)
     try:
         hubmod.push(a, h.enroll("alice")["code"], ALICE)
-        seal.key_path(Matter(a.root)).unlink()
+        seal.keys_path(Matter(a.root)).unlink()
         (r,) = [x for x in peer.sync_all(Matter(a.root)) if x.get("name") == "Firm hub"]
         assert "key" in " ".join(r["failed"])
+    finally:
+        srv.stop()
+
+
+
+def test_a_hub_cant_stop_sealing_on_its_own(a, tmp_path):
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        hubmod.push(a, h.enroll("alice")["code"], ALICE)
+        (replica,) = h.matters()
+        hub_entry = next(x for x in poolmod.Pool.load(Matter(a.root)).active() if x["role"] == "hub")
+        assert hub_entry["sealed"]
+        cfg = replica.config
+        cfg.pop("sealed")
+        from adhocdocs.matter import write_toml
+        write_toml(replica.root / "matter.toml", cfg)              # the hub says it's plain now
+        text_doc(a, "new.txt", "the new words")
+        (r,) = [x for x in peer.sync_all(Matter(a.root)) if x.get("name") == "Firm hub"]
+        assert "sealed" in " ".join(r["failed"])
+        assert not any(b"the new words" in p.read_bytes() for p in replica.root.rglob("*") if p.is_file())
+    finally:
+        srv.stop()
+
+
+def test_removing_a_member_changes_the_key(a, tmp_path):
+    """Bob is removed: what's sealed afterwards, his keys don't open, though
+    Carol, still a member, carries on."""
+    from adhocdocs import seal
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        hubmod.push(a, h.enroll("alice")["code"], ALICE)
+        invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "bob")
+        invite.join(invite.create(Matter(a.root), ALICE)["code"], tmp_path / "carol")
+        bob, carol = Matter(tmp_path / "bob"), Matter(tmp_path / "carol")
+        old = seal.load_keys(bob)
+        peer.sync_all(Matter(a.root))                               # alice hears they joined
+        poolmod.remove_member(Matter(a.root), ALICE, bob.origin)
+        annotations.write(Matter(a.root), ALICE, {"op": "define-tag", "tag": "after-bob"})
+        peer.sync_all(Matter(a.root))
+        peer.sync_all(carol)
+        assert "after-bob" in annotations.Annotations.load(Matter(carol.root)).definitions
+        assert max(seal.load_keys(Matter(carol.root))) == 1
+        # with the hub's copy and his old keys, bob can't read it
+        (replica,) = h.matters()
+        envs = [__import__("json").loads(l) for l in replica.annotation_log.log_for(a.origin).path.read_text(
+            encoding="utf-8").splitlines()]
+        last = envs[-1]
+        assert last.get("e") == 1
+        with pytest.raises(seal.NoKey):
+            seal.unseal_event(seal.Keyring(old), last)
+    finally:
+        srv.stop()
+
+
+def test_a_sealed_hub_sees_sizes_only_roughly(a, tmp_path):
+    from adhocdocs import seal
+    h, srv, addr = _sealed_hub(tmp_path)
+    try:
+        for n in (10, 5000, 100_001):
+            text_doc(a, f"f{n}.txt", "x" * n)
+        hubmod.push(Matter(a.root), h.enroll("alice")["code"], ALICE)
+        (replica,) = h.matters()
+        sizes = {p.stat().st_size for p in (replica.root / "store/objects").rglob("*") if p.is_file()}
+        assert all((s - seal.TAG * (s // seal.CHUNK + 1)) == seal.padded(s - seal.TAG * (s // seal.CHUNK + 1))
+                   for s in sizes)
+        assert not any(s - seal.TAG == 10 + seal.LEN for s in sizes)
     finally:
         srv.stop()

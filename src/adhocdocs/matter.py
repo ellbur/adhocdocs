@@ -471,7 +471,16 @@ class Matter:
     @property
     def state(self) -> "State":
         if self._state is None:
-            self._state = State.replay(self.changes())
+            s = State.replay(self.changes())
+            # purged documents, as this installation's purge record says (adhocdocs.purge)
+            try:
+                rec = json.loads((self.store_dir / "purged.json").read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                rec = {}
+            for d in rec.get("docs", []):
+                s.purged.add(d)
+                s.withdrawn[d] = "purged"
+            self._state = s
         return self._state
 
     def refresh(self) -> "State":
@@ -515,8 +524,7 @@ class State:
         if op == "add-document":
             new = ev["doc"] not in self.documents
             self.documents[ev["doc"]] = ev["content"]
-            if ev["doc"] not in self.purged:            # ingesting it again doesn't bring it back
-                self.withdrawn.pop(ev["doc"], None)
+            self.withdrawn.pop(ev["doc"], None)
             if new:     # the same document ingested on two installations is one document
                 self.by_content.setdefault(ev["content"], []).append(ev["doc"])
                 if ev.get("parent"):
@@ -535,10 +543,8 @@ class State:
             self.withdrawn[ev["old"]] = "superseded"
         elif op == "withdraw":
             self.withdrawn[ev["doc"]] = ev.get("reason", "")
-        elif op == "purge" and str(ev.get("author", "")).startswith("user:"):
-            for d in ev.get("docs") or []:
-                self.purged.add(d)
-                self.withdrawn[d] = "purged"
+        elif op == "purge":
+            pass        # which purges count is adhocdocs.purge's to say: see Matter.state
 
     def live_documents(self) -> list[str]:
         return [d for d in self.documents if d not in self.withdrawn]

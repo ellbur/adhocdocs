@@ -95,10 +95,8 @@ def create(m: Matter, author: str, addresses=(), role="member", hours=72, name=N
             _save(m, invites)
         through = m.origin
     from . import seal
-    try:
-        k = seal.b64(seal.key(m))               # the matter key: with the code, never in a log or at a hub
-    except seal.NoKey:
-        k = None
+    keys = seal.learn(m)                        # the matter's keys: with the code, never in a log or at a hub
+    k = {str(e): seal.b64(v) for e, v in keys.items()} or None
     body = {"m": m.id, "f": m.config["founder"], "o": through, "a": addrs, "r": role, "s": secret,
             **({"k": k} if k and role != "hub" else {}),
             **({"u": author} if same_person else {})}
@@ -172,7 +170,8 @@ def accept(m: Matter, req: dict) -> dict:
         if time.time() > inv["expires"]:
             raise PermissionError("that invitation has expired")
         poolmod.add_member(m, inv["by"], req["cert"], str(req.get("name") or origin)[:200], inv["role"],
-                           [str(a) for a in req.get("addresses", [])][:8])
+                           [str(a) for a in req.get("addresses", [])][:8],
+                           box=str(req.get("box", ""))[:64] or None)
         inv["used"] = {"origin": origin, "at": now()}
         _save(m, invites)
     return {"matter": m.id, "founder": m.config.get("founder"), "member": origin}
@@ -191,10 +190,11 @@ def join(code: str, path, name: str | None = None, addresses=()) -> dict:
     cfg["founder"] = inv["f"]
     write_toml(m.root / "matter.toml", cfg)
     m = Matter(m.root)
-    if inv.get("k"):
-        from . import seal
-        seal.save_key(m, seal.unb64(inv["k"]))
+    from . import seal
+    if isinstance(inv.get("k"), dict):
+        seal.save_keys(m, {int(e): seal.unb64(v) for e, v in inv["k"].items()})
     req = {"digest": _digest(inv["s"]), "cert": m.identity.cert_path().read_text(encoding="ascii"),
+           "box": seal.box_public(m),
            "name": name or socket.gethostname(), "addresses": list(addresses)}
     errors = []
     for address in inv["a"]:

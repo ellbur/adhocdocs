@@ -50,7 +50,13 @@ class ExternalIndex(Index):
         from .base import still_true
         self.m.refresh()
         state = self.m.state
-        events = [ev if still_true(ev, state) else {**ev, "stale": True} for ev in self.m.changes(self.cursor())]
+        events = []
+        for ev in self.m.changes(self.cursor()):
+            if ev["op"] == "purge":         # as withdrawals, which an updater knows: the purge op is ours
+                events += [{**ev, "op": "withdraw", "doc": d, "reason": "purged",
+                            **({} if d in state.purged else {"stale": True})} for d in ev.get("docs") or []]
+            else:
+                events.append(ev if still_true(ev, state) else {**ev, "stale": True})
         if not events:
             return 0
         env = {**os.environ, "ADHOC_INDEX_DIR": str(self.dir), "ADHOC_MATTER": str(self.m.root)}

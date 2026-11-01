@@ -285,22 +285,36 @@ installation's `sync/` (never mounted, never in a log) and carried to new
 members inside their invitation code; a hub never gets it. Members send a
 hub (unless it was made `--plain`):
 
-- events sealed: encrypted, with only the event's ID, its hash and the
-  previous event's hash in the clear. That's enough for the hub to keep
-  each log in order, to compare log ends, and to redact by hash. Members
+- events sealed: encrypted, with only the event's ID, its hash, the
+  previous event's hash and the key's epoch in the clear. That's enough for
+  the hub to keep each log in order and to compare log ends. Members
   decrypt what they fetch and check every signature and chain as always.
   Membership isn't sealed: the hub needs it to know who may connect;
-- objects encrypted in chunks, under blinded names (an HMAC of the hash),
-  so the hub can't tell which documents it holds by hashing known files.
-  Members check the real hash after decrypting.
+- objects encrypted in chunks under blinded names (an HMAC of the hash), so
+  the hub can't tell which documents it holds by hashing known files, and
+  padded (to within about 6%, at least 4 KB) so it can't recognize them by
+  their exact sizes either. Members check the real hash after decrypting.
 
-A sealed hub can't read purges either, so members tell it what to delete
-and redact when they sync. What it can see: how many events each
-installation wrote and when, and the number and sizes of objects. The
-cost: it can't check that an event in an installation's log was written by
-that installation (the signature is inside), so a member could put junk
-there; the others would refuse that log on reading it, so it disrupts but
-deceives no one.
+**Members hold the hub to it.** The pool records that a hub is sealed, and
+members won't sync with it if it ever says otherwise.
+
+**The key changes when a member is removed.** Each member publishes a key
+of its own (X25519) when it joins; removing a member issues the next
+matter key, boxed for each remaining member (a `rekey` event), so what's
+sealed afterwards a removed installation can't read, even with the hub's
+help. Older keys stay, to read what was sealed with them. A member that
+joined before box keys existed needs a new invitation to get the new key.
+
+A sealed hub can't read purges, so members, when they sync, give it the
+redacted form of what purges redacted (sealed: it can check only that each
+has the same hash as what it replaces) and tell it which objects to delete
+(it can't check those, and keeps a record of who asked, for which purge).
+Objects it holds can't be overwritten. What it can see: how many events
+each installation wrote and when, and roughly how big the objects are. The
+cost of sealing: it can't check that an event in an installation's log was
+written by that installation (the signature is inside), so a member could
+put junk there; the others would refuse that log on reading it, so it
+disrupts but deceives no one.
 
 **Invitations through the hub.** When the pool has a hub, `adhoc sync
 invite` leaves the invitation there (only its secret's hash) and the code
@@ -360,21 +374,32 @@ Sometimes documents must go for good: clawed back after a production made
 in error, or destroyed under a protective order when the case ends
 ([`purge.py`](src/adhocdocs/purge.py)). `adhoc purge <doc> --user me
 --reason "…"` (a person, on the host; never Claude) records a signed
-`purge` event, and every installation that has it, the hub included:
+`purge` event naming the documents. It counts only if made by a person an
+installation has claimed, from one of theirs.
 
-- deletes the documents' objects: originals, text layers and their parts,
-  metadata, layers made from them in the workspace, for each document and
-  its attachments (what a live document still uses stays);
-- redacts the annotation events that name them, since tags and notes can
-  hold quoted words. Each becomes a **tombstone** keeping only its ID and
-  hash, so signed logs still check; a tombstone is accepted only where a
-  purge authorizes its hash;
-- treats them as gone for good: out of the state, the indexes and the
-  viewer; ingesting the same file again doesn't bring them back; sync never
-  fetches, sends or accepts their objects again, and an event naming them
-  that arrives late is kept as its tombstone.
+**Each installation works out for itself what that means** for what it
+holds, so a purge can't be made to delete anything but those documents:
 
-A record stays: who purged, when, why, and which document IDs.
+- it deletes their objects (originals, text layers and their parts,
+  metadata, layers made from them in the workspace, with their
+  attachments), keeping whatever a document that isn't purged still uses;
+- it redacts what the annotation events say about them. **Events are
+  signed over a tree of hashes** ([`signing.py`](src/adhocdocs/signing.py)),
+  so parts of one can be hidden and its signature, hash and place in the
+  chain still check. A tag or note on a purged document keeps only what
+  places it, who made it, and which document; an entity keeps everything
+  but its references to purged documents. A receiver accepts hidden parts
+  only where a purge it knows of hides exactly those, so no one can hide
+  anything else, or drop or reorder events;
+- it treats them as gone for good: out of the state, the indexes (which
+  are then compacted and rewritten, so nothing lingers in their files) and
+  the viewer; ingesting the same file again doesn't bring them back.
+
+**What arrives later is held to it too.** Sync doesn't fetch, send or
+accept objects of purged documents; an annotation event about one that
+arrives later (from a member that hadn't heard) is stored redacted; and a
+layer made of one elsewhere (a late OCR) is swept away when it arrives. A
+record of the purge stays: who, when, why, which document IDs.
 
 **What a purge can't reach** is what the matter doesn't track: the
 workspace (drafts, exports, productions), Claude's transcripts in

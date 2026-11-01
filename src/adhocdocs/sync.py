@@ -70,6 +70,11 @@ def refresh(m: Matter):
     except OSError:
         pass
     purge.enforce(Matter(m.root))
+    from . import seal
+    try:
+        seal.learn(Matter(m.root))      # a new key, after a removal
+    except Exception:
+        pass
     m = Matter(m.root)
     annotations.save_replay(m)
     work.materialize(m)

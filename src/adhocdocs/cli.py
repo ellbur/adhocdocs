@@ -267,10 +267,10 @@ def adhoc(argv=None):
     elif a.cmd == "purge":
         from . import purge
         docs = [locators.parse("doc:" + d.removeprefix("doc:"), m.objects)["doc"] for d in a.docs]
-        p = purge.plan(m, docs, a.with_duplicates)
+        p = purge.preview(m, docs, a.with_duplicates)
         if not a.yes:
             print(f"This deletes {len(p['docs'])} document(s) (with attachments), {len(p['objects'])} stored "
-                  f"object(s), and redacts {len(p['redact'])} tag/note event(s), on this installation and every "
+                  f"object(s), and redacts {p['events']} tag/note event(s), on this installation and every "
                   "installation of the matter. It can't be undone. Type PURGE to go on: ", end="", file=sys.stderr)
             if input().strip() != "PURGE":
                 raise ValueError("not purged")
