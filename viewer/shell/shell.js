@@ -205,6 +205,12 @@ function applyTheme() {
   for (const f of document.querySelectorAll("iframe")) themeFrame(f);
   if (wasDoc && wasDoc !== r.dataset.doc) for (const p of adhoc.panes) p.docThemeChanged?.();
 }
+// cropping pages' blank margins: one setting for every paginated document
+function cropMargins() { return prefGet("adhoc.cropMargins", "") === "1"; }
+function setCropMargins(on) {
+  prefSet("adhoc.cropMargins", on ? "1" : "");
+  for (const p of adhoc.panes) if (p.mode === "page" && p.info) p.relayout();
+}
 function setTheme(which, v) { adhoc.theme[which] = v; prefSet("adhoc.theme." + which, v); applyTheme(); }
 systemDark.addEventListener?.("change", () => applyTheme());
 applyTheme();
@@ -628,7 +634,7 @@ class DocumentPane {
     this.updateStatus();                      // where it is now, even if the scroll hasn't been reported yet
     const top = this.visible?.page?.[0];
     await this.render();
-    if (top && this.pageEls?.[top - 1]) this.body.scrollTop = this.pageEls[top - 1].offsetTop - 8;
+    if (top && this.pageEls?.[top - 1]) this.body.scrollTop = this.pageTop(this.pageEls[top - 1]) - 8;
   }
   title() { return this.info ? (this.info.meta.name || short(this.info.doc)) : "(empty)"; }
   // the modes this document and layer can be shown in, the default first
@@ -734,7 +740,7 @@ class DocumentPane {
     } else if (this.mode === "flow" && this.frame) this.frame.classList.toggle("own-colors", this.ownColors && docDark());
     this.drawBoxes();
   }
-  pageURL(doc, n) { return `/page/${doc}/${n}?w=${this.pagePx}${docDark() ? "&dark=1" : ""}`; }
+  pageURL(doc, n, px = this.pagePx) { return `/page/${doc}/${n}?w=${px}${docDark() ? "&dark=1" : ""}`; }
 
   // -- downloads, and the rest of the ⋯ menu ------------------------------------------------
   menuItems() {
@@ -749,6 +755,8 @@ class DocumentPane {
       { label: "PDF with annotations", hint: n ? `${n} marked` : "none yet", disabled: !n || (!info.pages && !layer),
         title: "Tags, notes and highlights marked on the pages, notes as PDF comments (or numbered, at the end)", onclick: () => this.exportAs("annotated") },
       { label: "Text", hint: ".txt", disabled: !layer, title: "The extracted text of this layer: what search and Claude read", onclick: () => this.exportAs("text") }];
+    if (info.pages) items.push("-", { label: "Crop blank margins", checked: cropMargins(), title: "Show only the part of each page with something on it, larger (for every paginated document)",
+      onclick: () => setCropMargins(!cropMargins()) });
     if (modes.includes("hex") && modes.length > 1) items.push("-", this.mode === "hex"
       ? { label: "Back from the bytes", onclick: () => this.setMode(modes[0]) }
       : { label: "Show the original's bytes", hint: "hex", title: "The file's bytes, exactly as collected, sixteen to a row", onclick: () => this.setMode("hex") });
@@ -891,17 +899,37 @@ class DocumentPane {
     this.body.append(wrap);
     // the image is drawn at its own size, pixel for pixel: a page image the
     // web view has to scale (up or down) loses its antialiasing
-    const dpr = devicePixelRatio || 1;
-    this.pagePx = Math.round(Math.max(300, Math.min(this.body.clientWidth - 30, 1100)) * dpr);
-    const width = this.pagePx / dpr;
-    wrap.style.paddingLeft = Math.max(0, Math.round(((this.body.clientWidth - width) / 2) * dpr) / dpr) + "px";
+    const dpr = devicePixelRatio || 1, avail = Math.max(300, Math.min(this.body.clientWidth - 30, 1100));
+    const gen = this.pagesGen = (this.pagesGen || 0) + 1;
+    // Cropping blank margins: each page is shown through a window onto its
+    // ink (the host finds it, api/margins). Every page keeps one scale, so
+    // type is the same size throughout: the widest ink known fits the pane.
+    // The first pages' margins come before layout; the rest are guessed
+    // from them and set as they arrive (fillMargins).
+    this.crops = null;
+    if (cropMargins()) {
+      this.crops = new Array(info.pages.length).fill(null);
+      await this.fetchMargins(1, Math.min(info.pages.length, 4));
+    }
+    const known = (this.crops || []).filter(Boolean);
+    this.cropGuess = known.length ? [0, 1, 2, 3].map((k) => (k < 2 ? Math.min : Math.max)(...known.map((c) => c[k]))) : [0, 0, 1, 1];
+    if (this.crops) {
+      const inkW = Math.max(...info.pages.map(([w], i) => { const c = this.crops[i] || this.cropGuess; return w * (c[2] - c[0]); }));
+      this.scale = avail / inkW;              // CSS pixels per point
+    }
+    this.pagePx = Math.round(avail * dpr);
+    this.bodyWidth = this.body.clientWidth;
     this.pageEls = info.pages.map(([w, h], i) => {
-      const p = el("div", { class: "page", "data-page": i + 1, style: `width:${width}px;height:${(width * h) / w}px` });
-      p.append(el("span", { class: "pageno" }, String(i + 1)));
-      wrap.append(p);
+      // uncropped, every page is the pane's width, as before
+      const W = this.crops ? Math.round(this.scale * w * dpr) / dpr : this.pagePx / dpr;
+      const p = el("div", { class: "page", "data-page": i + 1, "data-px": Math.round(W * dpr), style: `width:${W}px;height:${(W * h) / w}px` });
+      const slot = el("div", { class: "pageslot" }, el("div", { class: "pageclip" }, p), el("span", { class: "pageno" }, String(i + 1)));
+      wrap.append(slot);
+      this.placePage(p);
       return p;
     });
-    this.pageWidth = width;
+    this.pageWidth = this.pagePx / dpr;
+    if (this.crops) this.fillMargins(gen);
     // Page images first: the text layer over them can arrive later.
     this.observer?.disconnect();
     this.observer = new IntersectionObserver((entries) => {
@@ -918,11 +946,46 @@ class DocumentPane {
     }
   }
 
+  // the window onto a page: its crop (or all of it), on whole device pixels, centered
+  placePage(p) {
+    const dpr = devicePixelRatio || 1, n = Number(p.dataset.page);
+    const c = this.crops ? this.crops[n - 1] || this.cropGuess : [0, 0, 1, 1];
+    const W = parseFloat(p.style.width), H = parseFloat(p.style.height);     // no layout read: this runs per page
+    const snap = (v) => Math.round(v * dpr) / dpr;
+    const x0 = snap(c[0] * W), y0 = snap(c[1] * H), cw = snap(c[2] * W) - x0, ch = snap(c[3] * H) - y0;
+    const clip = p.parentElement;
+    Object.assign(clip.style, { width: cw + "px", height: ch + "px" });
+    Object.assign(p.style, { marginLeft: -x0 + "px", marginTop: -y0 + "px" });
+    clip.parentElement.style.marginLeft = Math.max(0, snap((this.bodyWidth - cw) / 2)) + "px";
+  }
+  async fetchMargins(from, to) {
+    const r = await getJSON(`/api/margins/${this.info.doc}?from=${from}&to=${to}`).catch(() => null);
+    r?.boxes.forEach((b, i) => { if (this.crops) this.crops[from - 1 + i] = b; });
+  }
+  // The rest of the pages' margins, a batch at a time; a page above the view
+  // that changes height moves the scroll with it, so what's shown stays put.
+  async fillMargins(gen) {
+    const n = this.info.pages.length;
+    for (let from = 5; from <= n; from += 24) {
+      const to = Math.min(n, from + 23);
+      await this.fetchMargins(from, to);
+      if (gen !== this.pagesGen || !this.crops) return;
+      // all reads, then all writes, then one read: a layout per batch, not per page
+      const ps = this.pageEls.slice(from - 1, to), st = this.body.scrollTop;
+      const before = ps.map((p) => [p.parentElement.offsetTop, p.parentElement.offsetHeight]);
+      ps.forEach((p) => this.placePage(p));
+      const shift = ps.reduce((d, p, i) => d + (before[i][0] + before[i][1] <= st ? p.parentElement.offsetHeight - before[i][1] : 0), 0);
+      if (shift) this.body.scrollTop = st + shift;
+    }
+  }
+  // where a page's window is, in the pane's scrolled content
+  pageTop(p) { return p.parentElement.offsetTop; }
+
   fillPage(p) {
     if (p.dataset.filled) return;
     p.dataset.filled = "1";
     const n = Number(p.dataset.page);
-    const img = el("img", { src: this.pageURL(this.info.doc, n), draggable: "false", alt: "" });
+    const img = el("img", { src: this.pageURL(this.info.doc, n, p.dataset.px), draggable: "false", alt: "" });
     img.addEventListener("load", () => this.shown(), { once: true });
     p.prepend(img);
     if (this.words) this.fillWords(p);
@@ -1490,7 +1553,7 @@ class DocumentPane {
         const t = await layerText(this.layer);
         n = t.cps.slice(0, sel.char[0]).filter((c) => c === "\f").length + 1;
       }
-      if (n && this.pageEls[n - 1]) this.body.scrollTop = this.pageEls[n - 1].offsetTop - 8;
+      if (n && this.pageEls[n - 1]) this.body.scrollTop = this.pageTop(this.pageEls[n - 1]) - 8;
     } else if (sel.char) {
       const root = this.textRoot();
       const rect = root && rangeRects(root, sel.char[0], sel.char[0] + 1)[0];
@@ -1609,7 +1672,8 @@ class DocumentPane {
     let text = "";
     if (this.mode === "page" && this.pageEls) {
       const top = this.body.scrollTop, bottom = top + this.body.clientHeight;
-      const vis = this.pageEls.filter((p) => p.offsetTop < bottom && p.offsetTop + p.clientHeight > top).map((p) => Number(p.dataset.page));
+      const vis = this.pageEls.filter((p) => { const c = p.parentElement; return c.offsetTop < bottom && c.offsetTop + c.offsetHeight > top; })
+        .map((p) => Number(p.dataset.page));
       if (vis.length) {
         this.visible = { page: [vis[0], vis[vis.length - 1]] };
         const n = vis[0], label = this.info.page_labels?.[n];

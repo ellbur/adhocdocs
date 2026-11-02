@@ -140,9 +140,13 @@ iframe.web { border: 0; width: 100%; height: 100%; display: block; background: v
 
 /* page mode */
 /* pages lie in a well a shade darker than paper, so their edges show; left is set in whole device pixels (renderPages) */
-.pages { padding: 12px 0 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; background: var(--doc-well); min-height: 100%; box-sizing: border-box; }
+.pages { padding: 12px 0 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; background: var(--doc-well); min-height: 100%; box-sizing: border-box; }
 .pane-body.docview.paged { background: var(--doc-well); }
-.page { position: relative; background: var(--doc-bg); box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.04); }
+/* a page is seen through a window (its crop, when blank margins are cropped, else all of it);
+   the window isn't positioned, so a page's offsetTop still maps its content */
+.pageslot { flex: none; }
+.pageclip { overflow: hidden; background: var(--doc-bg); box-shadow: 0 1px 3px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.04); }
+.page { position: relative; background: var(--doc-bg); }
 .page img { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-select: none; }
 .page .words { position: absolute; inset: 0; }
 .page .w { position: absolute; color: transparent; white-space: pre; line-height: 1; transform-origin: 0 0; cursor: text; }
@@ -154,7 +158,7 @@ iframe.web { border: 0; width: 100%; height: 100%; display: block; background: v
 .page .box.sel, .hlbox.sel { background: var(--sel); }
 .page .box.mark, .hlbox.mark { background: var(--mark); }
 .page .region { position: absolute; border: 2px dashed var(--accent); background: rgba(45, 95, 211, .08); pointer-events: none; }
-.page .pageno { position: absolute; right: 4px; bottom: -16px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pageslot .pageno { display: block; text-align: right; height: 14px; margin-top: 2px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 /* text mode */
 .textmode { font: 13px/1.55 ui-monospace, monospace; padding: 10px 14px; white-space: pre-wrap; }
