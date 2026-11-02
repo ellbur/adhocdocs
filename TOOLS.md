@@ -15,6 +15,11 @@ design doc), or **proposed**.
   and zip, mbox and Outlook PST/OST containers: `adhoc ingest`,
   [TEXTLAYERS.md](TEXTLAYERS.md). Originals are never changed; text is a
   derived layer.
+- **Received productions.** *Built:* `adhoc ingest-production` takes a
+  volume another party served (Concordance or CSV `.dat`, Opticon `.opt`,
+  page images, natives, text) as one document per record, with families,
+  the producer's text and metadata, and its Bates and control numbers as
+  names (`bates:`, `ctl:`): [RECEIVED.md](RECEIVED.md).
 - **Metadata extraction.** *Built* for email headers and file properties.
   *Proposed:* richer fields, cast of characters.
 
@@ -123,7 +128,8 @@ entity layer ([ENTITIES.md](ENTITIES.md)). *Proposed:* first names alone
   pages, or text rendered to pages), a production record, and Concordance
   and Opticon load files ([`produce.py`](src/adhocdocs/produce.py)).
   Families stay together. `bates:` locators resolve through production
-  records, and pages cite produced documents by Bates number.
+  records (ours and received ones), and pages cite produced documents by
+  Bates number.
 - **Withholding, redaction and privilege logs.** *Built*, from the user's
   tags. A document a person tagged `privileged` becomes a slip sheet.
   Ranges or regions a person tagged `redact…` are redacted, with the text

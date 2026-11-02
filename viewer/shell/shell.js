@@ -771,6 +771,12 @@ class DocumentPane {
     this.head.replaceChildren(
       info.meta.kind ? el("span", { class: "pane-kind", title: info.meta.content_type || info.meta.kind }, info.meta.kind) : "",
       el("span", { class: "pane-title", title: info.doc }, this.title()),
+      // a received document: its Bates range and who produced it
+      info.meta.produced ? el("span", { class: "produced", title: `Produced to us by ${info.meta.produced.party}, volume ${info.meta.produced.volume}` +
+          (info.meta.produced.control !== info.meta.produced.begin ? `; control number ${info.meta.produced.control}` : "") +
+          (info.meta.produced.as === "native" ? "; produced natively" : "") },
+        (info.meta.produced.begin === info.meta.produced.end ? info.meta.produced.begin : `${info.meta.produced.begin}–${info.meta.produced.end}`) +
+        " · " + info.meta.produced.party) : "",
       // layers: only when there's a choice (the primary one, the one search reads first, is starred)
       info.layers.length > 1 ? el("span", { class: "seg layers", title: "Layers: readings of the document (v)" }, ...info.layers.map((l) => el("button", {
         class: l.id === this.layer ? "on" : "", title: `layer ${short(l.id)}${l.primary ? " (primary: what search reads first)" : ""}`,
@@ -1787,6 +1793,9 @@ class DocumentPane {
         return m[1] + String(Number(m[2]) + i).padStart(m[2].length, "0");
       }
     }
+    // else the number it was produced to us under (a native has one, for its first page)
+    const p = this.info?.meta?.produced;
+    if (p) return p.pages ? p.pages[page - 1] ?? null : page === 1 ? p.begin : null;
     return null;
   }
   // the latest exhibit with this page in it, and the page's number in the exhibit

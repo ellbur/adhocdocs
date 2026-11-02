@@ -48,7 +48,7 @@ from .matter import Matter
 LETTER = pymupdf.paper_rect("letter")
 DAT_FIELDS = ("BEGBATES", "ENDBATES", "BEGATTACH", "ENDATTACH", "CUSTODIAN", "FILENAME", "DATE", "FROM", "TO",
               "SUBJECT", "PAGES", "MD5HASH", "NATIVEPATH")
-BATES = re.compile(r"^([A-Za-z_\-]*?)(\d+)$")
+BATES = re.compile(r"^(.*?)(\d+)$")             # a prefix of any characters, then the number
 
 
 class ProductionError(Exception):
@@ -449,17 +449,28 @@ def _productions(m: Matter) -> list[dict]:
     return out
 
 
+def _bates_range(s: str):
+    """``ABC000123`` or ``ABC000123-ABC000130`` (prefixes may hold dashes)
+    as (prefix, first, last), or None."""
+    spec = s.removeprefix("bates:").strip()
+    for i in [i for i, ch in enumerate(spec) if ch == "-"] + [None]:
+        first, last = (spec[:i], spec[i + 1:]) if i is not None else (spec, spec)
+        a, b = BATES.match(first), BATES.match(last)
+        if a and b and a.group(1) == b.group(1) and first[-1:].isdigit():
+            return a.group(1), int(a.group(2)), int(b.group(2))
+    return None
+
+
 def resolve_bates(m: Matter, s: str) -> list[dict]:
     """``bates:ABC000123`` or ``bates:ABC000123-ABC000130`` to locators, one
-    per document the range touches. Pages map back to the original's pages
-    where it had them; documents rendered from text resolve whole."""
-    spec = s.removeprefix("bates:")
-    pair = re.match(r"^([A-Za-z_\-]*?\d+)-([A-Za-z_\-]*?\d+)$", spec)
-    first, last = (pair.group(1), pair.group(2)) if pair else (spec, spec)
-    a, b = BATES.match(first), BATES.match(last)
-    if not a or not b or a.group(1) != b.group(1):
+    per document the range touches, in our productions and those we
+    received (received.py). Pages map back to the original's pages where it
+    had them; documents rendered from text, and natives, resolve whole."""
+    from . import received
+    r = _bates_range(s)
+    if not r:
         raise locators.LocatorError(f"not a Bates number or range: {s}")
-    prefix, lo, hi = a.group(1), int(a.group(2)), int(b.group(2))
+    prefix, lo, hi = r
     out = []
     for p in _productions(m):
         if p["prefix"] != prefix or hi < p["begin_n"] or lo > p["end_n"]:
@@ -475,8 +486,9 @@ def resolve_bates(m: Matter, s: str) -> list[dict]:
                 loc["select"] = {"page": first_page if first_page == last_page else [first_page, last_page]}
             out.append({"loc": loc, "bates": [bates(prefix, max(lo, rb), p["digits"]), bates(prefix, min(hi, re_), p["digits"])],
                         "production": p["name"]})
+    out += received.resolve_bates(m, prefix, lo, hi)
     if not out:
-        raise locators.LocatorError(f"{s} is not in any production")
+        raise locators.LocatorError(f"{s} is not in any production, ours or received")
     return out
 
 
@@ -494,4 +506,13 @@ def bates_for(m: Matter, doc: str, pages: list[int] | None) -> list[str] | None:
             idx = [r["page_map"].index(pg) for pg in pages if pg in r["page_map"]]
             if idx:
                 return [bates(p["prefix"], base + min(idx), digits), bates(p["prefix"], base + max(idx), digits)]
+    from .received import produced                # else the numbers it was produced to us under
+    for p in produced(m):
+        if p["doc"] != doc:
+            continue
+        if pages is None or not p.get("pages"):
+            return [p["begin"], p["end"] or p["begin"]]
+        keys = [p["pages"][pg - 1] for pg in pages if 0 < pg <= len(p["pages"])]
+        if keys:
+            return [keys[0], keys[-1]] if len(keys) > 1 else [keys[0], keys[0]]
     return None

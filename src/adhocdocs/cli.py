@@ -109,6 +109,20 @@ def adhoc(argv=None):
     s.add_argument("--collection", help="collection name, e.g. smith-laptop-2026-03")
     s.add_argument("--manifest", help="a TOML file of [[collection]] tables (name, custodian, paths), "
                                       "e.g. corpus/manifest.toml; see adhocdocs.ingest.load_manifest")
+    s = sub.add_parser("ingest-production", help="add a production another party made: load files, images, natives, text",
+                       description="Ingest a production volume another party served: one document per .dat record, "
+                                   "named by its Bates numbers (bates:) and control number (ctl:). Run with --check "
+                                   "first: it reports the columns found and every problem, and ingests nothing. "
+                                   "See RECEIVED.md.")
+    s.add_argument("volume", help="the volume's folder")
+    s.add_argument("--party", help="who produced it, e.g. \"Acme Corp.\" (required, except with --check)")
+    s.add_argument("--name", help="the volume's name (default: the folder's)")
+    s.add_argument("--dat", help="the .dat load file (default: found in the volume)")
+    s.add_argument("--opt", help="the .opt image load file (default: found in the volume)")
+    s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
+                   help="which .dat column a field is, when it isn't recognized (e.g. begin=\"Prod Beg\")")
+    s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")
+    s.add_argument("--check", action="store_true", help="read the volume and report; ingest nothing")
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
@@ -316,6 +330,24 @@ def adhoc(argv=None):
             ingest_manifest(m, a.manifest, report)
         else:
             ingest_paths(m, a.paths, a.custodian, a.collection, report)
+    elif a.cmd == "ingest-production":
+        from . import received
+        overrides = {}
+        for x in a.map:
+            if "=" not in x:
+                raise ValueError(f"--map {x}: give FIELD=COLUMN")
+            k, v = x.split("=", 1)
+            overrides[k.strip()] = v.strip()
+        kw = {"dat": a.dat, "opt": a.opt, "overrides": overrides, "day_first": a.day_first}
+        if a.check:
+            out(received.check(a.volume, **kw))
+            return
+        if not a.party:
+            raise ValueError("--party: who produced this volume (or --check to look first)")
+        gui.remember(m.root)
+        r = received.ingest(m, a.volume, a.party, a.name, **kw)
+        r.pop("docs")
+        out(r)
     elif a.cmd == "withdraw":
         doc = locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"]
         out(m.logs["store"].append(op="withdraw", doc=doc, reason=a.reason))
@@ -632,10 +664,9 @@ def text(argv=None):
     p.add_argument("--json", action="store_true", help="print the resolution (status, locator, text) as JSON")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
-    if a.locator.startswith(("bates:", "exh:")):
-        from .exhibits import resolve_exhibit
-        from .produce import resolve_bates
-        for hit in (resolve_bates if a.locator.startswith("bates:") else resolve_exhibit)(m, a.locator):
+    from .received import NAMES, resolve_name
+    if a.locator.startswith(NAMES):
+        for hit in resolve_name(m, a.locator):
             r = locators.resolve(m, hit["loc"])
             out({**hit, "status": r["status"], **({"text": r["text"]} if a.json and "text" in r else {})})
         return
@@ -1853,12 +1884,9 @@ def view(argv=None):
     m = Matter.find(a.matter)
 
     def loc(x):
-        if x.startswith("bates:"):            # the first document the Bates range touches
-            from .produce import resolve_bates
-            return locators.format(resolve_bates(m, x)[0]["loc"])
-        if x.startswith("exh:"):
-            from .exhibits import resolve_exhibit
-            return locators.format(resolve_exhibit(m, x)[0]["loc"])
+        from .received import NAMES, resolve_name
+        if x.startswith(NAMES):               # the first document a Bates range, exhibit or control number names
+            return locators.format(resolve_name(m, x)[0]["loc"])
         parsed = locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects)
         # the viewer reads canonical selectors: aliases (ptr, xpath, col, pl, label) become what they name
         return locators.format(locators.expand(m, parsed))
