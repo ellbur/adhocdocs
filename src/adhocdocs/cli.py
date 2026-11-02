@@ -1748,6 +1748,17 @@ to --window. A list pane can be linked to a document pane in another
 window. The user moves a pane to a new window with W; `view window new
 --pane P` does the same.
 
+Files: the user can hand you files that aren't discovery documents (a
+draft to mark up, a client's notes, a template) by dropping them on the
+viewer or its terminal; they land in /matter/workspace/files/uploads/
+(dropped on the terminal, their paths are typed at the prompt). They are
+plain files: no document IDs, not searchable with `search`, never quoted as
+evidence. Read, change or delete them as the task needs. `view files` shows
+the user the Files pane (both folders). To hand the user a file you made
+(a .docx, a spreadsheet, a PDF), `view deliver FILE --note "what it is"`:
+it is copied to /matter/workspace/files/from-claude/ and shown in the Files
+pane, where the user saves it to their Downloads folder.
+
 Services: a pane's <form action="svc:NAME"> is answered immediately by
 `view serve NAME -- cmd …` (run it in the background), without waiting for
 the next prompt. cmd gets {"form", "selection", "pane"} as JSON on stdin and
@@ -1811,6 +1822,13 @@ def view(argv=None):
     s = sub.add_parser("close")
     s.add_argument("pane")
     s = sub.add_parser("home", help="show the overview: what the matter holds (the first window opens on it)")
+    s.add_argument("--window", help="default: the window the user last used")
+    s = sub.add_parser("files", help="show the Files pane: what the user handed you, and what you handed them")
+    s.add_argument("--window", help="default: the window the user last used")
+    s = sub.add_parser("deliver", help="hand the user files (not discovery documents): copied to "
+                                       "files/from-claude/ and shown in the Files pane, to save")
+    s.add_argument("paths", nargs="+", metavar="FILE")
+    s.add_argument("--note", help="shown beside them: what they are")
     s.add_argument("--window", help="default: the window the user last used")
     s = sub.add_parser("layout", help="a window's tabs one at a time (tabs, the default) or tiled")
     s.add_argument("layout", choices=["tabs", "single", "split-v", "split-h", "grid"], help="single: the same as tabs")
@@ -1880,6 +1898,17 @@ def view(argv=None):
              "link": a.preview, "preview_new": not a.preview and not a.pane}
     elif a.cmd in ("close",):
         c["pane"] = a.pane
+    elif a.cmd == "files":
+        c["window"] = a.window
+    elif a.cmd == "deliver":
+        given = viewmod.deliver(m, a.paths, a.note)
+        c = {"cmd": "files", "show": "from-claude", "names": [x["name"] for x in given], "window": a.window}
+        try:
+            r = viewmod.command(m, {k: v for k, v in c.items() if v is not None})
+        except viewmod.NotRunning:
+            r = {"note": "the viewer isn't running: the user finds them in the Files pane when it is"}
+        out({"delivered": given, **r})
+        return
     elif a.cmd in ("layout", "home"):
         c.update(layout=getattr(a, "layout", None), window=a.window)
     elif a.cmd == "window":

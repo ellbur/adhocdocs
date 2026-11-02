@@ -66,6 +66,12 @@ def group(items, fields: dict, by: str):
     return sorted(out, key=lambda it: order.index(it["group"]))
 
 
+def loose(root, rel) -> bool:
+    """A loose file (``workspace/files/``: what the user handed Claude, or
+    Claude the user; view.py), not work product, whatever it's called."""
+    return root.name == "workspace" and len(rel.parts) > 1 and rel.parts[0] == "files"
+
+
 def catalog(root) -> list[dict]:
     """Every list file under ``root`` (not under hidden directories), newest
     first: title, question, size, and for key sets how much is covered and
@@ -75,7 +81,7 @@ def catalog(root) -> list[dict]:
     out = []
     for f in root.rglob("*.list.jsonl"):
         rel = f.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts[:-1]):
+        if any(part.startswith(".") for part in rel.parts[:-1]) or loose(root, rel):
             continue
         try:
             header, items = read(f)

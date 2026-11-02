@@ -187,7 +187,8 @@ pub(crate) fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<(String,
     let Ok(entries) = fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
+        // loose files (files.rs) aren't work product, whatever they're called
+        if name.starts_with('.') || (depth == 0 && name == "files" && root.ends_with("workspace")) {
             continue;
         }
         let Ok(ft) = e.file_type() else { continue };

@@ -164,7 +164,7 @@ function toast(msg) {
 // One menu at a time, under the button that opened it. Items: {label, hint,
 // checked, disabled, onclick}, {heading}, or "-" for a separator.
 
-function showMenu(anchor, items) {
+function showMenu(anchor, items, align = "right") {
   const m = $("#menu");
   if (!m.hidden && m.anchor === anchor) return hideMenu();
   hideMenu();
@@ -179,7 +179,7 @@ function showMenu(anchor, items) {
   m.hidden = false; m.anchor = anchor;
   anchor.classList.add("open");
   const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
-  m.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.right - w)) + "px";
+  m.style.left = Math.max(6, Math.min(innerWidth - w - 6, align === "left" ? r.left : r.right - w)) + "px";
   m.style.top = (r.bottom + 4 + h > innerHeight ? Math.max(6, r.top - h - 4) : r.bottom + 4) + "px";
   m.querySelector("button:not(:disabled)")?.focus();
 }
@@ -2362,6 +2362,157 @@ function openHome() {
   return h;
 }
 
+// -- loose files ----------------------------------------------------------------------------
+// Files the user hands Claude, and files Claude hands back, that aren't
+// discovery documents: plain files in the workspace (files.rs). The user
+// drops them on any window (on the terminal, their paths are typed at the
+// prompt too) or chooses them here; Claude hands files back with `view
+// deliver`. The host copies in and saves out; this pane lists both folders.
+
+const filesWaiting = new Map();
+let filesSeq = 0;
+function filesRequest(msg) {
+  const id = ++filesSeq;
+  return new Promise((res) => { filesWaiting.set(id, res); post({ ...msg, id }); });
+}
+adhoc.filesDone = (id, result) => { const res = filesWaiting.get(id); filesWaiting.delete(id); res?.(result); };
+
+const FILE_KINDS = {
+  uploads: { title: "For Claude", from: "you",
+             empty: "Nothing yet. Drop files anywhere in the viewer, or on Claude's terminal, to hand them to Claude." },
+  "from-claude": { title: "From Claude", from: "Claude",
+                   empty: "Nothing yet. When Claude makes a file for you (a draft, a spreadsheet), it appears here to save." },
+};
+// how a path is typed at a shell-like prompt: quoted if it needs to be
+const quotePath = (p) => /^[\w@%+=:,./-]+$/.test(p) ? p : "'" + p.replace(/'/g, "'\\''") + "'";
+
+class FilesPane {
+  constructor(id) {
+    this.id = id; this.kind = "files"; this.link = null; this.selected = []; this.cursor = -1;
+    this.data = null; this.raw = ""; this.fresh = new Set();
+    this.root = el("section", { class: "pane", "data-pane": id });
+    this.head = el("div", { class: "pane-head" }, el("span", { class: "pane-title" }, "Files"),
+      el("span", { class: "status" }, "Loose files: not discovery documents"));
+    this.body = el("div", { class: "pane-body files" });
+    this.root.append(this.head, this.body);
+    this.refresh();
+    this.timer = setInterval(() => { if (this.root.isConnected && this.root.offsetParent) this.refresh(); }, 2000);
+  }
+  title() { return "Files"; }
+  state() {
+    const names = (k) => (this.data?.[k] || []).map((x) => x.name);
+    return { id: this.id, kind: "files", selection: [], uploads: names("uploads"), from_claude: names("from-claude") };
+  }
+  spec() { return { kind: "files", id: this.id }; }
+  items() { return []; }
+  move() {}
+  targets() { return []; }
+  // just added: shown marked for a while
+  flash(names) {
+    for (const n of names) this.fresh.add(n);
+    this.raw = "";
+    this.refresh();
+    setTimeout(() => { for (const n of names) this.fresh.delete(n); this.raw = ""; this.refresh(); }, 6000);
+  }
+  async refresh() {
+    let raw;
+    try { raw = await fetch("/api/files").then((r) => r.text()); } catch { return; }
+    if (raw === this.raw) return;
+    this.raw = raw;
+    try { this.data = JSON.parse(raw); } catch { return; }
+    const top = this.body.scrollTop;
+    this.render();
+    this.body.scrollTop = top;
+    changed();
+  }
+  async act(op, kind, name) {
+    const r = await filesRequest({ type: "files-act", op, kind, name });
+    if (r.error) return toast(r.error);
+    if (op === "save") toast("Saved to " + r.saved);
+    this.raw = ""; this.refresh();
+  }
+  async pick(folders = false) {
+    const r = await filesRequest({ type: "files-pick", folders });
+    filesAdded(r, null, this);
+  }
+  render() {
+    const o = this.data;
+    const warn = el("div", { class: "files-warn", role: "note" },
+      el("strong", {}, "These are not discovery documents. "),
+      "They aren't ingested or numbered, have no document IDs, aren't searched, synced or tracked, and Claude can read, change or delete them. " +
+      "To make one part of the record, ingest it on the host (adhoc ingest).");
+    const add = el("div", { class: "files-add" },
+      el("button", { class: "primary", onclick: () => this.pick(false) }, "Add files…"),
+      el("button", { onclick: () => this.pick(true) }, "Add a folder…"),
+      el("span", { class: "hint" }, "or drop them anywhere in the viewer. Dropped on Claude's terminal, their paths are typed at its prompt."));
+    const section = (kind) => {
+      const k = FILE_KINDS[kind], rows = o[kind] || [];
+      const head = el("h2", {}, k.title, el("span", { class: "count" }, String(rows.length)),
+        el("button", { class: "link", title: "Open this folder in the file manager", onclick: () => this.act("reveal", kind, "") }, "Show folder"));
+      if (!rows.length) return el("section", { class: "card" }, head, el("p", { class: "empty" }, k.empty));
+      return el("section", { class: "card" }, head, el("ul", { class: "rows files-rows" }, ...rows.map((x) => {
+        const meta = [x.files != null ? plural(x.files, "file") + " · " : "", fmtSize(x.size), " · ", fmtAgo(x.modified)].join("");
+        return el("li", { class: "row" + (this.fresh.has(x.name) ? " fresh" : "") },
+          el("span", { class: "main" },
+            el("span", { class: "fname" }, (x.files != null ? "📁 " : "") + x.name),
+            x.note ? el("span", { class: "fnote" }, x.note) : "",
+            el("code", { class: "fpath", title: "Where Claude finds it" }, x.path)),
+          el("span", { class: "side" }, meta),
+          el("span", { class: "acts" },
+            el("button", { title: "Copy the path, to paste into Claude", onclick: async () => toast((await copyText(x.path)) ? "Copied " + x.path : x.path) }, "Copy path"),
+            el("button", { title: "Save a copy to your Downloads folder", onclick: () => this.act("save", kind, x.name) }, "Save to Downloads"),
+            el("button", { class: "danger", title: "Delete it from the workspace (click twice)", onclick: (ev) => {
+              // a second click within a few seconds deletes: no dialog to get in the way
+              const b = ev.currentTarget;
+              if (b.dataset.armed) return this.act("remove", kind, x.name);
+              b.dataset.armed = "1"; b.textContent = "Delete it?";
+              setTimeout(() => { delete b.dataset.armed; b.textContent = "Remove"; }, 3000);
+            } }, "Remove")));
+      })));
+    };
+    this.body.replaceChildren(warn, add, el("div", { class: "cards" }, section("uploads"), section("from-claude")));
+  }
+}
+function openFiles(focusIt = true) {
+  const f = adhoc.panes.find((p) => p.kind === "files") || addPane(new FilesPane(newPaneId()), focusIt);
+  if (focusIt) focus(f.id);
+  return f;
+}
+// what came of copying files in: say so, mark them in the Files pane
+function filesAdded(r, intoTerminal, filesPane) {
+  for (const e of r.errors || []) toast("Not added: " + e);
+  const added = r.added || [];
+  if (!added.length) return;
+  const what = added.length === 1 ? added[0].name : plural(added.length, "item");
+  if (intoTerminal) {
+    window.adhocTerm.paste(added.map((x) => quotePath(x.path)).join(" ") + " ");
+    window.adhocTerm.focus();
+    toast(`Handed Claude ${what} (in /matter/workspace/files/uploads). Not a discovery document.`);
+    adhoc.panes.find((p) => p.kind === "files")?.flash(added.map((x) => x.name));
+  } else {
+    (filesPane || openFiles()).flash(added.map((x) => x.name));
+    toast(`Handed Claude ${what}. Tell Claude what to do with ${added.length === 1 ? "it" : "them"}.`);
+  }
+}
+// Files dragged over the window, from outside (the host sees them over any frame)
+// (the veil ignores the pointer, so what's under it is what the files land on)
+const overTerminal = (x, y) => !!window.adhocTerm?.term && !!document.elementFromPoint(x, y)?.closest("#dock");
+adhoc.dragging = (d) => {
+  $("#drop-veil").hidden = !d.over;
+  $("#drop-veil").classList.toggle("term", d.over && overTerminal(d.x, d.y));
+};
+adhoc.dropped = (at, r) => {
+  $("#drop-veil").hidden = true;
+  filesAdded(r, overTerminal(at.x, at.y), null);
+};
+$("#menu-btn").addEventListener("click", (ev) => showMenu(ev.currentTarget, [
+  { label: "⌂ Overview", hint: "H", onclick: () => openHome() },
+  { label: "Files: hand Claude files", hint: "or drop them", onclick: () => openFiles() },
+  "-",
+  { label: "Move this pane to a new window", hint: "W", disabled: !focusedPane(), onclick: () => focusedPane() && post({ type: "tearoff", pane: focusedPane().id }) },
+  { label: "Keys", hint: "?", onclick: () => onKey({ key: "?", target: document.body, preventDefault() {} }) },
+], "left"));
+
 // Open a locator from a pane. A list's preview follows it (its linked pane);
 // anything else opens beside the pane, as a new tab among the documents it has
 // opened, or in the tab already showing that document.
@@ -2846,7 +2997,7 @@ function onKey(ev) {
   if (!$("#palette").hidden || !$("#note-editor").hidden || !$("#entity-editor").hidden) return;
   const p = focusedPane();
   const k = ev.key;
-  const doc = p?.kind === "document" ? p : null, web = p && p.kind !== "document" && p.kind !== "home" ? p : null;
+  const doc = p?.kind === "document" ? p : null, web = p && !["document", "home", "files"].includes(p.kind) ? p : null;
   let handled = true;
   if (k === "Tab") { const ids = leaves(), i = ids.indexOf(p?.id); const n = ids[(i + (ev.shiftKey ? -1 : 1) + ids.length) % ids.length]; if (n) focus(n); }
   else if ((k === "j" || k === "ArrowDown") && web) web.move(1);
@@ -2958,7 +3109,7 @@ const commands = {
   async pane(c) {
     if (c.update) {
       const p = pane(c.update);
-      if (!p || p.kind === "document" || p.kind === "home") throw new Error("no web pane " + c.update);
+      if (!p || ["document", "home", "files"].includes(p.kind)) throw new Error("no web pane " + c.update);
       p.sequence = c.sequence || null;
       if (c.title) { p._title = c.title; $(".pane-title", p.head).textContent = c.title; }
       p.load(c.content);
@@ -2978,6 +3129,12 @@ const commands = {
   },
   async close(c) { closePane(c.pane); return {}; },
   async home() { return { pane: openHome().id }; },
+  // the Files pane; with names, those just handed over are marked
+  async files(c) {
+    const f = openFiles();
+    if (c.names?.length) f.flash(c.names);
+    return { pane: f.id };
+  },
   // moving a pane to another window: taken out of this one, put into that one
   async detach(c) {
     const p = pane(c.pane);
@@ -3004,6 +3161,8 @@ const commands = {
       }
     } else if (s.kind === "home") {
       p = addPane(new HomePane(s.id), true);
+    } else if (s.kind === "files") {
+      p = addPane(new FilesPane(s.id), true);
     } else {
       p = addPane(new WebPane(s.id, s.kind, s.content, s.title), true);
       Object.assign(p, { link: s.link, sequence: s.sequence, form: s.form || {} });

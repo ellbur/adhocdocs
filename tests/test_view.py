@@ -98,3 +98,54 @@ def test_window_commands(m, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         run("open", doc, "--window", "w2", "--new-window")
     assert len(sent) == 6
+
+
+# -- loose files (view files, view deliver; the viewer's Files pane is viewer/src/files.rs) ----------
+
+
+def test_deliver_copies_without_overwriting_and_keeps_notes(m, tmp_path):
+    (tmp_path / "memo.docx").write_bytes(b"memo")
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables" / "a.csv").write_text("1,2")
+    a = view.deliver(m, [tmp_path / "memo.docx", tmp_path / "tables"], "The draft you asked for")
+    b = view.deliver(m, [tmp_path / "memo.docx"])
+    d = m.workspace / "files" / "from-claude"
+    assert [x["name"] for x in a + b] == ["memo.docx", "tables", "memo (2).docx"]
+    assert (d / "tables" / "a.csv").read_text() == "1,2"
+    assert json.loads((d / ".notes.json").read_text()) == {"memo.docx": "The draft you asked for", "tables": "The draft you asked for"}
+    # a file Claude wrote there itself is left where it is
+    (d / "made.xlsx").write_bytes(b"x")
+    assert view.deliver(m, [d / "made.xlsx"], "Totals") == [{"name": "made.xlsx", "path": str(d / "made.xlsx")}]
+    assert sorted(p.name for p in d.iterdir()) == [".notes.json", "made.xlsx", "memo (2).docx", "memo.docx", "tables"]
+    with pytest.raises(FileNotFoundError):
+        view.deliver(m, [tmp_path / "nope.pdf"])
+
+
+def test_deliver_without_the_viewer(m, tmp_path, monkeypatch):
+    monkeypatch.setenv("ADHOC_VIEW_SOCKET", str(tmp_path / "none.sock"))
+    (tmp_path / "out.pdf").write_bytes(b"%PDF")
+    r = subprocess.run([sys.executable, "-m", "adhocdocs.cli", "view", "--matter", str(m.root), "deliver", str(tmp_path / "out.pdf")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["delivered"][0]["name"] == "out.pdf" and "isn't running" in out["note"]
+
+
+def test_loose_files_arent_work_product(m):
+    """A list file the user hands Claude isn't one of the matter's lists."""
+    up = m.workspace / "files" / "uploads"
+    up.mkdir(parents=True)
+    docs = m.state.live_documents()
+    lists.write(up / "theirs.list.jsonl", *lists.new("Theirs", ["doc:" + d for d in docs]))
+    lists.write(m.workspace / "mine.list.jsonl", *lists.new("Mine", ["doc:" + d for d in docs]))
+    assert [r["file"] for r in lists.catalog(m.workspace)] == ["mine.list.jsonl"]
+
+
+def test_files_commands(m, monkeypatch, tmp_path):
+    from adhocdocs import cli
+    sent = []
+    monkeypatch.setattr(view, "command", lambda _m, c: sent.append(c) or {"pane": "p3"})
+    (tmp_path / "a.pdf").write_bytes(b"%PDF")
+    cli.view(["--matter", str(m.root), "files"])
+    cli.view(["--matter", str(m.root), "deliver", str(tmp_path / "a.pdf"), "--note", "Signed copy", "--window", "w2"])
+    assert sent == [{"cmd": "files"}, {"cmd": "files", "show": "from-claude", "names": ["a.pdf"], "window": "w2"}]

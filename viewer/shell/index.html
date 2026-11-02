@@ -9,7 +9,7 @@
 <body class="adhoc-shell">
 <aside id="dock" hidden></aside><div id="dock-split" hidden></div>
 <div id="docs">
-<header id="top"><nav id="tabs"></nav>
+<header id="top"><button id="menu-btn" class="icon-btn" aria-label="Menu: the overview, files for Claude" aria-haspopup="menu">☰</button><nav id="tabs"></nav>
   <div id="top-tools"><button id="theme-btn" class="icon-btn" aria-label="Light and dark, for the interface and for documents">◐</button></div></header>
 <main id="panes"><div id="layout"></div></main>
 </div>
@@ -34,6 +34,9 @@
 <div id="entity-card" hidden></div>
 <div id="menu" role="menu" hidden></div>
 <div id="toast" hidden></div>
+<div id="drop-veil" hidden><div class="msg"><strong>Drop to hand Claude these files</strong>
+  <span class="docs">They go to the Files pane, not into the matter: not discovery documents, and Claude can change them.</span>
+  <span class="term">Their paths are typed at Claude's prompt. Not discovery documents, and Claude can change them.</span></div></div>
 <script src="/vendor/xterm.js"></script>
 <script src="/vendor/addon-fit.js"></script>
 <script src="/term.js"></script>

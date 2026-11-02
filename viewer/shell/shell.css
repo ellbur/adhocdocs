@@ -444,3 +444,37 @@ body.launcher #docs { overflow-y: auto; }
 .l-radio.disabled { opacity: .55; cursor: default; }
 .l-radio span { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
 body.launcher #dock { width: 52%; }
+
+/* the menu at the top left */
+#menu-btn { margin: 0 0 4px 6px; flex: none; align-self: center; }
+
+/* loose files: the Files pane, and files dragged over a window */
+.pane-body.files { padding: 14px 20px 24px; overflow: auto; }
+.files-warn { border: 1px solid #d9a400; background: rgba(240, 180, 0, .12); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; max-width: 62em; line-height: 1.45; }
+.files-add { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.files-add button, .files-rows .acts button, .card h2 button.link { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--pane); color: var(--ink); cursor: pointer; }
+.files-add button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-size: 13px; padding: 5px 12px; }
+.files-add .hint { color: var(--muted); font-size: 12px; }
+.card h2 button.link { margin-left: auto; border-color: transparent; color: var(--accent); background: none; }
+.card h2 button.link:hover { text-decoration: underline; }
+.files-rows .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; cursor: default; }
+ul.rows.files-rows .row .main { display: flex; flex-direction: column; gap: 1px; min-width: 14em; flex: 1; }
+.files-rows .fname { font-weight: 600; overflow-wrap: anywhere; }
+.files-rows .fnote { color: var(--ink); font-size: 12px; }
+.files-rows .fpath { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; user-select: all; }
+.files-rows .acts { display: flex; gap: 4px; flex: none; }
+.files-rows .acts button:hover { border-color: var(--accent); }
+.files-rows .acts button.danger:hover, .files-rows .acts button.danger[data-armed] { border-color: #c33; color: #c33; }
+.files-rows .row.fresh { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+#drop-veil { position: fixed; inset: 0; z-index: 50; pointer-events: none; display: flex; align-items: center; justify-content: center;
+  background: rgba(45, 95, 211, .12); border: 3px dashed var(--accent); }
+#drop-veil[hidden] { display: none; }
+#drop-veil .msg { background: var(--pane); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 14px 20px; max-width: 30em;
+  display: flex; flex-direction: column; gap: 4px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18); }
+#drop-veil .msg span { color: var(--muted); font-size: 12px; }
+#drop-veil .msg .term, #drop-veil.term .msg .docs { display: none; }
+#drop-veil.term .msg .term { display: inline; }
+.pane-body.files .cards { grid-template-columns: 1fr; max-width: 62em; }
+ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
+.files-rows .row:hover { background: var(--hover); }

@@ -429,7 +429,8 @@ def around(m, when: str, days: int = 7) -> dict:
               for e in ann.entities.values() if e.get("date") and near(e["date"])]
     chron = []
     for path in sorted(m.workspace.rglob("*.list.jsonl")):
-        if any(p.startswith(".") for p in path.relative_to(m.workspace).parts):
+        rel = path.relative_to(m.workspace)
+        if any(p.startswith(".") for p in rel.parts) or lists.loose(m.workspace, rel):
             continue
         try:
             header, items = lists.read(path)

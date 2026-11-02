@@ -72,6 +72,7 @@ open source.
 | `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
 | `home` | the overview: what the matter holds and what state it's in (below) |
+| `files` | loose files: what the user handed Claude and what Claude handed back, which aren't discovery documents ([below](#loose-files)) |
 
 **The overview** is the landing page: the first window opens on it, the
 ⌂ Overview tab or `H` brings it back, and Claude shows it with `view home`.
@@ -231,6 +232,60 @@ it (MuPDF's HTML layout paints no inline backgrounds), and the host puts
 a highlight wherever that color landed. Annotations on another layer than
 the one shown are left out, and the message says how many.
 
+## Loose files
+
+Not every file in the work is a discovery document. A client's notes, a
+draft to mark up, a template, opposing counsel's letter: the user wants to
+hand these to Claude, and Claude makes files for the user (a redline, a
+spreadsheet, a letter). Chat tools take these by drag and drop onto the
+chat window. Here the chat is a terminal, so the viewer takes them.
+
+**What they are:** plain files in the workspace, in `workspace/files/`
+(`/matter/workspace/files/` in the session):
+
+- `uploads/`: what the user handed Claude;
+- `from-claude/`: what Claude handed the user, with Claude's note on each.
+
+They aren't ingested, have no document IDs, and aren't searched, quoted,
+synced or tracked. Claude can read, change and delete them. The overview,
+date cards and list catalog skip them, so a list file or page among them
+isn't taken for work product. To make one part of the record, the user
+ingests it on the host (`adhoc ingest`).
+
+**Handing Claude files:**
+
+- **Drop them anywhere** in a viewer window, files or folders. A veil says
+  where they'll go. They're copied into `uploads/`, and the Files pane opens
+  with them marked. The user then tells Claude what to do with them.
+- **Drop them on Claude's terminal** (xterm.js, when the viewer is the
+  terminal), and their paths are also typed at Claude's prompt, as a desktop
+  terminal does with a dropped file:
+  `/matter/workspace/files/uploads/draft.pdf `. Nothing is sent: the user
+  finishes the sentence.
+- **The ☰ menu** at the top left opens the Files pane, which has "Add
+  files…" and "Add a folder…" (the system's file dialog).
+
+The host takes the drop (wry's drag-and-drop handler, before the web view
+sees it), so a drop works over any frame or the terminal, and files of any
+size are copied as files: nothing goes through the web view. Each is
+copied under a hidden name and renamed when whole, so Claude never sees
+half a file, and never over a file already there (`name (2).ext`). A link
+or text dragged within the viewer is left to the web view.
+
+**Claude handing files back:** `view deliver FILE… --note "what it is"`
+copies them into `from-claude/` (a file already there stays put) and opens
+the Files pane with them marked. The user saves one with "Save to
+Downloads" (a copy, never over a file there), the same rule as other
+downloads: only the user writes outside the matter. `view files` opens
+the pane. `view state` lists both folders' names.
+
+**The Files pane** shows both folders, newest first, with each file's
+size, age, Claude's note, and the path Claude sees ("Copy path" puts it on
+the clipboard for the prompt). It has "Save to Downloads", "Remove" (click
+twice), and "Show folder" (the file manager), and a warning that these
+aren't discovery documents and that Claude can change them. It reads the
+folders again every two seconds while it's showing.
+
 ## Light and dark
 
 The ◐ button in the top bar sets the interface's theme (the system's,
@@ -369,6 +424,12 @@ a list pane's selected rows. `view history` lists where the user went and
 whether the user, Claude or a pane went there.
 
 ## Not built yet
+
+- Loose files aren't in the audit log: the viewer copies them in and out
+  at the user's say-so, outside Claude's tool calls. Claude's reads and
+  writes of them are recorded, like any tool call.
+- Dropping files has been tried on Linux (WebKitGTK, a real XDND drag
+  under Xvfb). wry's handler is the same on Windows and macOS, but untried.
 
 - A marker on literate-page quotes that opens the page image (shading
   low-confidence OCR words exists).
