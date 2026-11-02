@@ -45,6 +45,25 @@ Anthropic's official installer. To pick up a newer Claude Code, run
 
 The commands below run from the clone. A matter can live anywhere.
 
+### Without a command line
+
+Setting up also puts **adhocdocs** in your desktop's applications menu (on
+Linux). It opens the launcher, which does what the commands below do:
+
+- **New matter…** makes a matter in a folder you choose, and **Try the
+  sample matter** makes one from the sample documents.
+- **Add documents…** adds files, folders or a manifest, with their
+  collection and custodian, and shows how many are in so far.
+- **Open with Claude** starts a session. Claude Code needs a terminal, and
+  the launcher gives it one: beside the documents in the viewer's window,
+  in a window of its own (it can move back while it runs), or in your
+  terminal program. Pick which under *Where Claude Code runs*.
+- The ⋯ menu views a matter's documents without Claude, or shows its
+  folder, or Claude's workspace, in your file manager.
+
+It also says if anything is missing, and runs the rest of the setup for
+you. Start it from a terminal with `uv run adhoc gui`.
+
 ## Making a matter
 
 A matter is a directory that holds one case's documents, your tags and
@@ -111,6 +130,12 @@ This starts three things:
 - **The viewer**, a window on your desktop showing this matter's documents.
 - **An audit log** on your machine, outside the container, recording every
   prompt, every command Claude runs, and every network connection.
+
+Claude Code runs in the terminal you started it from. To have the viewer
+show it instead, add `--terminal beside` (in the viewer's window, beside
+the documents) or `--terminal window` (in a window of its own); `--terminal
+app` opens a window of your terminal program
+([VIEWER.md](VIEWER.md#claude-code-in-the-viewer)).
 
 When you leave Claude Code (`/exit` or Ctrl+D), the container and viewer
 close. To pick up an earlier conversation, run `uv run adhoc open

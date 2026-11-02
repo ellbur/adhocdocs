@@ -251,6 +251,36 @@ inverted with a CSS filter.
 device pixels, and panes and pages sit on whole pixels, so the web view
 never rescales them (rescaling cost text its antialiasing).
 
+## Claude Code in the viewer
+
+Claude Code needs a terminal. Started from one (`adhoc open`), it stays
+there and the viewer only shows documents. Started without one, from the
+launcher (`adhoc gui`) or with `adhoc open --terminal beside|window`, the
+viewer is its terminal: it runs the session's `podman run -it …` on a
+pseudo-terminal of its own ([`term.rs`](viewer/src/term.rs)) and shows it
+with [xterm.js](https://xtermjs.org), the terminal emulator VS Code uses
+([`shell/term.js`](viewer/shell/term.js), vendored under
+[`shell/vendor/`](viewer/shell/vendor)). It is an ordinary terminal, not a
+reformatting of Claude Code's output: what Claude Code draws is what shows,
+keys typed in it go to Claude Code (the viewer's own keys don't apply
+there), and Ctrl+Shift+C and Ctrl+Shift+V copy and paste.
+
+- **Beside the documents** (`--terminal beside`): the terminal is a column
+  on the left of the viewer's window, with a splitter.
+- **In a window of its own** (`--terminal window`): the documents keep the
+  viewer's window, and Claude's `view` commands still go there.
+- **Either way, while it runs:** ⇱ in the terminal's header moves it to a
+  window of its own, and ⇲ puts it back. The new window is redrawn from the
+  last 2 MB of output, kept in memory for this and for nothing else.
+- **Closing** the terminal's window while Claude Code runs asks first, as it
+  ends the session. When Claude Code exits, the viewer closes, as in a
+  terminal. If the session fails, the window stays open with its output
+  until it's closed, and `adhoc open` exits with the session's status.
+
+The terminal relays nothing anywhere else: output goes to the screen, keys
+to the program, and the audit log is written by the launcher and proxy
+exactly as with a terminal of the system's.
+
 ## Highlights and stepping
 
 `view highlight` marks a place in a document pane until it's cleared, with
@@ -321,7 +351,10 @@ whether the user, Claude or a pane went there.
   cache holds the last 64 rendered pages, and each document's first page is
   prefetched before the user moves to it. `ADHOC_VIEWER_DEBUG=1` logs each
   request's time.
-- Builds and tests have been on Linux (WebKitGTK) only.
+- Builds and tests have been on Linux (WebKitGTK) only. The terminal and
+  the launcher use portable-pty (ConPTY on Windows) and, for file dialogs
+  outside Linux, rfd; neither has been tried on Windows or macOS yet, and
+  `--terminal app` doesn't know macOS's Terminal yet.
 
 ## Decided
 
