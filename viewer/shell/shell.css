@@ -3,12 +3,12 @@
 
 :root {
   --bg: #f6f6f4; --pane: #fff; --ink: #1d1d1b; --muted: #6b6b66; --line: #ddd9d0;
-  --accent: #2d5fd3; --sel: rgba(45, 95, 211, .28); --hl: rgba(255, 204, 0, .38); --mark: rgba(214, 70, 40, .25);
+  --accent: #2d5fd3; --sel: rgba(45, 95, 211, .28); --hl: rgba(255, 204, 0, .38); --hl-cur: rgba(255, 166, 0, .62); --hl-edge: #c77700; --mark: rgba(214, 70, 40, .25);
   --ent: #1f8a70; --ent-bg: rgba(31, 138, 112, .07); --ent-sug: rgba(31, 138, 112, .55); --date: rgba(176, 108, 20, .7);
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1c1c1b; --pane: #252524; --ink: #e8e6e1; --muted: #9d9a93; --line: #3a3936;
-          --accent: #7aa2ff; --sel: rgba(122, 162, 255, .35); --hl: rgba(255, 204, 0, .3); --mark: rgba(255, 120, 90, .3);
+          --accent: #7aa2ff; --sel: rgba(122, 162, 255, .35); --hl: rgba(255, 204, 0, .3); --hl-cur: rgba(255, 170, 0, .55); --hl-edge: #ffb84d; --mark: rgba(255, 120, 90, .3);
           --ent: #4cc9a4; --ent-bg: rgba(76, 201, 164, .08); --ent-sug: rgba(76, 201, 164, .6); --date: rgba(240, 180, 90, .75); }
 }
 
@@ -61,6 +61,20 @@ body.drag-h { cursor: row-resize; }
 .chip.by-claude { border-style: dashed; }
 .pane-links { padding: 2px 8px; color: var(--muted); border-bottom: 1px solid var(--line); flex: none; }
 .pane-links a { color: var(--accent); margin-right: 8px; cursor: pointer; }
+/* stepping: the sequence and the highlights, with buttons (] and [ do the same) */
+.pane-nav { display: flex; align-items: center; gap: 14px; padding: 3px 8px; border-bottom: 1px solid var(--line); flex: none; min-width: 0; }
+.pane-nav[hidden] { display: none; }
+.pane-nav .nav-group { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.pane-nav .nav-group + .nav-group { flex: 1; }
+.pane-nav .nav-kind { color: var(--muted); }
+.pane-nav button { border: 1px solid var(--line); background: var(--pane); color: var(--ink); border-radius: 4px; padding: 1px 8px; font: inherit; cursor: pointer; }
+.pane-nav button:hover { border-color: var(--accent); color: var(--accent); }
+/* a fixed width, so the buttons stay put while clicking through */
+.pane-nav .nav-pos { font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 5.5em; text-align: center; }
+.pane-nav .nav-label { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pane-nav .nav-hint { color: var(--muted); white-space: nowrap; }
+.pane-side .ann.hl-item { border-left: 4px solid var(--hl-cur); }
+.pane-side .ann.hl-item.current { border-color: var(--hl-edge); background: var(--hl); }
 .pane-body { flex: 1; overflow: auto; position: relative; min-height: 0; }
 .pane-split { flex: 1; display: flex; min-height: 0; }
 .pane-side { width: 240px; flex: none; border-left: 1px solid var(--line); overflow: auto; padding: 6px; font-size: 12px; }
@@ -81,6 +95,7 @@ iframe.web { border: 0; width: 100%; height: 100%; display: block; background: v
 .page .w.lowconf { background: rgba(255, 140, 0, .12); }
 .page .box { position: absolute; pointer-events: none; mix-blend-mode: multiply; }
 .page .box.hl, .hlbox.hl { background: var(--hl); }
+.page .box.hl.hlcur, .hlbox.hl.hlcur { background: var(--hl-cur); box-shadow: 0 0 0 1.5px var(--hl-edge); }
 .page .box.sel, .hlbox.sel { background: var(--sel); }
 .page .box.mark, .hlbox.mark { background: var(--mark); }
 .page .region { position: absolute; border: 2px dashed var(--accent); background: rgba(45, 95, 211, .08); pointer-events: none; }
@@ -107,6 +122,7 @@ iframe.web { border: 0; width: 100%; height: 100%; display: block; background: v
 .hexmode .hx-asc { margin-left: 1.5em; border-left: 1px solid var(--line); padding-left: .5em; }
 .hexmode .hx-asc span { cursor: text; }
 .hexmode .hl { background: var(--hl); }
+.hexmode .hlcur { background: var(--hl-cur); }
 .hexmode .mark { background: var(--mark); }
 .hexmode .sel { background: var(--sel); }
 
@@ -123,6 +139,7 @@ table.grid th.corner { left: 0; z-index: 3; }
 table.grid td { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 1px 6px; white-space: nowrap; max-width: 28em; overflow: hidden; text-overflow: ellipsis; min-width: 3em; }
 table.grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.grid td.hl { background: var(--hl); }
+table.grid td.hlcur { background: var(--hl-cur); }
 table.grid td.mark { background: var(--mark); }
 table.grid td.sel { background: var(--sel); }
 table.grid td.cur { outline: 2px solid var(--accent); outline-offset: -2px; }

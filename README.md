@@ -155,6 +155,7 @@ to try on the sample matter:
 - *"Who signed for the delivery, and what evidence is there that the goods arrived?"*
 - *"Search for 'never received' within ten words of 'pallet'. Did you search everything?"*
 - *"What did Kettering say in the deposition about the proof of delivery? Show me the page and line."*
+- *"Highlight everything in the supply agreement that bears on delivery and risk of loss."* Then step through the passages with the Prev/Next buttons above the document (or `]` and `[`); each one's label says why Claude picked it.
 
 **Organizing**
 

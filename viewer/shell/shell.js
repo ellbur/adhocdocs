@@ -448,13 +448,15 @@ class DocumentPane {
   constructor(id) {
     this.id = id; this.kind = "document"; this.info = null; this.layer = null; this.mode = null;
     this.selection = null; this.marks = []; this.highlights = []; this.sequence = null; this.visible = null; this.region = null;
+    this.hlCur = null;                        // the highlight the user stepped to, if any
     this.root = el("section", { class: "pane", "data-pane": id });
     this.head = el("div", { class: "pane-head" });
     this.links = el("div", { class: "pane-links" });
     this.strip = el("div", { class: "pane-dates" });
+    this.nav = el("div", { class: "pane-nav", hidden: "" });
     this.body = el("div", { class: "pane-body", tabindex: "0" });
     this.side = el("div", { class: "pane-side" });
-    this.root.append(this.head, this.strip, this.links, el("div", { class: "pane-split" }, this.body, this.side));
+    this.root.append(this.head, this.strip, this.links, this.nav, el("div", { class: "pane-split" }, this.body, this.side));
     this.body.addEventListener("scroll", () => this.onScroll());
     this.watchHover(document, this.body);
     // pages are laid out to the pane's width: lay them out again when it changes
@@ -489,7 +491,8 @@ class DocumentPane {
     return {
       id: this.id, kind: "document", mode: this.mode, doc: this.info?.doc, layer: this.layer, view: this.currentLayer()?.view,
       visible: this.visible, sequence: this.sequence && { position: this.sequence.position + 1, length: this.sequence.items.length, from: this.sequence.from },
-      selection: this.selection, marks: this.marks, highlights: this.highlights.map((h) => ({ loc: h.loc, label: h.label })),
+      selection: this.selection, marks: this.marks,
+      highlights: this.highlights.map((h) => ({ loc: h.loc, label: h.label, ...(h === this.hlCur ? { current: true } : {}) })),
       ...(this.selectionEntity() ? { entity: this.selectionEntity() } : {}),
       ...(this.selectionDate() ? { date: this.selectionDate() } : {}),
       dated: this.info?.dated?.date ? { date: this.info.dated.date, source: this.info.dated.source } : null,
@@ -513,7 +516,7 @@ class DocumentPane {
     const mode = opts.mode || (sel.bytes && "hex") || (fresh ? null : this.mode) || this.modes()[0];
     this.mode = this.modes().includes(mode) ? mode : (this.modes()[0] || "text");
     if (fresh) { this.grid = null; this.hex = null; }
-    if (fresh) { this.selection = null; this.highlights = []; }
+    if (fresh) { this.selection = null; this.highlights = []; this.hlCur = null; }
     await this.render();
     if (sel.char || sel.cells || sel.bytes || sel.page !== undefined) {
       this.flash(loc);
@@ -550,6 +553,7 @@ class DocumentPane {
     else if (this.mode === "hex") await this.renderHex();
     else if (layer) await this.renderText();
     this.renderAnnotations();
+    this.renderNav();
     this.updateStatus();
     if (this.mode !== "page") this.shown();
     this.loadEntities();
@@ -649,9 +653,9 @@ class DocumentPane {
           p.append(el("div", { class: "box " + cls, style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%` }));
         }
       };
-      for (const h of this.highlights) if (h.range) draw(...h.range, "hl");
+      for (const h of this.highlights) if (h.range) draw(...h.range, this.hlClass(h));
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) draw(...mk.select.char, "mark");
-      for (const h of this.highlights) if (h.region) this.drawRegion(h.region, "hl");
+      for (const h of this.highlights) if (h.region) this.drawRegion(h.region, this.hlClass(h));
       for (const x of this.shownEntities()) draw(x.start, x.end, markClass(x));
     } else {
       const root = this.textRoot();
@@ -659,7 +663,7 @@ class DocumentPane {
       const container = root.ownerDocument === document ? this.body : root.ownerDocument.body;
       container.querySelectorAll(".hlbox").forEach((b) => b.remove());
       if (getComputedStyle(container).position === "static") container.style.position = "relative";
-      for (const h of this.highlights) if (h.range) drawRangeBoxes(container, null, root, ...h.range, "hl");
+      for (const h of this.highlights) if (h.range) drawRangeBoxes(container, null, root, ...h.range, this.hlClass(h));
       for (const mk of this.marks) if (mk.select?.char && mk.layer === this.layer) drawRangeBoxes(container, null, root, ...mk.select.char, "mark");
       const index = markedIndex(root);
       for (const x of this.shownEntities()) drawRangeBoxes(container, null, root, x.start, x.end, markClass(x), index);
@@ -897,7 +901,7 @@ class DocumentPane {
     const g = this.grid;
     if (!g?.cells) return;
     const sh = g.sheets[g.sheet];
-    for (const row of g.cells) for (const td of row) td.classList.remove("sel", "hl", "mark", "cur");
+    for (const row of g.cells) for (const td of row) td.classList.remove("sel", "hl", "hlcur", "mark", "cur");
     const paintRect = (x, cls) => {
       for (let r = x.r0; r <= Math.min(x.r1, g.cells.length - 1); r++)
         for (let c = x.c0; c <= x.c1; c++) g.cells[r]?.[c]?.classList.add(cls);
@@ -915,7 +919,7 @@ class DocumentPane {
         if (r) paintRect(r, cls);
       } else if (x.range) paintChars(...x.range, cls);
     };
-    for (const h of this.highlights) paint(h, "hl");
+    for (const h of this.highlights) { paint(h, "hl"); if (h === this.hlCur) paint(h, "hlcur"); }
     for (const mk of this.marks) if (mk.layer === this.layer) paint({ range: mk.select?.char, cells: mk.select?.cells && mk.select }, "mark");
     const x = this.rect();
     if (x) { paintRect(x, "sel"); g.cells[g.focus[0]]?.[g.focus[1]]?.classList.add("cur"); }
@@ -1035,13 +1039,13 @@ class DocumentPane {
   paintHex() {
     const x = this.hex;
     if (!x) return;
-    const ranges = [...this.highlights.filter((h) => h.bytes).map((h) => [h.bytes, "hl"]),
+    const ranges = [...this.highlights.filter((h) => h.bytes).flatMap((h) => h === this.hlCur ? [[h.bytes, "hl"], [h.bytes, "hlcur"]] : [[h.bytes, "hl"]]),
                     ...this.marks.filter((m) => m.doc === x.doc && m.select?.bytes).map((m) => [m.select.bytes, "mark"])];
     const sel = this.byteSel();
     if (sel) ranges.push([sel, "sel"]);
     for (const c of x.win.querySelectorAll("[data-b]")) {
       const o = Number(c.dataset.b);
-      c.classList.remove("hl", "mark", "sel");
+      c.classList.remove("hl", "hlcur", "mark", "sel");
       for (const [[a, b], cls] of ranges) if (a <= o && o < b) c.classList.add(cls);
     }
   }
@@ -1123,6 +1127,7 @@ class DocumentPane {
         this.selection = { doc: this.info.doc, layer: this.layer, select: { char: r } };
         changed();
       } else if (hit) this.selectMention(hit, doc);
+      else if (click) { const h = this.highlightAt(ev, doc); if (h && h !== this.hlCur) this.goHighlight(h, false); }
     }, 0);
   }
   clearSelection() {
@@ -1171,11 +1176,92 @@ class DocumentPane {
   async highlight(loc, label) {
     const l = parseLoc(loc);
     if (l.doc !== this.info?.doc || (l.layer && l.layer !== this.layer)) await this.open(l, { quiet: true });
-    const sel = l.select || {};
-    this.highlights.push({ loc: locString(l), label, range: sel.char, bytes: sel.bytes, region: sel.xywh && { page: sel.page, xywh: sel.xywh },
-                           cells: sel.cells && { sheet: sel.sheet, cells: sel.cells } });
+    const sel = l.select || {}, at = locString(l);
+    // the same place again (say, a note clicked twice) takes the newer label, not a second highlight
+    const same = this.highlights.find((h) => !h.temp && h.loc === at);
+    if (same) { if (label) same.label = label; }
+    else this.highlights.push({ loc: at, label, range: sel.char, bytes: sel.bytes, region: sel.xywh && { page: sel.page, xywh: sel.xywh },
+                                cells: sel.cells && { sheet: sel.sheet, cells: sel.cells } });
     this.drawBoxes();
+    this.renderHighlights();
     await this.scrollTo(l);
+  }
+  clearHighlights() {
+    this.highlights = []; this.hlCur = null;
+    this.drawBoxes();
+    this.renderHighlights();
+  }
+  hlClass(h) { return h === this.hlCur ? "hl hlcur" : "hl"; }
+  // the highlights (not an open's brief flash) in the order they come in the document
+  hlList() {
+    const key = (h) => {
+      if (h.range) return h.range[0];
+      if (h.bytes) return h.bytes[0];
+      if (h.region) return h.region.page * 1e6 + h.region.xywh[1] * 1e5;
+      const c = h.cells && parseCells(h.cells.cells);
+      return c ? c.r0 * 1e4 + c.c0 : 0;
+    };
+    return this.highlights.filter((h) => !h.temp).map((h, i) => [key(h), i, h])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
+  }
+  // ]/[ with no sequence, and the bar's buttons: the next or previous highlight
+  async stepHighlight(delta) {
+    const hs = this.hlList();
+    if (!hs.length) return toast("Nothing to step through here: no sequence and no highlights");
+    const i = hs.indexOf(this.hlCur);
+    const next = i < 0 ? (delta > 0 ? 0 : hs.length - 1) : i + delta;
+    if (next < 0 || next >= hs.length) return toast(delta > 0 ? "That was the last highlight" : "That was the first highlight");
+    await this.goHighlight(hs[next]);
+  }
+  async goHighlight(h, scroll = true) {
+    this.hlCur = h;
+    const l = parseLoc(h.loc);
+    if (l.layer && l.layer !== this.layer) await this.open({ doc: l.doc, layer: l.layer }, { quiet: true });
+    this.drawBoxes();
+    this.renderHighlights();
+    if (scroll) await this.scrollTo(l);
+    changed();
+  }
+  // the highlight at a mouse event, if the pointer is on one (text in any mode but grid and hex)
+  highlightAt(ev, doc) {
+    const hs = this.hlList().filter((h) => h.range);
+    if (!hs.length) return null;
+    const w = ev.target?.closest?.(".w");
+    let s = null;
+    if (w) s = Number(w.dataset.s);
+    else {
+      const r = doc.caretRangeFromPoint?.(ev.clientX, ev.clientY);
+      if (r) s = offsetOf(r.startContainer, r.startOffset);
+    }
+    if (s === null || Number.isNaN(s)) return null;
+    const under = hs.filter((h) => h.range[0] <= s && s < h.range[1]);
+    // the innermost, when highlights nest
+    return under.sort((a, b) => (a.range[1] - a.range[0]) - (b.range[1] - b.range[0]))[0] || null;
+  }
+  renderHighlights() { this.renderNav(); this.renderAnnotations(); }
+  // the bar under the head: buttons to step through the sequence and the highlights, and the
+  // current highlight's label, so neither depends on knowing the ] and [ keys
+  renderNav() {
+    const s = this.sequence, hs = this.hlList(), parts = [];
+    const btn = (text, title, fn) => el("button", { title, onclick: (ev) => { ev.stopPropagation(); fn(); } }, text);
+    if (s) parts.push(el("span", { class: "nav-group" },
+      el("span", { class: "nav-kind" }, "Sequence"),
+      btn("‹ Prev", "Previous in the sequence · shortcut: [", () => this.step(-1)),
+      el("span", { class: "nav-pos" }, `${s.position + 1} of ${s.items.length}`),
+      btn("Next ›", "Next in the sequence · shortcut: ]", () => this.step(1))));
+    if (hs.length) {
+      const i = hs.indexOf(this.hlCur), key = (k) => s ? "" : ` · shortcut: ${k}`;
+      const label = i < 0 ? "" : hs[i].label || "";
+      parts.push(el("span", { class: "nav-group" },
+        el("span", { class: "nav-kind" }, hs.length === 1 ? "Highlight" : "Highlights"),
+        btn("‹ Prev", "Previous highlight" + key("["), () => this.stepHighlight(-1)),
+        el("span", { class: "nav-pos" }, `${i < 0 ? "–" : i + 1} of ${hs.length}`),
+        btn("Next ›", "Next highlight" + key("]"), () => this.stepHighlight(1)),
+        i < 0 ? el("span", { class: "nav-hint" }, `Next goes to the first`)
+              : el("span", { class: "nav-label", title: label }, label)));
+    }
+    this.nav.replaceChildren(...parts);
+    this.nav.hidden = !parts.length;
   }
 
   onScroll() {
@@ -1237,7 +1323,7 @@ class DocumentPane {
     return null;
   }
   async step(delta) {
-    if (!this.sequence) return toast("No sequence in this pane");
+    if (!this.sequence) return this.stepHighlight(delta);
     const s = this.sequence;
     const next = s.position + delta;
     if (next < 0 || next >= s.items.length) return toast(delta > 0 ? "End of the sequence" : "Start of the sequence");
@@ -1269,6 +1355,10 @@ class DocumentPane {
     const item = (cls, text, who, target, extra = []) => el("div", { class: "ann " + cls + (who === "claude" ? " by-claude" : ""),
       onclick: () => target?.select && this.highlight(target, "annotation") }, el("div", {}, text), el("div", { class: "who" }, who), ...extra);
     const kids = [];
+    // the highlights, labelled, in document order: click one to go to it
+    const hs = this.hlList();
+    hs.forEach((h, i) => kids.push(el("div", { class: "ann hl-item" + (h === this.hlCur ? " current" : ""), title: "Go to this highlight",
+      onclick: () => this.goHighlight(h) }, el("div", {}, h.label || "(no label)"), el("div", { class: "who" }, `highlight ${i + 1} of ${hs.length}`))));
     for (const t of ranged) kids.push(item("", `▍${t.tag}: “${(t.target.quote?.exact || "").slice(0, 60)}”`, t.by, t.target));
     const top = notes.filter((n) => !n.parent || !notes.some((p) => p.note === n.parent));
     const thread = (n, depth) => {
@@ -1352,6 +1442,9 @@ class DocumentPane {
         const x = this.mentionAtPoint(ev, doc);
         if (x) entityCard.hoverOn(this, x, ev, frame);
         else entityCard.hoverOff();
+        const h = !x && this.highlightAt(ev, doc);
+        const tip = h ? (h.label || "Highlighted") : "";
+        if (target.title !== tip) target.title = tip;
       });
     });
     target.addEventListener("mouseleave", () => entityCard.hoverOff());
@@ -1427,7 +1520,8 @@ class DocumentPane {
   // everything needed to show this pane again in another window
   spec() {
     return { kind: "document", id: this.id, doc: this.info?.doc ?? null, layer: this.layer, mode: this.mode, sequence: this.sequence,
-             marks: this.marks, highlights: this.highlights.filter((h) => !h.temp), selection: this.selection, visible: this.visible };
+             marks: this.marks, highlights: this.highlights.filter((h) => !h.temp), selection: this.selection, visible: this.visible,
+             current_highlight: this.highlights.filter((h) => !h.temp).indexOf(this.hlCur) };
   }
 
   // what tags and notes act on: the selection, else the document
@@ -2290,7 +2384,7 @@ function onKey(ev) {
   else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev document · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev in the sequence, or highlight if none · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -2366,7 +2460,7 @@ const commands = {
     return { pane: p.id };
   },
   async "clear-highlights"(c) {
-    for (const p of c.pane ? [pane(c.pane)] : adhoc.panes) if (p?.kind === "document") { p.highlights = []; p.drawBoxes(); }
+    for (const p of c.pane ? [pane(c.pane)] : adhoc.panes) if (p?.kind === "document") p.clearHighlights();
     return {};
   },
   async sequence(c) {
@@ -2414,7 +2508,9 @@ const commands = {
       if (s.doc) {
         await p.open({ doc: s.doc, layer: s.layer }, { mode: s.mode, quiet: true });
         Object.assign(p, { sequence: s.sequence, marks: s.marks || [], highlights: s.highlights || [], selection: s.selection });
+        p.hlCur = p.highlights[s.current_highlight] || null;
         p.drawBoxes();
+        p.renderHighlights();
         const v = s.visible || {};
         const at = v.page ? { page: v.page[0] } : v.char ? { char: v.char } : v.rows ? { sheet: v.sheet, cells: "A" + v.rows[0] } : null;
         if (at) await p.scrollTo({ select: at });

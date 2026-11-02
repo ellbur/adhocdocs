@@ -188,6 +188,33 @@ text, so tags, notes and marks work on it as on any range. Search hits
 a sheet are drawn, unless a locator points further down; text mode and
 search reach the rest.
 
+## Highlights and stepping
+
+`view highlight` marks a place in a document pane until it's cleared, with
+a label from Claude saying what it is. A pane with highlights gets a bar
+under its header:
+
+```
+Highlights  ‹ Prev  3 of 7  Next ›   §5 Delivery / risk of loss: …
+```
+
+- **Stepping:** the buttons, or `]` and `[` when the pane has no
+  sequence, go through the highlights in the order they come in the
+  document, not the order Claude made them. Before the first step the bar
+  shows the count, and Next goes to the first.
+- **The current one** is drawn darker, with an edge, and stays that way, so
+  adjacent highlights are told apart. Clicking a highlight makes it the
+  current one.
+- **Labels** show in the bar for the current highlight, as a tooltip on
+  hovering any highlight, and in the side panel, which lists every
+  highlight by label; clicking one there goes to it.
+- A pane with a **sequence** (`view sequence`, or a list's preview) shows
+  Prev/Next buttons for it too. Then `]` and `[` step through the
+  sequence, and the highlights are stepped with their own buttons.
+
+The buttons have tooltips naming the keys, since the keys are easy to
+miss. `view state` marks the highlight the user is on `"current": true`.
+
 ## The entity layer
 
 Known entities' mentions are underlined and suggestions dotted, in page,

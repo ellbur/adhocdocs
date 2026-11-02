@@ -1579,8 +1579,8 @@ VIEW_HELP = """\
 Drive the document viewer. The viewer runs on the host (the user starts it);
 this only talks to it. Locators are string or JSON; hash prefixes work.
 
-Keys in the viewer: j/k move, Enter open, ]/[ next/previous document,
-Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
+Keys in the viewer: j/k move, Enter open, ]/[ next/previous in the
+pane's sequence (or, with none, its highlights), Space page, m mark, t tag palette (Shift+Enter tags the family, Ctrl+Enter
 the duplicates), N note, e entity (add the selection, or edit the entity it
 is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane,
 H overview, Alt-drag a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
@@ -1588,6 +1588,13 @@ Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
 Hex mode (f, or opening a bytes= locator) shows the original's bytes; a
 drag selects a `bytes=a,b` locator.
+
+Highlights: a document pane's highlights get a bar with Prev/Next
+buttons, the current one's label, and a side-panel list of all of them by
+label, so give each a short --label saying why it matters. The user steps
+through them in document order (the buttons, or ]/[ when the pane has no
+sequence); `view state` marks the one they're on "current". To show
+several places in one document, highlight each one: no sequence needed.
 
 Entities: the viewer underlines known entities and dots suggested ones;
 the user hovers to see what they are and clicks to select one. `view
@@ -1637,9 +1644,10 @@ def view(argv=None):
     s.add_argument("--layer", dest="view_", help="layer view: native, ocr, transcript, …")
     s.add_argument("--mode", choices=["page", "flow", "text", "grid"], help="grid: spreadsheets as a table of cells")
     where(s)
-    s = sub.add_parser("highlight", help="mark a place for the user; stays until cleared")
+    s = sub.add_parser("highlight", help="mark a place for the user, labelled; stays until cleared. "
+                                         "The user steps through a pane's highlights in order")
     s.add_argument("loc")
-    s.add_argument("--label")
+    s.add_argument("--label", help="shown to the user: what this passage is and why it matters")
     s.add_argument("--pane")
     s = sub.add_parser("clear-highlights")
     s.add_argument("--pane")
