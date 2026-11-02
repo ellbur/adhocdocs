@@ -79,6 +79,11 @@ async function getJSON(url) {
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   return r.json();
 }
+// a limited copy: start fetching the originals of what's likely to be opened next (no waiting)
+function prefetch(locs) {
+  const docs = [...new Set(locs.map((l) => parseLoc(l).doc).filter(Boolean))];
+  if (docs.length) fetch("/api/prefetch?docs=" + docs.map(encodeURIComponent).join(",")).catch(() => {});
+}
 async function docInfo(doc) { return cache.docs[doc] ??= getJSON("/api/doc/" + encodeURIComponent(doc)); }
 async function layerText(id) {
   return cache.text[id] ??= fetch(`/api/layer/${id}/text`).then((r) => r.text()).then((t) => ({ text: t, cps: Array.from(t) }));
@@ -672,7 +677,14 @@ class DocumentPane {
   async open(locIn, opts = {}) {
     this.openedAt = performance.now();        // for open_ms: until the first page (or text) is showing
     const loc = parseLoc(locIn);
-    const info = await docInfo(loc.doc);
+    let info = await docInfo(loc.doc);
+    if (info.fetchable) {
+      // a limited copy without this original: fetch it from a member that holds them all
+      toast("Fetching the original…");
+      const r = await getJSON("/api/fetch/" + encodeURIComponent(info.doc)).catch(() => ({}));
+      if (r.here) { delete cache.docs[loc.doc]; info = await docInfo(loc.doc); }
+      else toast("The original isn't on this machine, and no member that holds it could be reached. Its text is here.");
+    }
     const fresh = !this.info || this.info.doc !== info.doc;
     this.info = info;
     let layer = loc.layer && info.layers.find((l) => l.id === loc.layer);
@@ -1734,11 +1746,14 @@ class DocumentPane {
     await this.open(s.items[next], { source: "user" });
     if (s.from) callPane(s.from, "follow", s.items[next]);
     for (const d of s.items.slice(next + 1, next + 4)) docInfo(parseLoc(d).doc).catch(() => {});
+    prefetch(s.items.slice(next + 1, next + 4));
     changed();
   }
   // a linked list pane's choice: its sequence, at this item
   seqOpen(sequence, loc) {
     this.sequence = sequence;
+    const i = (sequence?.items || []).indexOf(loc);
+    if (i >= 0) prefetch(sequence.items.slice(i + 1, i + 4));
     return this.open(loc, { source: "pane" });
   }
   page(delta) {

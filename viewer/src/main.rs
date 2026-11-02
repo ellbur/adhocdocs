@@ -522,7 +522,11 @@ fn main() {
         launcher::run(a.annotate.unwrap_or_default());
     }
     let matter = match Matter::open(&a.matter) {
-        Ok(m) => Arc::new(Mutex::new(m)),
+        Ok(mut m) => {
+            // the same host tool writes the user's annotations and fetches a limited copy's originals
+            m.fetch_cmd = Some(matter::command_parts(a.annotate.as_deref().unwrap_or("adhoc")));
+            Arc::new(Mutex::new(m))
+        }
         Err(e) => {
             eprintln!("{}", json!({"error": e}));
             std::process::exit(2);

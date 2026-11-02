@@ -1108,6 +1108,10 @@ def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: 
             events = sealed
         theirs = peer.json("POST", f"events/{feed}/{origin}", {"from": theirs, "events": events})["count"]
         sent += len(events)
+        if peer_holds_all and feed == "store" and not holds_all(m):
+            # a full member has these originals now: this limited copy may let go of them (adhocdocs.fetch)
+            from . import fetch
+            fetch.mark_held(m, [ev["content"] for ev in events if ev.get("op") == "add-document"])
         if gap:
             break
     return sent
@@ -1204,6 +1208,11 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
                                                          for e in peer.k.keys],
                                                  "purge": rec["applied"][-1]})
         filled = backfill(Matter(m.root), peer)
+        if poolmod.Pool.load(m).holds_all(origin) or peer.k:
+            confirm_held(Matter(m.root), peer)
+        if not holds_all(m):
+            from . import fetch
+            fetch.evict(Matter(m.root))         # what a full member now holds may go, if the cache is full
     finally:
         peer.close()
     if pulled:
@@ -1219,6 +1228,37 @@ def missing_originals(m: Matter) -> list[str]:
     store = store_only(m)
     gone = purge.purged_objects(m) | set(purge.record(m)["contents"])
     return sorted({c for c in m.state.documents.values() if c not in gone and not store.has(c)})
+
+
+def confirm_held(m: Matter, peer: "Peer") -> int:
+    """A copy just made limited holds originals the cache doesn't know a full
+    member has. Ask this (full) peer which it has: those may be let go of.
+    Once every original here is accounted for, it stops asking."""
+    from . import fetch
+    flag = m.sync_dir / "confirm-held"
+    if not flag.exists() or holds_all(m):
+        return 0
+    store = store_only(m)
+    known = set(fetch.read_ledger(m).get("entries", {}))
+    todo = sorted({c for c in m.state.documents.values() if c not in known and store.has(c)})
+    held = []
+    for i in range(0, len(todo), 5000):
+        part = todo[i:i + 5000]
+        if peer.k:
+            from . import seal
+            names = {seal.blind(peer.k, h, e): h for h in part for e in peer.k.keys}
+            per = len(peer.k.keys)
+        else:
+            names, per = {h: h for h in part}, 1
+        lacks: dict[str, int] = {}
+        for n in peer.json("POST", "missing", {"hashes": list(names)})["missing"]:
+            lacks[names[n]] = lacks.get(names[n], 0) + 1
+        held += [h for h in part if lacks.get(h, 0) < per]
+    n = fetch.mark_held(m, held)
+    if len(held) == len(todo):
+        flag.unlink(missing_ok=True)
+    fetch.evict(m)
+    return n
 
 
 def backfill(m: Matter, peer: "Peer") -> int:

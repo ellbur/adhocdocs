@@ -132,7 +132,8 @@ def _inputs(m, docs: list[str]) -> list[dict]:
         if doc not in state.documents or doc in state.withdrawn:
             raise InterpError(f"{d}: no such live document")
         content = state.documents[doc]
-        out.append({"doc": doc, "content": content, "size": m.objects.path(content).stat().st_size})
+        from .fetch import original_path
+        out.append({"doc": doc, "content": content, "size": original_path(m, content).stat().st_size})
     return out
 
 

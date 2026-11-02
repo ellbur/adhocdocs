@@ -329,6 +329,16 @@ before and after, from chronologies, dated entities, key sets, pages'
 citations and hot tags. The card's data comes from `/api/around`
 ([`chrono.rs`](viewer/src/chrono.rs)). See [DATES.md](DATES.md).
 
+## On a limited copy
+
+A [limited copy](SYNC.md#limited-copies) has every document's text but
+fetches originals on demand. Opening a document whose original isn't here
+fetches it first ("Fetching the original…"). If no member that holds it can
+be reached, the viewer says so and shows the text. Stepping through a
+sequence fetches the next three in the background. Nothing else waits on
+the network: document info gives no size or page sizes until the original
+is here.
+
 ## State
 
 `view state` reports the layout, panes, and per pane: the document, layer

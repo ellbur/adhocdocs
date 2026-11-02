@@ -434,10 +434,11 @@ def set_copy(m: Matter, author: str, copy: str) -> dict | None:
 
 def mark_was_limited(m: Matter):
     """Remember that this installation may lack originals: if the pool makes it
-    full, it fetches them (adhocdocs.peer.backfill)."""
-    p = m.sync_dir / "was-limited"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.touch()
+    full, it fetches them (adhocdocs.peer.backfill). And that its cache must
+    learn which originals here a full member holds (adhocdocs.peer.confirm_held)."""
+    m.sync_dir.mkdir(parents=True, exist_ok=True)
+    (m.sync_dir / "was-limited").touch()
+    (m.sync_dir / "confirm-held").touch()        # and which of its originals a full member holds
 
 
 def remove_member(m: Matter, author: str, origin: str) -> dict:

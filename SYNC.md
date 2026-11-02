@@ -4,8 +4,7 @@
 each, and since then: hotkeys kept local, Bates and exhibit numbers
 reserved before use, people bound to installations, removed members' later
 events set aside, syncing as things change, finding members on the
-local network, and limited copies (the pool's rule and sync; fetching
-originals on demand is next). Decisions still open are at the end.*
+local network, and limited copies. Decisions still open are at the end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
 desktop, a firm server. Cloud document platforms solve this by keeping the
@@ -364,7 +363,7 @@ so a limited copy loses less than it might seem:
   in a list ahead of time.
 - **Bulk work over originals** (re-OCR across the matter, decoding raw bytes
   of many files) means fetching each one. That's done deliberately:
-  `adhoc fetch <search>` (to come) keeps a set of documents in the cache.
+  `adhoc fetch <list or docs>` fetches a set of documents and keeps them.
 - **Opening an original needs the network,** unless it's cached. Reading
   and searching text works offline as ever.
 
@@ -397,14 +396,53 @@ rest from a member that has the original. Both directions do this, and the
 result lists it under `later`, not as a refusal. `adhoc sync status` says
 which copy this is and how many originals it lacks.
 
-**Still to build:** fetching originals on demand wherever they're read
-(the viewer, `raw`, `produce`, extraction, quoting), with the cache and
-its limit. Never evicting an original that no full member holds yet
-(something this copy ingested), or that `adhoc fetch` kept. Prefetching in
-the viewer. And `adhoc fetch`. A copy too small even for the text (a
-tablet, say) would need indexes made elsewhere and synced, checked by
-their settings as local ones are. That's left until it's wanted, since it
-would limit which indexes there can be.
+**Originals on demand** ([`fetch.py`](src/adhocdocs/fetch.py)). Every
+reader in Python goes through the matter's object store, so the store does
+the fetching. Asked for an original it lacks, on a limited copy, it fetches
+it from a full member (hubs first; a sealed hub's copy is opened and checked
+against its hash) and returns it. `raw`, `interp`, `produce`, quoting and
+extraction need nothing of their own. When nothing that holds it can be
+reached, the reader says so, and that its text is here. It doesn't try that
+original again for 30 seconds, so a reader isn't held up on every look.
+
+- **In a session** the store is read-only and the only network is Claude's,
+  so the store asks the host instead, through the annotation API (`POST
+  /fetch`), then reads the original from the store as mounted.
+- **The viewer** runs on the host. Opening a document whose original isn't
+  here fetches it, with a notice ("Fetching the original…"), and says so
+  if it can't. Stepping through a sequence starts fetching the next three
+  in the background (`/api/prefetch`), so they're usually here when
+  opened. Document info never waits on the network: until the original is
+  here, it gives no size or page sizes. The viewer fetches by running
+  `adhoc fetch-original`, the same host tool that writes the user's tags.
+  It fetches only while `sync/was-limited` exists: on a limited copy, or a
+  copy filling in after going back to full.
+
+**The cache** has a size limit (`adhoc sync copy limited --cache-gb N`,
+10 GB by default; kept as `cache_limit_bytes` in `matter.toml`, which isn't
+synced). Its ledger, `sync/cache.json`, lists the originals the copy may let
+go of, with when each was last used. When the cache is over its limit, the
+least recently used go first. Never let go of:
+
+- **What no full member is known to hold.** Something ingested here isn't
+  in the ledger until a sync has put it on a full member. A copy that just
+  went limited asks a full member, as it next syncs, which of its
+  originals that member holds (`sync/confirm-held` until it knows).
+- **What `adhoc fetch` kept** (pinned), until `adhoc fetch --unpin`.
+- **Bytes that are a text layer's text**, such as a text file's original:
+  a limited copy keeps all text.
+
+The ledger is the host's. A session reads cached originals without
+touching it, so what Claude reads in a session counts as used only when it
+was fetched.
+
+`adhoc fetch` with no arguments, or `adhoc sync status`, shows the cache:
+its size, its limit, how much is pinned, and how many originals are missing.
+
+**Not built:** a copy too small even for the text (a tablet, say). It would
+need indexes made elsewhere and synced, checked by their settings as local
+ones are. That's left until it's wanted, since it would limit which
+indexes there can be.
 
 ### Bates and exhibit numbers
 
@@ -599,7 +637,8 @@ On the host (the user's; Claude can't run them in a session):
 | `adhoc sync serve [--listen …] [--advertise host:port --user me]` | be reachable by the other members (and sync as things change) |
 | `adhoc sync watch` | sync as things change, without listening (a laptop) |
 | `adhoc sync join <code> <dir> --limited` | join as a [limited copy](#limited-copies) |
-| `adhoc sync copy full\|limited --user me` | change what this installation holds |
+| `adhoc sync copy full\|limited --user me [--cache-gb N]` | change what this installation holds |
+| `adhoc fetch <docs or list> [--unpin]` | on a limited copy: fetch originals and keep them, or stop keeping them |
 | `adhoc sync now` | sync with every member that says where it listens |
 | `adhoc sync push <hub code> --user me` | put the matter on a hub |
 | `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |

@@ -6,6 +6,9 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct Layer {
@@ -34,6 +37,24 @@ pub struct Matter {
     roots: Vec<PathBuf>,
     log_sizes: Vec<(PathBuf, u64)>,
     pub state: State,
+    /// The host tool (`adhoc`), which fetches a limited copy's originals
+    /// (`adhoc fetch-original`, adhocdocs.fetch). None: never fetch.
+    pub fetch_cmd: Option<Vec<String>>,
+    failed: Mutex<HashMap<String, Instant>>, // originals that couldn't be fetched, and when
+}
+
+/// How long an original that couldn't be fetched is left before trying again,
+/// so a viewer with no hub in reach isn't held up on every look.
+const FETCH_RETRY: Duration = Duration::from_secs(30);
+/// How long to wait for one original to arrive.
+const FETCH_WAIT: Duration = Duration::from_secs(60);
+
+/// A command line given as a JSON list of arguments (a path may have spaces), or words.
+pub fn command_parts(cmd: &str) -> Vec<String> {
+    match serde_json::from_str::<Vec<String>>(cmd) {
+        Ok(list) => list,
+        Err(_) => cmd.split_whitespace().map(String::from).collect(),
+    }
 }
 
 /// A feed's logs: one per installation (`<dir>/<origin>.jsonl`), plus the
@@ -131,6 +152,8 @@ impl Matter {
             log_sizes: vec![],
             root,
             state: State::default(),
+            fetch_cmd: None,
+            failed: Mutex::new(HashMap::new()),
         };
         m.refresh();
         Ok(m)
@@ -166,12 +189,101 @@ impl Matter {
         self.log_sizes.iter().map(|(_, n)| *n).collect()
     }
 
-    fn path(&self, h: &str) -> Option<PathBuf> {
+    fn find(&self, h: &str) -> Option<PathBuf> {
         let h = hex(h);
         if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         self.roots.iter().map(|r| r.join(&h[..2]).join(&h[2..])).find(|p| p.exists())
+    }
+
+    /// Where an object is; for a limited copy's original that isn't here, after
+    /// fetching it from a member that holds them all (waiting for it).
+    fn path(&self, h: &str) -> Option<PathBuf> {
+        if let Some(p) = self.find(h) {
+            return Some(p);
+        }
+        let full = format!("sha256:{}", hex(h));
+        if !self.limited() || !self.state.documents.values().any(|c| *c == full) {
+            return None;
+        }
+        if self.failed.lock().unwrap().get(&full).is_some_and(|t| t.elapsed() < FETCH_RETRY) {
+            return None;
+        }
+        if self.run_fetch(&[full.clone()], true) {
+            if let Some(p) = self.find(h) {
+                return Some(p);
+            }
+        }
+        self.failed.lock().unwrap().insert(full, Instant::now());
+        None
+    }
+
+    /// Whether this is (or was, and is still filling in) a limited copy:
+    /// the host tool leaves `sync/was-limited` until every original is here.
+    pub fn limited(&self) -> bool {
+        self.fetch_cmd.is_some() && self.root.join("sync/was-limited").exists()
+    }
+
+    /// The size of an object that's here, without fetching it.
+    pub fn size_here(&self, h: &str) -> Option<u64> {
+        fs::metadata(self.find(h)?).ok().map(|m| m.len())
+    }
+
+    /// Fetch an original now (if this copy lacks it), waiting; whether it's here.
+    pub fn ensure(&self, h: &str) -> bool {
+        self.path(h).is_some()
+    }
+
+    /// Run `adhoc fetch-original` for these contents; with `wait`, until it
+    /// ends (or FETCH_WAIT passes), returning whether it succeeded.
+    fn run_fetch(&self, contents: &[String], wait: bool) -> bool {
+        let Some((prog, rest)) = self.fetch_cmd.as_ref().and_then(|c| c.split_first()) else { return false };
+        let child = Command::new(prog)
+            .args(rest)
+            .args(["--matter", &self.root.to_string_lossy(), "fetch-original"])
+            .args(contents)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else { return false };
+        if !wait {
+            std::thread::spawn(move || child.wait());
+            return true;
+        }
+        let start = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return status.success(),
+                Ok(None) if start.elapsed() < FETCH_WAIT => std::thread::sleep(Duration::from_millis(50)),
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+            }
+        }
+    }
+
+    /// Start fetching these documents' originals, if this is a limited copy
+    /// and they aren't here, without waiting: what's opened next is ready.
+    /// Returns how many it started on.
+    pub fn prefetch(&self, docs: &[String]) -> usize {
+        if !self.limited() {
+            return 0;
+        }
+        let todo: Vec<String> = docs
+            .iter()
+            .filter_map(|d| self.state.documents.get(d))
+            .filter(|c| self.find(c).is_none())
+            .filter(|c| !self.failed.lock().unwrap().get(*c).is_some_and(|t| t.elapsed() < FETCH_RETRY))
+            .cloned()
+            .collect();
+        if todo.is_empty() || !self.run_fetch(&todo, false) {
+            return 0;
+        }
+        todo.len()
     }
 
     /// The size of an object, without reading it.
@@ -369,6 +481,35 @@ fn apply(s: &mut State, ev: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_limited_copy_fetches_a_missing_original_through_the_host_tool() {
+        let dir = std::env::temp_dir().join(format!("adhoc-fetch-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("store/objects")).unwrap();
+        fs::create_dir_all(dir.join("store/logs")).unwrap();
+        fs::create_dir_all(dir.join("sync")).unwrap();
+        let content = format!("sha256:{}", "ab".repeat(32));
+        let ev = serde_json::json!({"id": "1", "op": "add-document", "doc": format!("sha256:{}", "cd".repeat(32)),
+                                    "content": content, "at": "1"});
+        fs::write(dir.join("store/logs/o_x.jsonl"), format!("{}\n", ev)).unwrap();
+        // a stand-in for `adhoc`: writes the object where the store keeps it, and says what it was asked
+        let script = dir.join("fake-adhoc.sh");
+        fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> {log}\nmkdir -p {o}/ab && printf original > {o}/ab/{rest}\n",
+                                   log = dir.join("asked").display(), o = dir.join("store/objects").display(),
+                                   rest = "ab".repeat(31))).unwrap();
+        let mut m = Matter::open(&dir).unwrap();
+        m.fetch_cmd = Some(vec!["sh".into(), script.to_string_lossy().into_owned()]);
+        assert!(m.bytes(&content).is_none(), "a full copy (no sync/was-limited) doesn't fetch");
+        fs::write(dir.join("sync/was-limited"), "").unwrap();
+        assert_eq!(m.bytes(&content).as_deref(), Some(&b"original"[..]));
+        let asked = fs::read_to_string(dir.join("asked")).unwrap();
+        assert!(asked.contains("fetch-original") && asked.contains(&content));
+        // not an original: never asked for
+        assert!(m.bytes(&format!("sha256:{}", "ef".repeat(32))).is_none());
+        assert_eq!(fs::read_to_string(dir.join("asked")).unwrap().lines().count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     fn ev(id: &str, op: &str, doc: &str) -> String {
         format!("{{\"id\": \"{}\", \"op\": \"{}\", \"doc\": \"{}\", \"content\": \"c-{}\"}}\n", id, op, doc, doc)
