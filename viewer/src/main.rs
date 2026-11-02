@@ -53,6 +53,8 @@ pub enum UserEvent {
     /// The terminal's output, and its program's exit code.
     TermOut(Vec<u8>),
     TermExit(u32),
+    /// A limited copy's original finished fetching: the content, and "here" or "failed".
+    Fetched(String, String),
 }
 
 struct Args {
@@ -522,7 +524,11 @@ fn main() {
         launcher::run(a.annotate.unwrap_or_default());
     }
     let matter = match Matter::open(&a.matter) {
-        Ok(m) => Arc::new(Mutex::new(m)),
+        Ok(mut m) => {
+            // the same host tool writes the user's annotations and fetches a limited copy's originals
+            m.fetch_cmd = Some(matter::command_parts(a.annotate.as_deref().unwrap_or("adhoc")));
+            Arc::new(Mutex::new(m))
+        }
         Err(e) => {
             eprintln!("{}", json!({"error": e}));
             std::process::exit(2);
@@ -533,6 +539,13 @@ fn main() {
     // One worker owns MuPDF and answers every adhoc: request, from every window, in order.
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    {
+        // a fetch that ends (on its own thread) is told to every window's shell, through the event loop
+        let tell = Mutex::new(proxy.clone());
+        matter.lock().unwrap().on_fetched = Some(Arc::new(move |content: &str, state: &str| {
+            let _ = tell.lock().unwrap().send_event(UserEvent::Fetched(content.to_string(), state.to_string()));
+        }));
+    }
     let (job_tx, job_rx) = mpsc::channel::<Job>();
     {
         let (matter, panes, proxy) = (matter.clone(), panes.clone(), proxy.clone());
@@ -624,6 +637,13 @@ fn main() {
             }
             Event::UserEvent(UserEvent::Exported(win, id, result)) => {
                 app.eval(&win, &format!("adhoc.exported({}, {})", id, result));
+            }
+            Event::UserEvent(UserEvent::Fetched(content, state)) => {
+                // every window: any of them may be showing that document, or about to
+                let script = format!("adhoc.fetched({})", json!({"content": content, "state": state}));
+                for w in app.windows.values().filter(|w| w.ready) {
+                    let _ = w.webview.evaluate_script(&script);
+                }
             }
             Event::UserEvent(UserEvent::Ipc(win, msg)) => {
                 let Ok(v) = serde_json::from_str::<Value>(&msg) else { return };

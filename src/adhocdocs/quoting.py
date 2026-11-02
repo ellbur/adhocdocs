@@ -32,7 +32,8 @@ PAD_X, PAD_Y = 0.01, 0.006       # around a crop, as fractions of the page
 def _original(m, doc) -> tuple[bytes, dict]:
     state = m.state
     meta = m.objects.get_object(state.metadata[doc]) if doc in state.metadata else {}
-    return m.objects.get_bytes(state.documents[doc]), meta
+    from .fetch import original_path
+    return original_path(m, state.documents[doc]).read_bytes(), meta
 
 
 def styles_for(m, doc: str, layer) -> tuple[list, str | None]:

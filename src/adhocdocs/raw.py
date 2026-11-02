@@ -90,12 +90,14 @@ def content_of(m, doc: str) -> str:
 
 
 def size(m, content: str) -> int:
-    return m.objects.path(content).stat().st_size
+    from .fetch import original_path
+    return original_path(m, content).stat().st_size
 
 
 def read(m, content: str, start: int = 0, end: int | None = None) -> bytes:
     """Bytes [start, end) of stored content, without reading the rest."""
-    with open(m.objects.path(content), "rb") as f:
+    from .fetch import original_path
+    with open(original_path(m, content), "rb") as f:
         f.seek(start)
         return f.read(-1 if end is None else end - start)
 

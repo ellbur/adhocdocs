@@ -115,7 +115,8 @@ def pages_for(m: Matter, doc: str, redactions=()) -> tuple[pymupdf.Document, lis
     state = m.state
     content = state.documents[doc]
     meta = m.objects.get_object(state.metadata[doc]) if doc in state.metadata else {}
-    data = m.objects.get_bytes(content)
+    from .fetch import original_path
+    data = original_path(m, content).read_bytes()
     if meta.get("kind") in ("pdf", "image"):
         if meta["kind"] == "pdf":
             d = pymupdf.open("pdf", data)

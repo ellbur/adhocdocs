@@ -18,6 +18,12 @@ It also publishes work product for Claude (:mod:`adhocdocs.work`), stamped
 numbers for productions and exhibit sets (:mod:`adhocdocs.numbers`), syncing
 with a hub on the host: ``POST /reserve`` with ``{"series", "count",
 "start"?, "name"?, "local"?}``, ``POST /release`` with ``{"reservation"}``.
+
+And on a limited copy it fetches originals for the session, which has no
+network to the other members (:mod:`adhocdocs.fetch`): ``POST /fetch`` with
+``{"content"}`` (an original's hash) or ``{"contents": [...]}``. The reply
+is :func:`adhocdocs.fetch.fetch`'s; the session then reads the original from
+the store as mounted.
 """
 
 import hashlib
@@ -62,11 +68,17 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path not in ("/write", "/publish", "/retire", "/reserve", "/release", "/use"):
+        if self.path not in ("/write", "/publish", "/retire", "/reserve", "/release", "/use", "/fetch"):
             return self._reply(404, {"error": "not found"})
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
             m = Matter(self.matter.root)          # fresh state for every request
+            if self.path == "/fetch":
+                from . import fetch
+                hashes = req.get("contents") or [req.get("content")]
+                if not all(isinstance(h, str) for h in hashes) or len(hashes) > 1000:
+                    raise ValueError("contents must be hashes, at most 1000")
+                return self._reply(200, fetch.fetch(m, hashes))
             if self.path in ("/reserve", "/release", "/use"):
                 from . import numbers
                 if self.path == "/release":

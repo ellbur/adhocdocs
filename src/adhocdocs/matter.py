@@ -353,8 +353,9 @@ class Matter:
         self.workspace = self.root / "workspace"
         self.adhoc_dir = self.workspace / ".adhoc"
         self.sync_dir = self.root / "sync"
-        self.objects = ObjectStore(self.store_dir / "objects", self.adhoc_dir / "objects")
-        self.workspace_objects = ObjectStore(self.adhoc_dir / "objects", self.store_dir / "objects")
+        self.objects = ObjectStore(self.store_dir / "objects", self.adhoc_dir / "objects", fetcher=self._fetch)
+        self.workspace_objects = ObjectStore(self.adhoc_dir / "objects", self.store_dir / "objects",
+                                             fetcher=self._fetch)
         self.identity = Identity(self.sync_dir, self.root)
         self._migrate()
         cutoffs = self.root / "pool" / "cutoffs.json"
@@ -467,6 +468,16 @@ class Matter:
         since = self.upgrade_cursor(since)
         for feed in self.logs.values():
             yield from feed.read(since)
+
+    def _fetch(self, h: str):
+        """An original this copy lacks, fetched (a limited copy: adhocdocs.fetch).
+        Only for what this Matter's state already knows as an original."""
+        if self._state is None and not (self.root / "pool" / "logs").is_dir():
+            return None
+        if self._state is not None and h not in set(self._state.documents.values()):
+            return None
+        from . import fetch
+        return fetch.on_demand(self, h)
 
     @property
     def state(self) -> "State":

@@ -188,10 +188,7 @@ pub fn add_quotes(m: &Matter, v: &mut Value) {
 /// `cmd` is a JSON list of arguments (a path may have spaces), or words.
 pub fn annotate(cmd: Option<&str>, root: &Path, user: &str, request: &Value) -> Value {
     let cmd = cmd.unwrap_or("adhoc");
-    let parts: Vec<String> = match serde_json::from_str::<Vec<String>>(cmd) {
-        Ok(list) => list,
-        Err(_) => cmd.split_whitespace().map(String::from).collect(),
-    };
+    let parts = crate::matter::command_parts(cmd);
     let Some((prog, rest)) = parts.split_first() else { return json!({"error": "no annotate command"}) };
     let child = Command::new(prog)
         .args(rest)

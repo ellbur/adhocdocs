@@ -54,22 +54,33 @@ class ObjectStore:
     go to the first, reads search them in order (the matter store, read-only
     in the container, plus the workspace's own store for derived layers)."""
 
-    def __init__(self, *roots: Path):
+    def __init__(self, *roots: Path, fetcher=None):
         self.roots = [Path(r) for r in roots]
+        # called for an object none of the roots has; returns its path, or None
+        # (a limited copy fetching an original: adhocdocs.fetch)
+        self.fetcher = fetcher
 
     def _path(self, root: Path, h: str) -> Path:
         hexd = h.removeprefix(HASH_PREFIX)
         return root / hexd[:2] / hexd[2:]
 
-    def path(self, h: str) -> Path | None:
+    def find(self, h: str) -> Path | None:
+        """Where the object is, if it's here (never fetching)."""
         for root in self.roots:
             p = self._path(root, h)
             if p.exists():
                 return p
         return None
 
+    def path(self, h: str) -> Path | None:
+        """Where the object is: here, or fetched (a limited copy's original)."""
+        p = self.find(h)
+        if p is None and self.fetcher is not None:
+            p = self.fetcher(h)
+        return p
+
     def has(self, h: str) -> bool:
-        return self.path(h) is not None
+        return self.find(h) is not None
 
     def put_bytes(self, data: bytes) -> str:
         h = sha256(data)

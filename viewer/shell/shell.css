@@ -128,6 +128,9 @@ body.drag-h { cursor: row-resize; }
 .pane-head .icon-btn { margin-left: -4px; }
 .pane-head .status { color: var(--muted); margin-left: auto; white-space: nowrap; }
 .pane-head .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.pane-head .fetchnote { color: var(--muted); font-size: 12px; }
+.pane-head .fetchnote.failed { color: var(--warn-ink); }
+.pane-head .fetchnote a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .chip { border-radius: 9px; padding: 0 7px; font-size: 11px; border: 1px solid currentColor; }
 .chip.by-claude { border-style: dashed; }
 .pane-links { padding: 3px 10px; color: var(--muted); border-bottom: 1px solid var(--line); flex: none; font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; }

@@ -141,6 +141,8 @@ impl Handler {
             ["api", "text"] => self.text_at(&query(q)),
             ["api", "bytes", doc] => self.byte_range(doc, &query(q)),
             ["api", "docs"] => self.docs(),
+            ["api", "prefetch"] => self.prefetch(&query(q)),
+            ["api", "fetch", doc] => self.fetch_original(doc, query(q).contains_key("retry")),
             ["api", "annotations"] => self.annotations(),
             ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
@@ -331,6 +333,32 @@ impl Handler {
         json_resp(json!(docs))
     }
 
+    /// `?docs=a,b,c`: start fetching these documents' originals, on a limited
+    /// copy (the shell asks for the next few in a sequence as one opens).
+    fn prefetch(&mut self, q: &HashMap<String, String>) -> Response {
+        let m = self.matter.lock().unwrap();
+        let docs: Vec<String> = q.get("docs").map(|s| s.split(',').filter_map(|d| m.resolve_doc(d)).collect())
+            .unwrap_or_default();
+        json_resp(json!({"prefetching": m.prefetch(&docs)}))
+    }
+
+    /// Where a document's original stands, on a limited copy, starting a
+    /// fetch if it isn't here: `{"state": "here" | "fetching" | "failed" |
+    /// "absent"}`. Answers at once; the viewer tells the shell when the fetch
+    /// ends (`adhoc.fetched`). `?retry`: try again now, even if it just failed.
+    fn fetch_original(&mut self, id: &str, retry: bool) -> Response {
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+        let content = m.state.documents[&doc].clone();
+        if retry {
+            m.forget_failure(&content);
+        }
+        let state = m.fetch_state(&content, true);
+        json_resp(json!({"doc": doc, "state": state.name(), "here": state == crate::matter::FetchState::Here,
+                         "size": m.size_here(&content)}))
+    }
+
     fn doc_info(&mut self, id: &str) -> Response {
         let (doc, content, info, kind, name) = {
             let mut m = self.matter.lock().unwrap();
@@ -366,7 +394,11 @@ impl Handler {
                 }
                 break;
             }
-            let info = json!({"doc": doc, "content": content, "size": m.size(&content), "meta": meta, "custodian": obj.get("custodian"),
+            // a limited copy may not have the original: say so, rather than wait for it here
+            // (opening the document fetches it: /api/fetch)
+            let size = m.size_here(&content);
+            let info = json!({"doc": doc, "content": content, "size": size, "meta": meta, "custodian": obj.get("custodian"),
+                              "here": size.is_some(), "fetchable": size.is_none() && m.limited(),
                               "layers": layers, "children": children, "parent": parent,
                               "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
                               "dated": crate::chrono::strip(&m, &doc),
@@ -374,7 +406,8 @@ impl Handler {
             (doc, content, info, kind, name)
         };
         let mut info = info;
-        if kind == "pdf" || kind == "image" {
+        // page sizes need the original: none until it's here (a limited copy fetches it on opening)
+        if (kind == "pdf" || kind == "image") && info["here"] == json!(true) {
             let matter = self.matter.clone();
             let c = content.clone();
             match self.renderer.sizes(&content, || {

@@ -79,6 +79,27 @@ async function getJSON(url) {
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   return r.json();
 }
+// A limited copy's originals: the viewer says when a fetch ends (adhoc.fetched, from its fetching
+// thread through the window's event loop). whenFetched(content) resolves then, with "here" or
+// "failed", or after `ms` regardless, so a pane checks again even if a word went astray.
+const FETCH_CHECK_MS = 15000;
+const fetchWaiters = new Map();      // content -> Set of resolve functions
+function whenFetched(content, ms) {
+  let done, timer;
+  const p = new Promise((res) => {
+    done = (state) => { clearTimeout(timer); fetchWaiters.get(content)?.delete(done); res(state); };
+    timer = setTimeout(() => done("unheard"), ms);
+    if (!fetchWaiters.has(content)) fetchWaiters.set(content, new Set());
+    fetchWaiters.get(content).add(done);
+  });
+  p.cancel = () => done("cancelled");
+  return p;
+}
+// a limited copy: start fetching the originals of what's likely to be opened next (no waiting)
+function prefetch(locs) {
+  const docs = [...new Set(locs.map((l) => parseLoc(l).doc).filter(Boolean))];
+  if (docs.length) fetch("/api/prefetch?docs=" + docs.map(encodeURIComponent).join(",")).catch(() => {});
+}
 async function docInfo(doc) { return cache.docs[doc] ??= getJSON("/api/doc/" + encodeURIComponent(doc)); }
 async function layerText(id) {
   return cache.text[id] ??= fetch(`/api/layer/${id}/text`).then((r) => r.text()).then((t) => ({ text: t, cps: Array.from(t) }));
@@ -674,6 +695,7 @@ class DocumentPane {
     const loc = parseLoc(locIn);
     const info = await docInfo(loc.doc);
     const fresh = !this.info || this.info.doc !== info.doc;
+    if (fresh) { this.fetchToken = null; this.fetchNote = null; }
     this.info = info;
     let layer = loc.layer && info.layers.find((l) => l.id === loc.layer);
     if (opts.view) layer = info.layers.find((l) => l.view === opts.view) || layer;
@@ -692,6 +714,55 @@ class DocumentPane {
     }
     if (!opts.quiet) addHistory(loc, opts.source || "user");
     renderTabs();
+    // a limited copy without this original: the text shows now, and the original once it's fetched
+    if (info.fetchable && !this.fetchToken) this.awaitOriginal(info.doc, locIn);
+  }
+
+  // Ask the viewer to fetch this document's original (it answers at once), then wait for it to say
+  // the fetch ended (adhoc.fetched): then show it, unless the user has started working in the text
+  // meanwhile, when a link offers it. Opening another document ends the wait.
+  async awaitOriginal(doc, loc, retry = false) {
+    const token = (this.fetchToken = {});
+    const mine = () => this.fetchToken === token && this.info?.doc === doc;
+    const content = this.info.content;
+    this.setFetchNote({ text: "Fetching the original… its text is here meanwhile" });
+    for (;;) {
+      const ended = whenFetched(content, FETCH_CHECK_MS);       // listening before asking: it can't be missed
+      const r = await getJSON("/api/fetch/" + encodeURIComponent(doc) + (retry ? "?retry=1" : "")).catch(() => ({ state: "failed" }));
+      retry = false;
+      if (!mine()) return ended.cancel();
+      if (r.state !== "fetching") ended.cancel();
+      if (r.state === "here") {
+        delete cache.docs[doc];
+        const show = async () => {
+          if (this.info?.doc !== doc) return;
+          this.fetchToken = null; this.fetchNote = null; this.info = null;     // as if opened afresh: pages, hex
+          await this.open(loc, { quiet: true, source: "fetch" });
+        };
+        if (this.selection || (this.highlights || []).length) {
+          this.fetchToken = null;
+          return this.setFetchNote({ text: "The original is here:", action: ["show it", show] });
+        }
+        return show();
+      }
+      if (r.state !== "fetching") {
+        this.fetchToken = null;
+        return this.setFetchNote(r.state === "failed"
+          ? { text: "The original couldn't be fetched (is the hub reachable?). Its text is here.", failed: true,
+              action: ["try again", () => { this.fetchToken = null; this.awaitOriginal(doc, loc, true); }] }
+          : null);
+      }
+      await ended;              // told it ended (or, if that was somehow missed, a while passed): ask again
+      if (!mine()) return;
+    }
+  }
+  setFetchNote(note) {
+    this.fetchNote = note;
+    const span = $(".fetchnote", this.head);
+    if (!span) return;
+    span.hidden = !note;
+    span.classList.toggle("failed", !!note?.failed);
+    span.replaceChildren(...(note ? [note.text, ...(note.action ? [" ", el("a", { onclick: note.action[1] }, note.action[0])] : [])] : []));
   }
 
   async render() {
@@ -707,6 +778,7 @@ class DocumentPane {
       modes.length > 1 || this.mode === "hex" ? el("span", { class: "seg modes" }, ...modes.map((m) => el("button", { class: m === this.mode ? "on" : "",
         title: (MODES[m]?.title || m) + " (f)", onclick: () => this.setMode(m) }, MODES[m]?.label || m))) : "",
       el("span", { class: "chips" }),
+      el("span", { class: "fetchnote", hidden: true }),
       el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, or a date to see what came before and after; click to select it and ask Claude. E shows all, known only, or none.",
         onclick: () => cycleEntityMode() }), el("span", { class: "status" }),
       el("button", { class: "icon-btn", "aria-label": "More: download, the original's bytes", "aria-haspopup": "menu",
@@ -719,6 +791,7 @@ class DocumentPane {
     this.links.replaceChildren(...groups.map(([label, ds]) => el("span", { class: "grp" }, label + ":",
       ...ds.map(([t, d]) => el("a", { title: d, onclick: () => open(d) }, t)))));
     this.links.hidden = !groups.length;
+    this.setFetchNote(this.fetchNote);          // the head was just rebuilt
     this.renderStrip();
     this.body.replaceChildren();
     this.body.className = "pane-body docview" + (this.mode === "page" ? " paged" : "");
@@ -1734,11 +1807,14 @@ class DocumentPane {
     await this.open(s.items[next], { source: "user" });
     if (s.from) callPane(s.from, "follow", s.items[next]);
     for (const d of s.items.slice(next + 1, next + 4)) docInfo(parseLoc(d).doc).catch(() => {});
+    prefetch(s.items.slice(next + 1, next + 4));
     changed();
   }
   // a linked list pane's choice: its sequence, at this item
   seqOpen(sequence, loc) {
     this.sequence = sequence;
+    const i = (sequence?.items || []).indexOf(loc);
+    if (i >= 0) prefetch(sequence.items.slice(i + 1, i + 4));
     return this.open(loc, { source: "pane" });
   }
   page(delta) {
@@ -2875,6 +2951,7 @@ const commands = {
   async sequence(c) {
     const p = docPaneFor(c);
     p.sequence = { items: c.locs, position: 0, from: null };
+    prefetch(c.locs.slice(1, 4));
     if (c.locs.length) await p.open(c.locs[0], { source: "claude" });
     return { pane: p.id };
   },
@@ -2974,6 +3051,10 @@ adhoc.config = (c) => {
   if (adhoc.window === "w1" && !adhoc.panes.length) openHome();
 };
 adhoc.elsewhere = (map) => { adhoc.elsewhereMap = map; };
+// a limited copy's original finished fetching: whoever waits for it looks again
+adhoc.fetched = (msg) => {
+  for (const done of [...(fetchWaiters.get(msg.content) || [])]) done(msg.state);
+};
 adhoc.visited = (entry) => {
   adhoc.history.push(entry);
   if (adhoc.history.length > 1000) adhoc.history.shift();

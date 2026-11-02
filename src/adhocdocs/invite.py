@@ -169,17 +169,22 @@ def accept(m: Matter, req: dict) -> dict:
             raise PermissionError("that invitation has been used")
         if time.time() > inv["expires"]:
             raise PermissionError("that invitation has expired")
-        poolmod.add_member(m, inv["by"], req["cert"], str(req.get("name") or origin)[:200], inv["role"],
-                           [str(a) for a in req.get("addresses", [])][:8],
-                           box=str(req.get("box", ""))[:64] or None)
+        try:
+            poolmod.add_member(m, inv["by"], req["cert"], str(req.get("name") or origin)[:200], inv["role"],
+                               [str(a) for a in req.get("addresses", [])][:8],
+                               box=str(req.get("box", ""))[:64] or None,
+                               copy="limited" if req.get("copy") == "limited" else "full")
+        except poolmod.PoolError as e:
+            raise PermissionError(str(e))
         inv["used"] = {"origin": origin, "at": now()}
         _save(m, invites)
     return {"matter": m.id, "founder": m.config.get("founder"), "member": origin}
 
 
-def join(code: str, path, name: str | None = None, addresses=()) -> dict:
+def join(code: str, path, name: str | None = None, addresses=(), copy: str = "full") -> dict:
     """Join a matter's pool with an invitation, in a new matter at ``path``,
-    then sync with the inviter."""
+    then sync with the inviter. ``copy="limited"``: hold everything but the
+    originals, and fetch those when needed (SYNC.md)."""
     from .peer import Peer, SyncError, sync_with
     inv = parse(code)
     path = Path(path)
@@ -190,12 +195,15 @@ def join(code: str, path, name: str | None = None, addresses=()) -> dict:
     cfg["founder"] = inv["f"]
     write_toml(m.root / "matter.toml", cfg)
     m = Matter(m.root)
+    if copy == "limited":
+        poolmod.mark_was_limited(m)
     from . import seal
     if isinstance(inv.get("k"), dict):
         seal.save_keys(m, {int(e): seal.unb64(v) for e, v in inv["k"].items()})
     req = {"digest": _digest(inv["s"]), "cert": m.identity.cert_path().read_text(encoding="ascii"),
            "box": seal.box_public(m),
-           "name": name or socket.gethostname(), "addresses": list(addresses)}
+           "name": name or socket.gethostname(), "addresses": list(addresses),
+           **({"copy": "limited"} if copy == "limited" else {})}
     errors = []
     for address in inv["a"]:
         peer = Peer(m, address, inv["o"])

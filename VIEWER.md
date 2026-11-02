@@ -329,6 +329,36 @@ before and after, from chronologies, dated entities, key sets, pages'
 citations and hot tags. The card's data comes from `/api/around`
 ([`chrono.rs`](viewer/src/chrono.rs)). See [DATES.md](DATES.md).
 
+## On a limited copy
+
+A [limited copy](SYNC.md#limited-copies) has every document's text but
+fetches originals on demand. **The viewer never waits for one.** Opening a
+document whose original isn't here shows its text at once, with "Fetching
+the original… its text is here meanwhile" in the pane's head, and switches
+to the original (pages, hex) when it arrives. If by then the user has
+selected something or highlights are showing, it doesn't switch on its
+own: the note offers "show it". If no member that holds the original can be
+reached, the note says so and offers "try again". A sequence (stepping
+through one, a list pane's, or `view sequence`) fetches the next three in
+the background, so they open as pages straight away.
+
+How: the viewer answers every request on one worker thread, so nothing
+there may wait on the network. An original the store lacks is fetched on a
+thread of its own (`adhoc fetch-original`), outside the matter's lock, and
+a read answers "not here" meanwhile. `/api/fetch/<doc>` starts a fetch if
+needed and says where it stands (`here`, `fetching`, `failed`, `absent`),
+at once.
+
+When a fetch ends, the viewer tells every window's shell. The fetching
+thread sends the event loop a `Fetched` event, and the loop runs
+`adhoc.fetched({content, state})` in each window, as it does for other
+news from outside (`adhoc.elsewhere`, `adhoc.visited`). A pane waiting for
+that original asks `/api/fetch` once more, and shows it. A pane starts
+listening before it first asks, so a fetch that ends in between isn't
+missed. If no word comes within 15 seconds, it asks anyway. An original
+that couldn't be fetched isn't tried again for 30 seconds, except by
+"try again" (`/api/fetch/<doc>?retry`).
+
 ## State
 
 `view state` reports the layout, panes, and per pane: the document, layer
