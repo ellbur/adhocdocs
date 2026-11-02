@@ -146,6 +146,10 @@ impl Handler {
             ["api", "annotations"] => self.annotations(),
             ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
+            ["api", "files"] => {
+                let root = self.matter.lock().unwrap().root.clone();
+                json_resp(crate::files::list(&root))
+            }
             ["api", "margins", doc] => self.margins(doc, &query(q)),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
             ["presentation", layer] => self.presentation(layer, &query(q)),

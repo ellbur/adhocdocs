@@ -70,6 +70,60 @@ def command(m: Matter, cmd: dict) -> dict:
     return out
 
 
+# -- loose files ---------------------------------------------------------------------------------
+# Files the user hands Claude (dropped on the viewer, or its terminal) and
+# files Claude hands back: plain files in ``workspace/files/``, not discovery
+# documents (not ingested, no IDs, not synced or tracked). The viewer's Files
+# pane shows both folders and does the copying in and saving out
+# (viewer/src/files.rs).
+
+LOOSE = "files"
+
+
+def loose_dir(m: Matter, kind: str) -> Path:
+    return m.workspace / LOOSE / kind
+
+
+def _unique(d: Path, name: str) -> Path:
+    p = d / name
+    stem, ext = (name[:name.rindex(".")], name[name.rindex("."):]) if "." in name.lstrip(".") else (name, "")
+    n = 2
+    while p.exists() or p.is_symlink():
+        p = d / f"{stem} ({n}){ext}"
+        n += 1
+    return p
+
+
+def deliver(m: Matter, paths, note: str | None = None) -> list[dict]:
+    """Copy files (or folders) into ``files/from-claude/`` for the user,
+    never over one there, and keep the note on each. A file already there is
+    left where it is. Returns ``[{name, path}]``."""
+    d = loose_dir(m, "from-claude")
+    d.mkdir(parents=True, exist_ok=True)
+    out = []
+    for p in map(Path, paths):
+        if not p.exists():
+            raise FileNotFoundError(f"no file {p}")
+        if p.resolve().parent == d.resolve():
+            dest = p.resolve()
+        else:
+            name = p.resolve().name
+            dest = _unique(d, name)
+            tmp = d / f".adding-{os.getpid()}-{name}"
+            (shutil.copytree(p, tmp, symlinks=True) if p.is_dir() else shutil.copyfile(p, tmp))
+            tmp.rename(dest)           # whole, or not there at all
+        out.append({"name": dest.name, "path": str(dest)})
+    if note:
+        nf = d / ".notes.json"
+        try:
+            notes = json.loads(nf.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            notes = {}
+        notes.update({x["name"]: note for x in out})
+        nf.write_text(json.dumps(notes, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    return out
+
+
 def files_of(path: Path) -> dict:
     """A pane's files, base64: one HTML file, or a directory bundle."""
     path = Path(path)

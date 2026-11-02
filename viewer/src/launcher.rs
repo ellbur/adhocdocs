@@ -63,14 +63,14 @@ fn args_of(v: &Value) -> Vec<String> {
 }
 
 /// Open a folder in the desktop's file manager.
-fn reveal(path: &str) {
+pub(crate) fn reveal(path: &str) {
     let opener = if cfg!(windows) { "explorer" } else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     let _ = Command::new(opener).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
 }
 
 /// A native file dialog, over the launcher's window: the paths chosen (none if cancelled).
 #[cfg(target_os = "linux")]
-fn pick(v: &Value, parent: &tao::window::Window) -> Vec<String> {
+pub(crate) fn pick(v: &Value, parent: &tao::window::Window) -> Vec<String> {
     use gtk::prelude::*;
     use gtk::FileChooserAction as A;
     use tao::platform::unix::WindowExtUnix;
@@ -107,7 +107,7 @@ fn pick(v: &Value, parent: &tao::window::Window) -> Vec<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn pick(v: &Value, parent: &tao::window::Window) -> Vec<String> {
+pub(crate) fn pick(v: &Value, parent: &tao::window::Window) -> Vec<String> {
     let mut d = rfd::FileDialog::new().set_title(v["title"].as_str().unwrap_or("Choose")).set_parent(parent);
     if let Some(dir) = v["start"].as_str().filter(|s| !s.is_empty()) {
         d = d.set_directory(dir);

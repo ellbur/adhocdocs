@@ -23,6 +23,7 @@ mod endpoint;
 mod matter;
 mod overview;
 mod export;
+mod files;
 mod launcher;
 mod term;
 mod protocol;
@@ -55,6 +56,11 @@ pub enum UserEvent {
     TermExit(u32),
     /// A limited copy's original finished fetching: the content, and "here" or "failed".
     Fetched(String, String),
+    /// Files dragged over a window from outside: the window, "over", "leave" or "drop",
+    /// the files (on drop) and where, in the web view's coordinates.
+    Drag(String, &'static str, Vec<PathBuf>, (i32, i32)),
+    /// Work done off the event loop, to tell a window's shell: the window and the script.
+    Eval(String, String),
 }
 
 struct Args {
@@ -208,6 +214,7 @@ impl App {
             .unwrap();
         let job_tx = Mutex::new(self.job_tx.clone());
         let (ipc_proxy, ipc_id) = (self.proxy.clone(), id.clone());
+        let (drag_proxy, drag_id) = (self.proxy.clone(), id.clone());
         let builder = WebViewBuilder::new()
             .with_asynchronous_custom_protocol("adhoc".into(), move |_id, req, responder| {
                 let path = req.uri().path().to_string();
@@ -216,6 +223,38 @@ impl App {
             })
             .with_ipc_handler(move |req| {
                 let _ = ipc_proxy.send_event(UserEvent::Ipc(ipc_id.clone(), req.body().clone()));
+            })
+            // Files dropped from outside become loose files (files.rs), wherever they land: the shell
+            // decides what that means there (the terminal types their paths). Anything else
+            // dragged (text, a link) is left to the web view.
+            .with_drag_drop_handler({
+                let with_files = std::cell::Cell::new(false);      // the drag in progress carries files
+                move |ev| {
+                    let send = |kind, paths, at| { let _ = drag_proxy.send_event(UserEvent::Drag(drag_id.clone(), kind, paths, at)); };
+                    match ev {
+                        wry::DragDropEvent::Enter { paths, position } => {
+                            with_files.set(!files::real_paths(&paths).is_empty());
+                            if with_files.get() { send("over", vec![], position) }
+                            false
+                        }
+                        wry::DragDropEvent::Over { position } => {
+                            if with_files.get() { send("over", vec![], position) }
+                            false
+                        }
+                        wry::DragDropEvent::Leave => {
+                            if with_files.replace(false) { send("leave", vec![], (0, 0)) }
+                            false
+                        }
+                        wry::DragDropEvent::Drop { paths, position } => {
+                            with_files.set(false);
+                            let real = files::real_paths(&paths);
+                            if real.is_empty() { send("leave", vec![], position); return false }
+                            send("drop", real, position);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
             })
             .with_navigation_handler(|url| url.starts_with("adhoc:") || url.starts_with("http://adhoc.localhost") || url == "about:blank")
             .with_new_window_req_handler(|_url, _features| wry::NewWindowResponse::Deny)
@@ -645,6 +684,19 @@ fn main() {
                     let _ = w.webview.evaluate_script(&script);
                 }
             }
+            Event::UserEvent(UserEvent::Eval(win, script)) => app.eval(&win, &script),
+            Event::UserEvent(UserEvent::Drag(win, kind, paths, (x, y))) => {
+                if kind != "drop" {
+                    app.eval(&win, &format!("adhoc.dragging({})", json!({"over": kind == "over", "x": x, "y": y})));
+                    return;
+                }
+                // copied off the event loop: a big folder takes a while
+                let (root, proxy) = (matter.lock().unwrap().root.clone(), proxy.clone());
+                std::thread::spawn(move || {
+                    let r = files::add(&root, &paths);
+                    let _ = proxy.send_event(UserEvent::Eval(win, format!("adhoc.dropped({}, {})", json!({"x": x, "y": y}), r)));
+                });
+            }
             Event::UserEvent(UserEvent::Ipc(win, msg)) => {
                 let Ok(v) = serde_json::from_str::<Value>(&msg) else { return };
                 match v["type"].as_str().unwrap_or("") {
@@ -768,6 +820,28 @@ fn main() {
                     "export" => {
                         // A download the user asked for, made by the worker that owns MuPDF.
                         let _ = app.job_tx.send(Job::Export(win.clone(), v["id"].clone(), v["request"].clone()));
+                    }
+                    "files-pick" => {
+                        // the Files pane's "Add files…": a native dialog, then copied off the event loop
+                        let Some(w) = app.windows.get(&win) else { return };
+                        let folders = v["folders"].as_bool().unwrap_or(false);
+                        let req = json!({"kind": if folders { "folders" } else { "files" },
+                                         "title": if folders { "Give Claude folders (not discovery documents)" } else { "Give Claude files (not discovery documents)" }});
+                        let paths: Vec<PathBuf> = launcher::pick(&req, &w.window).into_iter().map(PathBuf::from).collect();
+                        let (root, proxy, id) = (matter.lock().unwrap().root.clone(), proxy.clone(), v["id"].clone());
+                        std::thread::spawn(move || {
+                            let r = if paths.is_empty() { json!({"added": [], "errors": []}) } else { files::add(&root, &paths) };
+                            let _ = proxy.send_event(UserEvent::Eval(win, format!("adhoc.filesDone({}, {})", id, r)));
+                        });
+                    }
+                    "files-act" => {
+                        // save a copy to Downloads, remove, or show the folder: the user's, from the Files pane
+                        let (root, proxy, id) = (matter.lock().unwrap().root.clone(), proxy.clone(), v["id"].clone());
+                        let [op, kind, name] = [&v["op"], &v["kind"], &v["name"]].map(|x| x.as_str().unwrap_or("").to_string());
+                        std::thread::spawn(move || {
+                            let r = files::act(&root, &op, &kind, &name);
+                            let _ = proxy.send_event(UserEvent::Eval(win, format!("adhoc.filesDone({}, {})", id, r)));
+                        });
                     }
                     "annotate" => {
                         // The user's own tags and notes, written as the user by the host tool.
