@@ -332,12 +332,23 @@ citations and hot tags. The card's data comes from `/api/around`
 ## On a limited copy
 
 A [limited copy](SYNC.md#limited-copies) has every document's text but
-fetches originals on demand. Opening a document whose original isn't here
-fetches it first ("Fetching the original…"). If no member that holds it can
-be reached, the viewer says so and shows the text. Stepping through a
-sequence fetches the next three in the background. Nothing else waits on
-the network: document info gives no size or page sizes until the original
-is here.
+fetches originals on demand. **The viewer never waits for one.** Opening a
+document whose original isn't here shows its text at once, with "Fetching
+the original… its text is here meanwhile" in the pane's head, and switches
+to the original (pages, hex) when it arrives. If by then the user has
+selected something or highlights are showing, it doesn't switch on its
+own: the note offers "show it". If no member that holds the original can be
+reached, the note says so and offers "try again". A sequence (stepping
+through one, a list pane's, or `view sequence`) fetches the next three in
+the background, so they open as pages straight away.
+
+How: the viewer answers every request on one worker thread, so nothing
+there may wait on the network. An original the store lacks is fetched on a
+thread of its own (`adhoc fetch-original`), outside the matter's lock, and
+a read answers "not here" meanwhile. `/api/fetch/<doc>` starts a fetch if
+needed and says where it stands (`here`, `fetching`, `failed`, `absent`),
+at once. The shell asks again, less often as it goes, until it's here. One
+that failed isn't tried again for 30 seconds.
 
 ## State
 

@@ -408,12 +408,11 @@ original again for 30 seconds, so a reader isn't held up on every look.
 - **In a session** the store is read-only and the only network is Claude's,
   so the store asks the host instead, through the annotation API (`POST
   /fetch`), then reads the original from the store as mounted.
-- **The viewer** runs on the host. Opening a document whose original isn't
-  here fetches it, with a notice ("Fetching the original…"), and says so
-  if it can't. Stepping through a sequence starts fetching the next three
-  in the background (`/api/prefetch`), so they're usually here when
-  opened. Document info never waits on the network: until the original is
-  here, it gives no size or page sizes. The viewer fetches by running
+- **The viewer** runs on the host, and never waits on the network.
+  Opening a document whose original isn't here shows its text at once and
+  fetches the original in the background, switching to it when it arrives
+  ([VIEWER.md](VIEWER.md#on-a-limited-copy)). A sequence starts fetching
+  the next three (`/api/prefetch`), so they're usually here when opened. The viewer fetches by running
   `adhoc fetch-original`, the same host tool that writes the user's tags.
   It fetches only while `sync/was-limited` exists: on a limited copy, or a
   copy filling in after going back to full.

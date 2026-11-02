@@ -342,14 +342,17 @@ impl Handler {
         json_resp(json!({"prefetching": m.prefetch(&docs)}))
     }
 
-    /// Fetch a document's original now, on a limited copy (waiting for it).
+    /// Where a document's original stands, on a limited copy, starting a
+    /// fetch if it isn't here: `{"state": "here" | "fetching" | "failed" |
+    /// "absent"}`. Answers at once; the shell asks again until it's here.
     fn fetch_original(&mut self, id: &str) -> Response {
         let mut m = self.matter.lock().unwrap();
         m.refresh();
         let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
         let content = m.state.documents[&doc].clone();
-        let here = m.ensure(&content);
-        json_resp(json!({"doc": doc, "here": here, "size": m.size_here(&content)}))
+        let state = m.fetch_state(&content, true);
+        json_resp(json!({"doc": doc, "state": state.name(), "here": state == crate::matter::FetchState::Here,
+                         "size": m.size_here(&content)}))
     }
 
     fn doc_info(&mut self, id: &str) -> Response {

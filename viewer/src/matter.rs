@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -40,14 +40,54 @@ pub struct Matter {
     /// The host tool (`adhoc`), which fetches a limited copy's originals
     /// (`adhoc fetch-original`, adhocdocs.fetch). None: never fetch.
     pub fetch_cmd: Option<Vec<String>>,
-    failed: Mutex<HashMap<String, Instant>>, // originals that couldn't be fetched, and when
+    /// Originals being fetched, or that couldn't be lately. Shared with the
+    /// threads that fetch, so nothing waits for one under the matter's lock.
+    fetches: Arc<Mutex<HashMap<String, Fetch>>>,
+}
+
+#[derive(Clone, Copy)]
+enum Fetch {
+    Running,
+    Failed(Instant),
+}
+
+/// Where a limited copy's original stands (`/api/fetch`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum FetchState {
+    Here,
+    Fetching,
+    /// couldn't be had lately: tried again after FETCH_RETRY
+    Failed,
+    /// not here, and not to be fetched (not a limited copy, or not an original)
+    Absent,
+}
+
+impl FetchState {
+    pub fn name(self) -> &'static str {
+        match self {
+            FetchState::Here => "here",
+            FetchState::Fetching => "fetching",
+            FetchState::Failed => "failed",
+            FetchState::Absent => "absent",
+        }
+    }
 }
 
 /// How long an original that couldn't be fetched is left before trying again,
-/// so a viewer with no hub in reach isn't held up on every look.
+/// so a viewer with no hub in reach doesn't start a fetch on every look.
 const FETCH_RETRY: Duration = Duration::from_secs(30);
-/// How long to wait for one original to arrive.
+/// How long a fetch may take before it's given up: a minute, and half a
+/// minute more for each original in it.
 const FETCH_WAIT: Duration = Duration::from_secs(60);
+const FETCH_WAIT_EACH: Duration = Duration::from_secs(30);
+
+fn locate(roots: &[PathBuf], h: &str) -> Option<PathBuf> {
+    let h = hex(h);
+    if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    roots.iter().map(|r| r.join(&h[..2]).join(&h[2..])).find(|p| p.exists())
+}
 
 /// A command line given as a JSON list of arguments (a path may have spaces), or words.
 pub fn command_parts(cmd: &str) -> Vec<String> {
@@ -153,7 +193,7 @@ impl Matter {
             root,
             state: State::default(),
             fetch_cmd: None,
-            failed: Mutex::new(HashMap::new()),
+            fetches: Arc::new(Mutex::new(HashMap::new())),
         };
         m.refresh();
         Ok(m)
@@ -190,32 +230,21 @@ impl Matter {
     }
 
     fn find(&self, h: &str) -> Option<PathBuf> {
-        let h = hex(h);
-        if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return None;
-        }
-        self.roots.iter().map(|r| r.join(&h[..2]).join(&h[2..])).find(|p| p.exists())
+        locate(&self.roots, h)
     }
 
-    /// Where an object is; for a limited copy's original that isn't here, after
-    /// fetching it from a member that holds them all (waiting for it).
+    /// Where an object is, if it's here. A limited copy's original that isn't
+    /// starts being fetched, in the background, and this answers None at once:
+    /// nothing in the viewer waits on the network (`/api/fetch` says when it's
+    /// here).
     fn path(&self, h: &str) -> Option<PathBuf> {
         if let Some(p) = self.find(h) {
             return Some(p);
         }
         let full = format!("sha256:{}", hex(h));
-        if !self.limited() || !self.state.documents.values().any(|c| *c == full) {
-            return None;
+        if self.fetchable(&full) {
+            self.start_fetch(vec![full]);
         }
-        if self.failed.lock().unwrap().get(&full).is_some_and(|t| t.elapsed() < FETCH_RETRY) {
-            return None;
-        }
-        if self.run_fetch(&[full.clone()], true) {
-            if let Some(p) = self.find(h) {
-                return Some(p);
-            }
-        }
-        self.failed.lock().unwrap().insert(full, Instant::now());
         None
     }
 
@@ -225,45 +254,94 @@ impl Matter {
         self.fetch_cmd.is_some() && self.root.join("sync/was-limited").exists()
     }
 
+    fn fetchable(&self, content: &str) -> bool {
+        self.limited() && self.state.documents.values().any(|c| c == content)
+    }
+
     /// The size of an object that's here, without fetching it.
     pub fn size_here(&self, h: &str) -> Option<u64> {
         fs::metadata(self.find(h)?).ok().map(|m| m.len())
     }
 
-    /// Fetch an original now (if this copy lacks it), waiting; whether it's here.
-    pub fn ensure(&self, h: &str) -> bool {
-        self.path(h).is_some()
+    /// Where an original stands. With `start`, one that isn't here (and
+    /// didn't fail lately) starts being fetched.
+    pub fn fetch_state(&self, content: &str, start: bool) -> FetchState {
+        if self.find(content).is_some() {
+            return FetchState::Here;
+        }
+        if !self.fetchable(content) {
+            return FetchState::Absent;
+        }
+        if start {
+            self.start_fetch(vec![content.to_string()]);
+        }
+        match self.fetches.lock().unwrap().get(content) {
+            Some(Fetch::Running) => FetchState::Fetching,
+            Some(Fetch::Failed(t)) if t.elapsed() < FETCH_RETRY => FetchState::Failed,
+            _ => FetchState::Absent,
+        }
     }
 
-    /// Run `adhoc fetch-original` for these contents; with `wait`, until it
-    /// ends (or FETCH_WAIT passes), returning whether it succeeded.
-    fn run_fetch(&self, contents: &[String], wait: bool) -> bool {
-        let Some((prog, rest)) = self.fetch_cmd.as_ref().and_then(|c| c.split_first()) else { return false };
-        let child = Command::new(prog)
-            .args(rest)
-            .args(["--matter", &self.root.to_string_lossy(), "fetch-original"])
-            .args(contents)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        let Ok(mut child) = child else { return false };
-        if !wait {
-            std::thread::spawn(move || child.wait());
-            return true;
+    /// Start fetching these originals on a thread of its own: those that
+    /// aren't here, aren't being fetched, and didn't fail lately. Returns how
+    /// many it started on. Never waits.
+    fn start_fetch(&self, contents: Vec<String>) -> usize {
+        let Some((prog, rest)) = self.fetch_cmd.clone().and_then(|c| c.split_first().map(|(p, r)| (p.clone(), r.to_vec())))
+        else { return 0 };
+        let todo: Vec<String> = {
+            let mut f = self.fetches.lock().unwrap();
+            let todo: Vec<String> = contents
+                .into_iter()
+                .filter(|c| self.find(c).is_none())
+                .filter(|c| match f.get(c) {
+                    Some(Fetch::Running) => false,
+                    Some(Fetch::Failed(t)) => t.elapsed() >= FETCH_RETRY,
+                    None => true,
+                })
+                .collect();
+            for c in &todo {
+                f.insert(c.clone(), Fetch::Running);
+            }
+            todo
+        };
+        if todo.is_empty() {
+            return 0;
         }
-        let start = Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => return status.success(),
-                Ok(None) if start.elapsed() < FETCH_WAIT => std::thread::sleep(Duration::from_millis(50)),
-                _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
+        let (root, roots, fetches, n) = (self.root.clone(), self.roots.clone(), self.fetches.clone(), todo.len());
+        std::thread::spawn(move || {
+            let limit = FETCH_WAIT + FETCH_WAIT_EACH * todo.len() as u32;
+            let child = Command::new(&prog)
+                .args(&rest)
+                .args(["--matter", &root.to_string_lossy(), "fetch-original"])
+                .args(&todo)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            if let Ok(mut child) = child {
+                let start = Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => break,
+                        Ok(None) if start.elapsed() < limit => std::thread::sleep(Duration::from_millis(50)),
+                        _ => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break;
+                        }
+                    }
                 }
             }
-        }
+            let mut f = fetches.lock().unwrap();
+            for c in todo {
+                if locate(&roots, &c).is_some() {
+                    f.remove(&c);
+                } else {
+                    f.insert(c, Fetch::Failed(Instant::now()));
+                }
+            }
+        });
+        n
     }
 
     /// Start fetching these documents' originals, if this is a limited copy
@@ -273,17 +351,8 @@ impl Matter {
         if !self.limited() {
             return 0;
         }
-        let todo: Vec<String> = docs
-            .iter()
-            .filter_map(|d| self.state.documents.get(d))
-            .filter(|c| self.find(c).is_none())
-            .filter(|c| !self.failed.lock().unwrap().get(*c).is_some_and(|t| t.elapsed() < FETCH_RETRY))
-            .cloned()
-            .collect();
-        if todo.is_empty() || !self.run_fetch(&todo, false) {
-            return 0;
-        }
-        todo.len()
+        let todo: Vec<String> = docs.iter().filter_map(|d| self.state.documents.get(d)).cloned().collect();
+        self.start_fetch(todo)
     }
 
     /// The size of an object, without reading it.
@@ -482,9 +551,11 @@ fn apply(s: &mut State, ev: &Value) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_limited_copy_fetches_a_missing_original_through_the_host_tool() {
-        let dir = std::env::temp_dir().join(format!("adhoc-fetch-test-{}", std::process::id()));
+    /// A matter with one document, whose original isn't here, and a stand-in
+    /// for `adhoc` that says what it was asked, waits `delay`, and then writes
+    /// the original where the store keeps it (or, with `fail`, doesn't).
+    fn limited_matter(name: &str, delay: &str, fail: bool) -> (PathBuf, Matter, String) {
+        let dir = std::env::temp_dir().join(format!("adhoc-fetch-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("store/objects")).unwrap();
         fs::create_dir_all(dir.join("store/logs")).unwrap();
@@ -493,20 +564,62 @@ mod tests {
         let ev = serde_json::json!({"id": "1", "op": "add-document", "doc": format!("sha256:{}", "cd".repeat(32)),
                                     "content": content, "at": "1"});
         fs::write(dir.join("store/logs/o_x.jsonl"), format!("{}\n", ev)).unwrap();
-        // a stand-in for `adhoc`: writes the object where the store keeps it, and says what it was asked
+        let write = if fail { "exit 1".to_string() } else {
+            format!("mkdir -p {o}/ab && printf original > {o}/ab/{rest}", o = dir.join("store/objects").display(),
+                    rest = "ab".repeat(31))
+        };
         let script = dir.join("fake-adhoc.sh");
-        fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> {log}\nmkdir -p {o}/ab && printf original > {o}/ab/{rest}\n",
-                                   log = dir.join("asked").display(), o = dir.join("store/objects").display(),
-                                   rest = "ab".repeat(31))).unwrap();
+        fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> {log}\nsleep {delay}\n{write}\n",
+                                   log = dir.join("asked").display())).unwrap();
         let mut m = Matter::open(&dir).unwrap();
         m.fetch_cmd = Some(vec!["sh".into(), script.to_string_lossy().into_owned()]);
+        (dir, m, content)
+    }
+
+    fn eventually(m: &Matter, content: &str, want: FetchState) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(10) {
+            if m.fetch_state(content, false) == want {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn a_limited_copy_fetches_a_missing_original_without_waiting_for_it() {
+        let (dir, m, content) = limited_matter("ok", "1", false);
         assert!(m.bytes(&content).is_none(), "a full copy (no sync/was-limited) doesn't fetch");
+        assert_eq!(m.fetch_state(&content, false), FetchState::Absent);
+        assert!(!dir.join("asked").exists());
         fs::write(dir.join("sync/was-limited"), "").unwrap();
+        // the fetch takes a second: reading answers at once, and the fetch goes on
+        let t = Instant::now();
+        assert!(m.bytes(&content).is_none());
+        assert!(t.elapsed() < Duration::from_millis(500), "reading waited for the fetch");
+        assert_eq!(m.fetch_state(&content, false), FetchState::Fetching);
+        assert!(m.bytes(&content).is_none());          // asked again meanwhile: not fetched twice
+        assert!(eventually(&m, &content, FetchState::Here));
         assert_eq!(m.bytes(&content).as_deref(), Some(&b"original"[..]));
         let asked = fs::read_to_string(dir.join("asked")).unwrap();
+        assert_eq!(asked.lines().count(), 1);
         assert!(asked.contains("fetch-original") && asked.contains(&content));
         // not an original: never asked for
         assert!(m.bytes(&format!("sha256:{}", "ef".repeat(32))).is_none());
+        assert_eq!(m.fetch_state(&format!("sha256:{}", "ef".repeat(32)), true), FetchState::Absent);
+        assert_eq!(fs::read_to_string(dir.join("asked")).unwrap().lines().count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_original_that_cant_be_had_isnt_asked_for_again_at_once() {
+        let (dir, m, content) = limited_matter("fail", "0", true);
+        fs::write(dir.join("sync/was-limited"), "").unwrap();
+        assert_eq!(m.fetch_state(&content, true), FetchState::Fetching);
+        assert!(eventually(&m, &content, FetchState::Failed));
+        assert!(m.bytes(&content).is_none());
+        assert_eq!(m.prefetch(&[format!("sha256:{}", "cd".repeat(32))]), 0);
         assert_eq!(fs::read_to_string(dir.join("asked")).unwrap().lines().count(), 1);
         let _ = fs::remove_dir_all(&dir);
     }

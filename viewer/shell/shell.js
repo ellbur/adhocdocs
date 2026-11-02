@@ -677,15 +677,9 @@ class DocumentPane {
   async open(locIn, opts = {}) {
     this.openedAt = performance.now();        // for open_ms: until the first page (or text) is showing
     const loc = parseLoc(locIn);
-    let info = await docInfo(loc.doc);
-    if (info.fetchable) {
-      // a limited copy without this original: fetch it from a member that holds them all
-      toast("Fetching the original…");
-      const r = await getJSON("/api/fetch/" + encodeURIComponent(info.doc)).catch(() => ({}));
-      if (r.here) { delete cache.docs[loc.doc]; info = await docInfo(loc.doc); }
-      else toast("The original isn't on this machine, and no member that holds it could be reached. Its text is here.");
-    }
+    const info = await docInfo(loc.doc);
     const fresh = !this.info || this.info.doc !== info.doc;
+    if (fresh) { this.fetchToken = null; this.fetchNote = null; }
     this.info = info;
     let layer = loc.layer && info.layers.find((l) => l.id === loc.layer);
     if (opts.view) layer = info.layers.find((l) => l.view === opts.view) || layer;
@@ -704,6 +698,50 @@ class DocumentPane {
     }
     if (!opts.quiet) addHistory(loc, opts.source || "user");
     renderTabs();
+    // a limited copy without this original: the text shows now, and the original once it's fetched
+    if (info.fetchable && !this.fetchToken) this.awaitOriginal(info.doc, locIn);
+  }
+
+  // Ask the viewer to fetch this document's original, and keep asking (it answers at once) until it's
+  // here: then show it, unless the user has started working in the text meanwhile, when a link offers it.
+  // Opening another document ends the wait.
+  async awaitOriginal(doc, loc) {
+    const token = (this.fetchToken = {});
+    const mine = () => this.fetchToken === token && this.info?.doc === doc;
+    this.setFetchNote({ text: "Fetching the original… its text is here meanwhile" });
+    for (let wait = 250; ; wait = Math.min(wait * 1.5, 2000)) {
+      const r = await getJSON("/api/fetch/" + encodeURIComponent(doc)).catch(() => ({ state: "failed" }));
+      if (!mine()) return;
+      if (r.state === "here") {
+        delete cache.docs[doc];
+        const show = async () => {
+          if (this.info?.doc !== doc) return;
+          this.fetchToken = null; this.fetchNote = null; this.info = null;     // as if opened afresh: pages, hex
+          await this.open(loc, { quiet: true, source: "fetch" });
+        };
+        if (this.selection || (this.highlights || []).length) {
+          this.fetchToken = null;
+          return this.setFetchNote({ text: "The original is here:", action: ["show it", show] });
+        }
+        return show();
+      }
+      if (r.state !== "fetching") {
+        this.fetchToken = null;
+        return this.setFetchNote(r.state === "failed"
+          ? { text: "The original couldn't be fetched (is the hub reachable?). Its text is here.", failed: true,
+              action: ["try again", () => { this.fetchToken = null; this.awaitOriginal(doc, loc); }] }
+          : null);
+      }
+      await new Promise((res) => setTimeout(res, wait));
+    }
+  }
+  setFetchNote(note) {
+    this.fetchNote = note;
+    const span = $(".fetchnote", this.head);
+    if (!span) return;
+    span.hidden = !note;
+    span.classList.toggle("failed", !!note?.failed);
+    span.replaceChildren(...(note ? [note.text, ...(note.action ? [" ", el("a", { onclick: note.action[1] }, note.action[0])] : [])] : []));
   }
 
   async render() {
@@ -719,6 +757,7 @@ class DocumentPane {
       modes.length > 1 || this.mode === "hex" ? el("span", { class: "seg modes" }, ...modes.map((m) => el("button", { class: m === this.mode ? "on" : "",
         title: (MODES[m]?.title || m) + " (f)", onclick: () => this.setMode(m) }, MODES[m]?.label || m))) : "",
       el("span", { class: "chips" }),
+      el("span", { class: "fetchnote", hidden: true }),
       el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, or a date to see what came before and after; click to select it and ask Claude. E shows all, known only, or none.",
         onclick: () => cycleEntityMode() }), el("span", { class: "status" }),
       el("button", { class: "icon-btn", "aria-label": "More: download, the original's bytes", "aria-haspopup": "menu",
@@ -731,6 +770,7 @@ class DocumentPane {
     this.links.replaceChildren(...groups.map(([label, ds]) => el("span", { class: "grp" }, label + ":",
       ...ds.map(([t, d]) => el("a", { title: d, onclick: () => open(d) }, t)))));
     this.links.hidden = !groups.length;
+    this.setFetchNote(this.fetchNote);          // the head was just rebuilt
     this.renderStrip();
     this.body.replaceChildren();
     this.body.className = "pane-body docview" + (this.mode === "page" ? " paged" : "");
@@ -2890,6 +2930,7 @@ const commands = {
   async sequence(c) {
     const p = docPaneFor(c);
     p.sequence = { items: c.locs, position: 0, from: null };
+    prefetch(c.locs.slice(1, 4));
     if (c.locs.length) await p.open(c.locs[0], { source: "claude" });
     return { pane: p.id };
   },
