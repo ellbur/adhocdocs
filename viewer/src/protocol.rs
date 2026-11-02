@@ -142,7 +142,7 @@ impl Handler {
             ["api", "bytes", doc] => self.byte_range(doc, &query(q)),
             ["api", "docs"] => self.docs(),
             ["api", "prefetch"] => self.prefetch(&query(q)),
-            ["api", "fetch", doc] => self.fetch_original(doc),
+            ["api", "fetch", doc] => self.fetch_original(doc, query(q).contains_key("retry")),
             ["api", "annotations"] => self.annotations(),
             ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
@@ -344,12 +344,16 @@ impl Handler {
 
     /// Where a document's original stands, on a limited copy, starting a
     /// fetch if it isn't here: `{"state": "here" | "fetching" | "failed" |
-    /// "absent"}`. Answers at once; the shell asks again until it's here.
-    fn fetch_original(&mut self, id: &str) -> Response {
+    /// "absent"}`. Answers at once; the viewer tells the shell when the fetch
+    /// ends (`adhoc.fetched`). `?retry`: try again now, even if it just failed.
+    fn fetch_original(&mut self, id: &str, retry: bool) -> Response {
         let mut m = self.matter.lock().unwrap();
         m.refresh();
         let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
         let content = m.state.documents[&doc].clone();
+        if retry {
+            m.forget_failure(&content);
+        }
         let state = m.fetch_state(&content, true);
         json_resp(json!({"doc": doc, "state": state.name(), "here": state == crate::matter::FetchState::Here,
                          "size": m.size_here(&content)}))

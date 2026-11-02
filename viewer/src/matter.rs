@@ -43,7 +43,12 @@ pub struct Matter {
     /// Originals being fetched, or that couldn't be lately. Shared with the
     /// threads that fetch, so nothing waits for one under the matter's lock.
     fetches: Arc<Mutex<HashMap<String, Fetch>>>,
+    /// Told when a fetch ends, with the content and "here" or "failed", on the
+    /// fetching thread: the viewer passes it on to every window's shell.
+    pub on_fetched: Option<OnFetched>,
 }
+
+pub type OnFetched = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 #[derive(Clone, Copy)]
 enum Fetch {
@@ -194,6 +199,7 @@ impl Matter {
             state: State::default(),
             fetch_cmd: None,
             fetches: Arc::new(Mutex::new(HashMap::new())),
+            on_fetched: None,
         };
         m.refresh();
         Ok(m)
@@ -282,6 +288,15 @@ impl Matter {
         }
     }
 
+    /// Forget that an original couldn't be fetched, so it's tried again now
+    /// (the user asked to), not after FETCH_RETRY.
+    pub fn forget_failure(&self, content: &str) {
+        let mut f = self.fetches.lock().unwrap();
+        if matches!(f.get(content), Some(Fetch::Failed(_))) {
+            f.remove(content);
+        }
+    }
+
     /// Start fetching these originals on a thread of its own: those that
     /// aren't here, aren't being fetched, and didn't fail lately. Returns how
     /// many it started on. Never waits.
@@ -308,6 +323,7 @@ impl Matter {
             return 0;
         }
         let (root, roots, fetches, n) = (self.root.clone(), self.roots.clone(), self.fetches.clone(), todo.len());
+        let on_fetched = self.on_fetched.clone();
         std::thread::spawn(move || {
             let limit = FETCH_WAIT + FETCH_WAIT_EACH * todo.len() as u32;
             let child = Command::new(&prog)
@@ -332,12 +348,23 @@ impl Matter {
                     }
                 }
             }
-            let mut f = fetches.lock().unwrap();
-            for c in todo {
-                if locate(&roots, &c).is_some() {
-                    f.remove(&c);
-                } else {
-                    f.insert(c, Fetch::Failed(Instant::now()));
+            let mut ended = vec![];
+            {
+                let mut f = fetches.lock().unwrap();
+                for c in todo {
+                    if locate(&roots, &c).is_some() {
+                        f.remove(&c);
+                        ended.push((c, "here"));
+                    } else {
+                        f.insert(c.clone(), Fetch::Failed(Instant::now()));
+                        ended.push((c, "failed"));
+                    }
+                }
+            }
+            // after the state is recorded, so a shell that asks on hearing this gets the same answer
+            if let Some(tell) = on_fetched {
+                for (c, state) in ended {
+                    tell(&c, state);
                 }
             }
         });
@@ -576,6 +603,14 @@ mod tests {
         (dir, m, content)
     }
 
+    /// Record what `on_fetched` is told.
+    fn listen(m: &mut Matter) -> Arc<Mutex<Vec<(String, String)>>> {
+        let heard = Arc::new(Mutex::new(vec![]));
+        let h = heard.clone();
+        m.on_fetched = Some(Arc::new(move |c: &str, s: &str| h.lock().unwrap().push((c.to_string(), s.to_string()))));
+        heard
+    }
+
     fn eventually(m: &Matter, content: &str, want: FetchState) -> bool {
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(10) {
@@ -589,7 +624,8 @@ mod tests {
 
     #[test]
     fn a_limited_copy_fetches_a_missing_original_without_waiting_for_it() {
-        let (dir, m, content) = limited_matter("ok", "1", false);
+        let (dir, mut m, content) = limited_matter("ok", "1", false);
+        let heard = listen(&mut m);
         assert!(m.bytes(&content).is_none(), "a full copy (no sync/was-limited) doesn't fetch");
         assert_eq!(m.fetch_state(&content, false), FetchState::Absent);
         assert!(!dir.join("asked").exists());
@@ -602,6 +638,12 @@ mod tests {
         assert!(m.bytes(&content).is_none());          // asked again meanwhile: not fetched twice
         assert!(eventually(&m, &content, FetchState::Here));
         assert_eq!(m.bytes(&content).as_deref(), Some(&b"original"[..]));
+        // the viewer was told, once, and only once the fetch had ended
+        let start = Instant::now();
+        while heard.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(*heard.lock().unwrap(), vec![(content.clone(), "here".to_string())]);
         let asked = fs::read_to_string(dir.join("asked")).unwrap();
         assert_eq!(asked.lines().count(), 1);
         assert!(asked.contains("fetch-original") && asked.contains(&content));
@@ -614,13 +656,24 @@ mod tests {
 
     #[test]
     fn an_original_that_cant_be_had_isnt_asked_for_again_at_once() {
-        let (dir, m, content) = limited_matter("fail", "0", true);
+        let (dir, mut m, content) = limited_matter("fail", "0", true);
+        let heard = listen(&mut m);
         fs::write(dir.join("sync/was-limited"), "").unwrap();
         assert_eq!(m.fetch_state(&content, true), FetchState::Fetching);
         assert!(eventually(&m, &content, FetchState::Failed));
+        let start = Instant::now();
+        while heard.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(*heard.lock().unwrap(), vec![(content.clone(), "failed".to_string())]);
         assert!(m.bytes(&content).is_none());
         assert_eq!(m.prefetch(&[format!("sha256:{}", "cd".repeat(32))]), 0);
         assert_eq!(fs::read_to_string(dir.join("asked")).unwrap().lines().count(), 1);
+        // unless the user asks to try again
+        m.forget_failure(&content);
+        assert_eq!(m.fetch_state(&content, true), FetchState::Fetching);
+        assert!(eventually(&m, &content, FetchState::Failed));
+        assert_eq!(fs::read_to_string(dir.join("asked")).unwrap().lines().count(), 2);
         let _ = fs::remove_dir_all(&dir);
     }
 

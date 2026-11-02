@@ -79,6 +79,22 @@ async function getJSON(url) {
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   return r.json();
 }
+// A limited copy's originals: the viewer says when a fetch ends (adhoc.fetched, from its fetching
+// thread through the window's event loop). whenFetched(content) resolves then, with "here" or
+// "failed", or after `ms` regardless, so a pane checks again even if a word went astray.
+const FETCH_CHECK_MS = 15000;
+const fetchWaiters = new Map();      // content -> Set of resolve functions
+function whenFetched(content, ms) {
+  let done, timer;
+  const p = new Promise((res) => {
+    done = (state) => { clearTimeout(timer); fetchWaiters.get(content)?.delete(done); res(state); };
+    timer = setTimeout(() => done("unheard"), ms);
+    if (!fetchWaiters.has(content)) fetchWaiters.set(content, new Set());
+    fetchWaiters.get(content).add(done);
+  });
+  p.cancel = () => done("cancelled");
+  return p;
+}
 // a limited copy: start fetching the originals of what's likely to be opened next (no waiting)
 function prefetch(locs) {
   const docs = [...new Set(locs.map((l) => parseLoc(l).doc).filter(Boolean))];
@@ -702,16 +718,20 @@ class DocumentPane {
     if (info.fetchable && !this.fetchToken) this.awaitOriginal(info.doc, locIn);
   }
 
-  // Ask the viewer to fetch this document's original, and keep asking (it answers at once) until it's
-  // here: then show it, unless the user has started working in the text meanwhile, when a link offers it.
-  // Opening another document ends the wait.
-  async awaitOriginal(doc, loc) {
+  // Ask the viewer to fetch this document's original (it answers at once), then wait for it to say
+  // the fetch ended (adhoc.fetched): then show it, unless the user has started working in the text
+  // meanwhile, when a link offers it. Opening another document ends the wait.
+  async awaitOriginal(doc, loc, retry = false) {
     const token = (this.fetchToken = {});
     const mine = () => this.fetchToken === token && this.info?.doc === doc;
+    const content = this.info.content;
     this.setFetchNote({ text: "Fetching the original… its text is here meanwhile" });
-    for (let wait = 250; ; wait = Math.min(wait * 1.5, 2000)) {
-      const r = await getJSON("/api/fetch/" + encodeURIComponent(doc)).catch(() => ({ state: "failed" }));
-      if (!mine()) return;
+    for (;;) {
+      const ended = whenFetched(content, FETCH_CHECK_MS);       // listening before asking: it can't be missed
+      const r = await getJSON("/api/fetch/" + encodeURIComponent(doc) + (retry ? "?retry=1" : "")).catch(() => ({ state: "failed" }));
+      retry = false;
+      if (!mine()) return ended.cancel();
+      if (r.state !== "fetching") ended.cancel();
       if (r.state === "here") {
         delete cache.docs[doc];
         const show = async () => {
@@ -729,10 +749,11 @@ class DocumentPane {
         this.fetchToken = null;
         return this.setFetchNote(r.state === "failed"
           ? { text: "The original couldn't be fetched (is the hub reachable?). Its text is here.", failed: true,
-              action: ["try again", () => { this.fetchToken = null; this.awaitOriginal(doc, loc); }] }
+              action: ["try again", () => { this.fetchToken = null; this.awaitOriginal(doc, loc, true); }] }
           : null);
       }
-      await new Promise((res) => setTimeout(res, wait));
+      await ended;              // told it ended (or, if that was somehow missed, a while passed): ask again
+      if (!mine()) return;
     }
   }
   setFetchNote(note) {
@@ -3030,6 +3051,10 @@ adhoc.config = (c) => {
   if (adhoc.window === "w1" && !adhoc.panes.length) openHome();
 };
 adhoc.elsewhere = (map) => { adhoc.elsewhereMap = map; };
+// a limited copy's original finished fetching: whoever waits for it looks again
+adhoc.fetched = (msg) => {
+  for (const done of [...(fetchWaiters.get(msg.content) || [])]) done(msg.state);
+};
 adhoc.visited = (entry) => {
   adhoc.history.push(entry);
   if (adhoc.history.length > 1000) adhoc.history.shift();

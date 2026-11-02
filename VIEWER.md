@@ -347,8 +347,17 @@ there may wait on the network. An original the store lacks is fetched on a
 thread of its own (`adhoc fetch-original`), outside the matter's lock, and
 a read answers "not here" meanwhile. `/api/fetch/<doc>` starts a fetch if
 needed and says where it stands (`here`, `fetching`, `failed`, `absent`),
-at once. The shell asks again, less often as it goes, until it's here. One
-that failed isn't tried again for 30 seconds.
+at once.
+
+When a fetch ends, the viewer tells every window's shell. The fetching
+thread sends the event loop a `Fetched` event, and the loop runs
+`adhoc.fetched({content, state})` in each window, as it does for other
+news from outside (`adhoc.elsewhere`, `adhoc.visited`). A pane waiting for
+that original asks `/api/fetch` once more, and shows it. A pane starts
+listening before it first asks, so a fetch that ends in between isn't
+missed. If no word comes within 15 seconds, it asks anyway. An original
+that couldn't be fetched isn't tried again for 30 seconds, except by
+"try again" (`/api/fetch/<doc>?retry`).
 
 ## State
 
