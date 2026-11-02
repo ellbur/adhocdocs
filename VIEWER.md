@@ -67,7 +67,7 @@ open source.
 
 | Pane | Shows |
 |---|---|
-| `document` | a document in page, flow (its presentation), text, grid (spreadsheets) or hex mode (the original's bytes), with layer and mode switches, tag chips, a side panel of range tags and notes, and family and duplicate links |
+| `document` | a document in page, flow (its presentation), text, grid (spreadsheets) or hex mode (the original's bytes), with mode switches (and layer switches, when there's more than one layer), tag chips, a side panel of highlights, range tags and notes, family and duplicate links, and a ⋯ menu for downloads and hex mode |
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
 | `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
@@ -187,6 +187,55 @@ text, so tags, notes and marks work on it as on any range. Search hits
 (char ranges) light up the cells they fall in. Only the first 3,000 rows of
 a sheet are drawn, unless a locator points further down; text mode and
 search reach the rest.
+
+**The header** names the document's kind and title, then its modes, by
+what they show: *Pages*, *Formatted* (flow), *Extracted text* (text: the
+layer text line by line, exactly what search, quotes and Claude read) and
+*Cells* (grid). Hex mode is in the ⋯ menu, since few documents need it,
+unless nothing else can show the document; `f` cycles the others.
+
+## Downloads
+
+The ⋯ menu saves the document to the user's Downloads folder
+(`$XDG_DOWNLOAD_DIR`, else `~/Downloads`; `ADHOC_DOWNLOAD_DIR` overrides),
+never overwriting a file there:
+
+| Choice | What's saved |
+|---|---|
+| Original | the bytes as collected |
+| PDF | a PDF as is; an image as a PDF page; anything else laid out by MuPDF from its presentation (or its text) as Letter pages |
+| PDF with annotations | the same, with the pane's highlights and the document's ranged tags and notes as PDF highlight annotations (notes as their comments) and, on laid-out documents, numbered at the end; tags and notes on the whole document go on the first page |
+| Text | the layer's text, page breaks as form feeds |
+
+Only the user can ask for one: it is an IPC message from the shell
+(`export`), carried out by the worker that owns MuPDF
+([`export.rs`](viewer/src/export.rs)); the API Claude reaches has no way
+to write a file on the host. For pages the shell sends each annotation's
+boxes from the layer geometry. For a laid-out document it sends the HTML,
+each annotation's text colored with a near-black color that stands for
+it (MuPDF's HTML layout paints no inline backgrounds), and the host puts
+a highlight wherever that color landed. Annotations on another layer than
+the one shown are left out, and the message says how many.
+
+## Light and dark
+
+The ◐ button in the top bar sets the interface's theme (the system's,
+light or dark) and the documents' theme (the interface's, light or dark)
+apart, so dark chrome can frame light pages or the other way round. Both
+are kept per viewer, in its local storage.
+
+Dark documents cost the web view nothing: MuPDF's page images come with
+each pixel's lightness inverted and its hue kept (what CSS `invert(1)
+hue-rotate(180deg)` approximates), squeezed between the dark page color
+and a soft white, once per rendered page (`/page/…?dark=1`, cached
+apart). Presentations, text, grid and hex modes take dark colors from
+CSS. Highlights are blended with `screen` on dark pages, `multiply` on
+light ones. Only a presentation with colors of its own (an HTML email) is
+inverted with a CSS filter.
+
+**Sharp pages:** page images are rendered at the width they're shown, in
+device pixels, and panes and pages sit on whole pixels, so the web view
+never rescales them (rescaling cost text its antialiasing).
 
 ## Highlights and stepping
 

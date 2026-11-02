@@ -139,6 +139,85 @@ function toast(msg) {
   t.textContent = msg; t.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.hidden = true), 3500);
 }
+// -- menus -----------------------------------------------------------------------------------
+// One menu at a time, under the button that opened it. Items: {label, hint,
+// checked, disabled, onclick}, {heading}, or "-" for a separator.
+
+function showMenu(anchor, items) {
+  const m = $("#menu");
+  if (!m.hidden && m.anchor === anchor) return hideMenu();
+  hideMenu();
+  m.replaceChildren(...items.map((it) => {
+    if (it === "-") return el("div", { class: "msep" });
+    if (it.heading) return el("div", { class: "mh" }, it.heading);
+    return el("button", { role: "menuitem", title: it.title, disabled: it.disabled ? "" : null,
+                          onclick: () => { hideMenu(); it.onclick?.(); } },
+      ...(items.some((x) => x.checked !== undefined) ? [el("span", { class: "ck" }, it.checked ? "✓" : "")] : []),
+      el("span", {}, it.label), it.hint ? el("span", { class: "mhint" }, it.hint) : "");
+  }));
+  m.hidden = false; m.anchor = anchor;
+  anchor.classList.add("open");
+  const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.right - w)) + "px";
+  m.style.top = (r.bottom + 4 + h > innerHeight ? Math.max(6, r.top - h - 4) : r.bottom + 4) + "px";
+  m.querySelector("button:not(:disabled)")?.focus();
+}
+function hideMenu() {
+  const m = $("#menu");
+  if (m.hidden) return;
+  m.hidden = true; m.anchor?.classList.remove("open"); m.anchor = null;
+}
+document.addEventListener("mousedown", (ev) => { if (!ev.target.closest("#menu, .icon-btn.open")) hideMenu(); }, true);
+window.addEventListener("blur", () => hideMenu());
+// keys while a menu is open: arrows move, Escape closes (Enter and Space press the button)
+function menuKey(ev) {
+  const bs = [...$("#menu").querySelectorAll("button:not(:disabled)")];
+  const i = bs.indexOf(document.activeElement);
+  if (ev.key === "Escape") hideMenu();
+  else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") bs[(i + (ev.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length]?.focus();
+  else return;
+  ev.preventDefault();
+}
+
+// -- light and dark ----------------------------------------------------------------------------
+// The interface and documents each have a theme. The interface follows the
+// system unless told otherwise; documents follow the interface unless told
+// otherwise. Dark documents: page images come inverted from MuPDF (?dark=1),
+// presentations and text get dark colors (shell.css), so nothing is filtered
+// on screen except a presentation with colors of its own.
+
+const prefGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const prefSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+adhoc.theme = { ui: prefGet("adhoc.theme.ui", "system"), doc: prefGet("adhoc.theme.doc", "ui") };
+const systemDark = matchMedia("(prefers-color-scheme: dark)");
+function uiDark() { return adhoc.theme.ui === "dark" || (adhoc.theme.ui === "system" && systemDark.matches); }
+function docDark() { return adhoc.theme.doc === "ui" ? uiDark() : adhoc.theme.doc === "dark"; }
+function themeFrame(f) {
+  const r = f.contentDocument?.documentElement;
+  if (!r) return;
+  r.dataset.theme = uiDark() ? "dark" : "light";
+  r.dataset.doc = docDark() ? "dark" : "light";
+}
+function applyTheme() {
+  const r = document.documentElement, wasDoc = r.dataset.doc;
+  r.dataset.theme = uiDark() ? "dark" : "light";
+  r.dataset.doc = docDark() ? "dark" : "light";
+  for (const f of document.querySelectorAll("iframe")) themeFrame(f);
+  if (wasDoc && wasDoc !== r.dataset.doc) for (const p of adhoc.panes) p.docThemeChanged?.();
+}
+function setTheme(which, v) { adhoc.theme[which] = v; prefSet("adhoc.theme." + which, v); applyTheme(); }
+systemDark.addEventListener?.("change", () => applyTheme());
+applyTheme();
+$("#theme-btn").addEventListener("click", (ev) => showMenu(ev.currentTarget, [
+  { heading: "Interface" },
+  ...[["system", "Match the system"], ["light", "Light"], ["dark", "Dark"]].map(([v, label]) =>
+    ({ label, checked: adhoc.theme.ui === v, onclick: () => setTheme("ui", v) })),
+  "-", { heading: "Documents" },
+  ...[["ui", "Match the interface"], ["light", "Light"], ["dark", "Dark"]].map(([v, label]) =>
+    ({ label, checked: adhoc.theme.doc === v, onclick: () => setTheme("doc", v),
+       hint: v === "dark" ? "pages inverted" : "" })),
+]));
+
 function addHistory(loc, source) {
   const entry = { at: new Date().toISOString(), loc: typeof loc === "string" ? loc : locString(loc), source };
   adhoc.history.push(entry);                 // this window's, for marking visited items
@@ -292,8 +371,10 @@ function positionPanes() {
     const s = adhoc.slots?.get(p.id);
     if (!s) { p.root.style.display = "none"; continue; }
     const r = s.getBoundingClientRect();
-    Object.assign(p.root.style, { display: "", left: `${r.left - origin.left}px`, top: `${r.top - origin.top}px`,
-                                  width: `${r.width}px`, height: `${r.height}px` });
+    // whole pixels, so page images inside land on the screen's pixels and stay sharp
+    const L = Math.round(r.left - origin.left), T = Math.round(r.top - origin.top);
+    Object.assign(p.root.style, { display: "", left: `${L}px`, top: `${T}px`,
+                                  width: `${Math.round(r.right - origin.left) - L}px`, height: `${Math.round(r.bottom - origin.top) - T}px` });
   }
 }
 new ResizeObserver(() => positionPanes()).observe($("#panes"));
@@ -442,6 +523,78 @@ function drawRangeBoxes(container, scroller, root, s, e, cls, index = null) {
   }
 }
 
+// -- downloads ---------------------------------------------------------------------------------
+
+// The modes' names in the header, and what each shows.
+const MODES = {
+  page: { label: "Pages", title: "The pages as they print" },
+  flow: { label: "Formatted", title: "The document as it reads, with its formatting" },
+  text: { label: "Extracted text", title: "The extracted text, line by line: exactly what search, quotes and Claude read" },
+  grid: { label: "Cells", title: "The sheet's cells, one sheet at a time" },
+  hex: { label: "Bytes", title: "The original's bytes, exactly as collected" },
+};
+// a tag's color, made light enough to highlight with: text under it stays readable
+function lighten(hex, k = 0.5) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex || "");
+  if (!m) return "#ffe066";
+  return "#" + [m[1], m[2], m[3]].map((x) => Math.round(parseInt(x, 16) + (255 - parseInt(x, 16)) * k).toString(16).padStart(2, "0")).join("");
+}
+function fmtSize(n) {
+  if (n == null) return "";
+  return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+}
+// Wrap the text between two layer offsets in elements from `make`, one per
+// text node it crosses; the text itself is unchanged, so later offsets still
+// hold. Returns the last wrapper, or null if the range isn't there.
+function wrapRange(root, s, e, make) {
+  const a = pointAt(root, s), b = pointAt(root, e);
+  if (!a || !b) return null;
+  const d = root.ownerDocument, r = d.createRange();
+  try { r.setStart(...a); r.setEnd(...b); } catch { return null; }
+  const top = r.commonAncestorContainer.nodeType === 3 ? r.commonAncestorContainer.parentNode : r.commonAncestorContainer;
+  const texts = [], w = d.createTreeWalker(top, NodeFilter.SHOW_TEXT);
+  for (let n; (n = w.nextNode());) if (r.intersectsNode(n)) texts.push(n);
+  let last = null;
+  for (const t of texts) {
+    const from = t === r.startContainer ? r.startOffset : 0, to = t === r.endContainer ? r.endOffset : t.data.length;
+    if (to <= from) continue;
+    const mid = from > 0 ? t.splitText(from) : t;
+    if (to - from < mid.data.length) mid.splitText(to - from);
+    const m = make();
+    mid.replaceWith(m); m.append(mid);
+    last = m;
+  }
+  return last;
+}
+// How MuPDF lays out a document for a PDF: print styles, not the screen's.
+// Helvetica and Courier are MuPDF's own, so the PDF carries a small font, not a system one.
+const PRINT_CSS = `
+@page { margin: 54pt 60pt; }
+body { font-family: Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.4; color: #111; margin: 0; }
+header.doc-head { border-bottom: 1pt solid #999; padding-bottom: 4pt; margin-bottom: 10pt; }
+header.doc-head .t { font-weight: bold; font-size: 13pt; }
+header.doc-head .m { color: #666; font-size: 9pt; }
+.adhoc-flow p { margin: 0 0 2pt; }
+.adhoc-flow p.header { font-weight: bold; }
+.adhoc-flow p.quoted { color: #555; border-left: 2pt solid #ccc; padding-left: 6pt; }
+.adhoc-flow p.footnote, .adhoc-flow p.endnote, .adhoc-flow p.comment, .adhoc-flow p.header-footer { font-size: 9pt; color: #444; }
+.adhoc-flow.plain p { font-family: Courier, monospace; font-size: 9pt; white-space: pre-wrap; margin: 0; }
+.adhoc-flow .pagebreak { border-top: 1pt dashed #bbb; margin: 6pt 0; }
+.adhoc-flow img { max-width: 100%; }
+.adhoc-inline-image.missing, .adhoc-remote { color: #8a5a00; font-size: 9pt; }
+sup.nref { color: #1a4fb0; font-size: 7.5pt; font-weight: bold; }
+section.notes { margin-top: 18pt; border-top: 1pt solid #999; padding-top: 6pt; font-size: 9.5pt; }
+section.notes h2 { font-size: 11pt; margin: 0 0 6pt; }
+section.notes .by { color: #666; }
+`;
+const exportWaiting = new Map();
+let exportSeq = 0;
+function exportRequest(request) {
+  const id = ++exportSeq;
+  return new Promise((res) => { exportWaiting.set(id, res); post({ type: "export", id, request }); });
+}
+adhoc.exported = (id, result) => { const res = exportWaiting.get(id); exportWaiting.delete(id); res?.(result); };
+
 // -- document panes ---------------------------------------------------------------------------
 
 class DocumentPane {
@@ -486,6 +639,9 @@ class DocumentPane {
     return [info.meta.kind === "spreadsheet" && layer && "grid", info.pages && "page", layer?.presentation && "flow",
             (layer || info.size == null) && "text", info.size != null && "hex"].filter(Boolean);
   }
+  // the modes offered in the header: hex (the original's bytes) is in the ⋯ menu,
+  // unless it's the only one or showing now
+  shownModes() { return this.modes().filter((m) => m !== "hex" || this.mode === "hex" || this.modes().length === 1); }
   currentLayer() { return this.info?.layers.find((l) => l.id === this.layer); }
   state() {
     return {
@@ -528,23 +684,32 @@ class DocumentPane {
 
   async render() {
     const info = this.info, layer = this.currentLayer();
+    const modes = this.shownModes();
     this.head.replaceChildren(
+      info.meta.kind ? el("span", { class: "pane-kind", title: info.meta.content_type || info.meta.kind }, info.meta.kind) : "",
       el("span", { class: "pane-title", title: info.doc }, this.title()),
-      el("span", { class: "seg" }, ...info.layers.map((l) => el("button", { class: l.id === this.layer ? "on" : "", title: "layer " + short(l.id),
-        onclick: () => this.open({ doc: info.doc, layer: l.id }, { quiet: true }) }, l.view + (l.primary ? "*" : "")))),
-      el("span", { class: "seg" }, ...this.modes()
-        .map((m) => el("button", { class: m === this.mode ? "on" : "", onclick: () => this.setMode(m) }, m))),
+      // layers: only when there's a choice (the primary one, the one search reads first, is starred)
+      info.layers.length > 1 ? el("span", { class: "seg layers", title: "Layers: readings of the document (v)" }, ...info.layers.map((l) => el("button", {
+        class: l.id === this.layer ? "on" : "", title: `layer ${short(l.id)}${l.primary ? " (primary: what search reads first)" : ""}`,
+        onclick: () => this.open({ doc: info.doc, layer: l.id }, { quiet: true }) }, l.view + (l.primary ? "*" : "")))) : "",
+      modes.length > 1 || this.mode === "hex" ? el("span", { class: "seg modes" }, ...modes.map((m) => el("button", { class: m === this.mode ? "on" : "",
+        title: (MODES[m]?.title || m) + " (f)", onclick: () => this.setMode(m) }, MODES[m]?.label || m))) : "",
       el("span", { class: "chips" }),
       el("button", { class: "entstat", title: "The entity layer: hover a name to see what it is, or a date to see what came before and after; click to select it and ask Claude. E shows all, known only, or none.",
-        onclick: () => cycleEntityMode() }), el("span", { class: "status" }));
-    const links = [];
-    if (info.parent) links.push(["parent: " + (info.parent.name || short(info.parent.doc)), info.parent.doc]);
-    for (const c of info.children) links.push(["attachment: " + (c.name || short(c.doc)), c.doc]);
-    for (const d of info.duplicates) links.push(["duplicate " + short(d), d]);
-    this.links.replaceChildren(...links.map(([t, d]) => el("a", { onclick: () => this.open("doc:" + d, { source: "user" }) }, t)));
-    this.links.hidden = !links.length;
+        onclick: () => cycleEntityMode() }), el("span", { class: "status" }),
+      el("button", { class: "icon-btn", "aria-label": "More: download, the original's bytes", "aria-haspopup": "menu",
+        onclick: (ev) => showMenu(ev.currentTarget, this.menuItems()) }, "⋯"));
+    const open = (d) => this.open("doc:" + d, { source: "user" });
+    const groups = [];
+    if (info.parent) groups.push(["In", [[info.parent.name || short(info.parent.doc), info.parent.doc]]]);
+    if (info.children.length) groups.push([info.children.length > 1 ? "Attachments" : "Attachment", info.children.map((c) => [c.name || short(c.doc), c.doc])]);
+    if (info.duplicates.length) groups.push([info.duplicates.length > 1 ? "Duplicates" : "Duplicate", info.duplicates.map((d) => [short(d), d])]);
+    this.links.replaceChildren(...groups.map(([label, ds]) => el("span", { class: "grp" }, label + ":",
+      ...ds.map(([t, d]) => el("a", { title: d, onclick: () => open(d) }, t)))));
+    this.links.hidden = !groups.length;
     this.renderStrip();
     this.body.replaceChildren();
+    this.body.className = "pane-body docview" + (this.mode === "page" ? " paged" : "");
     this.words = null;
     if (!layer) { this.body.append(el("p", { class: "hint", style: "padding:1em" }, "This document has no text layer: nothing here reads its format. " + (this.mode === "hex" ? "These are its bytes, exactly as given. " : "") + "Ask Claude what it is; it can look at the bytes, and show you its own reading of them, marked as such.")); }
     if (this.mode === "page") await this.renderPages();
@@ -559,13 +724,177 @@ class DocumentPane {
     this.loadEntities();
   }
   async setMode(m) { this.mode = m; await this.render(); }
+  // the document theme changed: pages are drawn again (MuPDF inverts them),
+  // only those in view at once; a presentation is restyled where it is
+  docThemeChanged() {
+    if (this.mode === "page" && this.pageEls) {
+      this.observer?.disconnect();
+      for (const p of this.pageEls) { p.querySelector("img")?.remove(); delete p.dataset.filled; }
+      for (const p of this.pageEls) this.observer.observe(p);
+    } else if (this.mode === "flow" && this.frame) this.frame.classList.toggle("own-colors", this.ownColors && docDark());
+    this.drawBoxes();
+  }
+  pageURL(doc, n) { return `/page/${doc}/${n}?w=${this.pagePx}${docDark() ? "&dark=1" : ""}`; }
+
+  // -- downloads, and the rest of the ⋯ menu ------------------------------------------------
+  menuItems() {
+    const info = this.info, layer = this.currentLayer(), modes = this.modes();
+    const ext = (info.meta.name || "").match(/\.([A-Za-z0-9]{1,6})$/)?.[1]?.toLowerCase();
+    const n = this.exportAnnotations().count;
+    const items = [{ heading: "Download" },
+      { label: "Original", hint: (ext ? "." + ext + " · " : "") + fmtSize(info.size), disabled: info.size == null,
+        title: "The file exactly as it was collected", onclick: () => this.exportAs("original") },
+      { label: "PDF", hint: info.meta.kind === "pdf" ? "the original" : info.pages ? "the pages" : "as formatted",
+        disabled: !info.pages && !layer, title: info.pages ? "The pages as a PDF" : "The formatted view, laid out as pages", onclick: () => this.exportAs("pdf") },
+      { label: "PDF with annotations", hint: n ? `${n} marked` : "none yet", disabled: !n || (!info.pages && !layer),
+        title: "Tags, notes and highlights marked on the pages, notes as PDF comments (or numbered, at the end)", onclick: () => this.exportAs("annotated") },
+      { label: "Text", hint: ".txt", disabled: !layer, title: "The extracted text of this layer: what search and Claude read", onclick: () => this.exportAs("text") }];
+    if (modes.includes("hex") && modes.length > 1) items.push("-", this.mode === "hex"
+      ? { label: "Back from the bytes", onclick: () => this.setMode(modes[0]) }
+      : { label: "Show the original's bytes", hint: "hex", title: "The file's bytes, exactly as collected, sixteen to a row", onclick: () => this.setMode("hex") });
+    return items;
+  }
+  // What a PDF with annotations shows: tags and notes on this layer's text
+  // (or on regions of pages), and Claude's highlights in this pane.
+  // Annotations on another layer can't be placed on these pages, so they're counted apart.
+  exportAnnotations() {
+    const doc = this.info.doc, A = adhoc.annotations, out = [], docLevel = [];
+    let elsewhere = 0;
+    const color = (t) => A.definitions.find((d) => d.tag === t)?.color;
+    const place = (target, x) => {
+      const sel = target?.select;
+      if (!sel) return docLevel.push(x.tag ? "Tag on the document: " + x.text : "Note on the document, " + x.text);
+      if (target.layer && target.layer !== this.layer && sel.char) return elsewhere++;
+      if (sel.char) out.push({ ...x, range: sel.char });
+      else if (sel.xywh) out.push({ ...x, region: { page: sel.page, xywh: sel.xywh } });
+      else if (sel.page !== undefined) docLevel.push(`p. ${sel.page}: ${x.text}`);
+      else elsewhere++;
+    };
+    for (const t of A.tags.filter((t) => t.target.doc === doc)) place(t.target, { text: t.tag, author: t.by, color: lighten(color(t.tag) || "#ffcc00"), tag: true });
+    const notes = A.notes.filter((n) => n.target?.doc === doc);
+    for (const n of notes.filter((n) => !n.parent || !notes.some((p) => p.note === n.parent))) {
+      const replies = [], walk = (id) => notes.filter((r) => r.parent === id).forEach((r) => { replies.push(`${r.by}: ${r.body}`); walk(r.note); });
+      walk(n.note);
+      place(n.target, { text: [`${n.by}: ${n.body}`, ...replies].join("\n\n"), author: n.by, color: "#9cc2ff", note: true });
+    }
+    for (const h of this.highlights.filter((h) => !h.temp && h.label !== "annotation")) {
+      if (h.range) out.push({ range: h.range, text: h.label || "highlight", author: "claude", color: "#ffc34d" });
+      else if (h.region) out.push({ region: h.region, text: h.label || "highlight", author: "claude", color: "#ffc34d" });
+    }
+    // in document order, so notes are numbered as they're read
+    const at = (a) => a.range ? a.range[0] : a.region.page * 1e9 + a.region.xywh[1] * 1e8;
+    out.sort((a, b) => at(a) - at(b));
+    return { list: out, docLevel, elsewhere, count: out.length + docLevel.length };
+  }
+  async exportAs(format) {
+    const info = this.info, req = { doc: info.doc, format, layer: this.layer };
+    const ann = format === "annotated" ? this.exportAnnotations() : null;
+    toast(format === "original" ? "Saving the original…" : "Making the " + (format === "text" ? "text" : "PDF") + "…");
+    try {
+      if ((format === "pdf" || format === "annotated") && !info.pages) {
+        req.html = await this.printHTML(ann);
+        if (ann) {
+          req.annots = ann.list.filter((a) => a.mark).map((a) => ({ mark: a.mark, color: a.color, text: a.text, author: a.author }));
+          req.doc_note = ann.docLevel.join("\n\n");
+        }
+      } else if (ann) {
+        // boxes on the pages, from the layer's geometry, as fractions of each page
+        const geo = this.words?.geo || (this.currentLayer()?.geometry ? await geometry(this.layer) : []);
+        req.annots = [];
+        for (const a of ann.list) {
+          if (a.region) {
+            const [x, y, w, h] = a.region.xywh;
+            req.annots.push({ page: a.region.page, kind: "region", boxes: [[x, y, x + w, y + h]], color: a.color, text: a.text, author: a.author });
+            continue;
+          }
+          const byPage = new Map();
+          for (const g of geo) if (g.start < a.range[1] && a.range[0] < g.end) (byPage.get(g.page) || byPage.set(g.page, []).get(g.page)).push(g.box);
+          for (const [page, boxes] of byPage) req.annots.push({ page, boxes, color: a.color, text: a.text, author: a.author });
+        }
+        req.doc_note = ann.docLevel.join("\n\n");
+      }
+    } catch (e) { return toast("Couldn't make it: " + e.message); }
+    const r = await exportRequest(req);
+    if (r.error) return toast("Couldn't save: " + r.error);
+    toast("Saved to " + r.saved + (ann?.elsewhere ? ` (${ann.elsewhere} on another layer left out)` : ""));
+  }
+  // The document as HTML for MuPDF to lay out as pages: its presentation (or
+  // its text, line by line), with annotations marked and notes numbered at the end.
+  async printHTML(ann) {
+    const info = this.info, layer = this.currentLayer();
+    let d;
+    if (layer?.presentation) {
+      d = new DOMParser().parseFromString(await (await fetch("/presentation/" + layer.id)).text(), "text/html");
+      d.querySelectorAll("link, script").forEach((x) => x.remove());
+      // inline images are fetched here: MuPDF reaches nothing
+      for (const img of d.querySelectorAll("img[src^='/']")) {
+        try {
+          const b = await (await fetch(img.getAttribute("src"))).blob();
+          img.src = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
+        } catch { img.remove(); }
+      }
+    } else {
+      const t = await layerText(layer.id);
+      d = document.implementation.createHTMLDocument("");
+      const art = d.createElement("article"); art.className = "adhoc-flow plain";
+      let at = 0;
+      for (const line of t.cps.join("").split("\n")) {
+        const parts = line.split("\f");
+        parts.forEach((part, i) => {
+          if (i) { art.append(Object.assign(d.createElement("div"), { className: "pagebreak" })); at++; }
+          const pEl = d.createElement("p"); pEl.dataset.o = at; pEl.textContent = part || "\u00a0";
+          if (!part) pEl.dataset.empty = "";
+          art.append(pEl); at += cpLen(part);
+        });
+        at++;
+      }
+      d.body.append(art);
+    }
+    const root = d.body, notes = [];
+    if (ann) {
+      const marked = [];
+      // MuPDF's layout paints no inline backgrounds: each range's text gets a
+      // color that stands for it (#01xxyy, all but black), and the host puts a
+      // PDF highlight wherever that color landed (export.rs)
+      ann.list.filter((a) => a.range).forEach((a, i) => {
+        a.mark = i + 1;
+        const last = wrapRange(root, ...a.range, () => {
+          const m = d.createElement("span");
+          m.style.color = "#01" + a.mark.toString(16).padStart(4, "0");
+          return m;
+        });
+        if (last) marked.push([last, a]);
+      });
+      // numbers go in after every range is marked, so the offsets hold while marking
+      for (const [last, a] of marked) {
+        notes.push(a);
+        const sup = d.createElement("sup"); sup.className = "nref"; sup.textContent = `[${notes.length}]`;
+        last.after(sup);
+      }
+      for (const a of ann.list.filter((a) => a.region)) notes.push({ ...a, text: `p. ${a.region.page}, a region: ${a.text}` });
+    }
+    const esc = (t) => t.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    const meta = [info.meta.kind, info.dated?.date && fmtDate(info.dated.date)].filter(Boolean).join(" · ");
+    const end = ann && (notes.length || ann.docLevel.length) ? `<section class="notes"><h2>Annotations</h2>` +
+      (ann.docLevel.length ? `<p class="doclevel">${ann.docLevel.map(esc).join("<br>")}</p>` : "") +
+      `<ol>${notes.map((a) => `<li><b>${esc(a.tag ? "Tag: " + a.text : a.note ? "Note" : "Highlight")}</b>${a.tag ? "" : " " + esc(a.text).replace(/\n/g, "<br>")}` +
+        `<span class="by"> (${esc(a.author || "")})</span></li>`).join("")}</ol></section>` : "";
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${PRINT_CSS}</style></head><body>` +
+      `<header class="doc-head"><div class="t">${esc(this.title())}</div><div class="m">${esc(meta)}</div></header>` +
+      root.innerHTML + end + `</body></html>`;
+  }
 
   // page mode: MuPDF images plus an invisible text layer from geometry
   async renderPages() {
     const info = this.info;
     const wrap = el("div", { class: "pages" });
     this.body.append(wrap);
-    const width = Math.max(300, Math.min(this.body.clientWidth - 30, 1100));
+    // the image is drawn at its own size, pixel for pixel: a page image the
+    // web view has to scale (up or down) loses its antialiasing
+    const dpr = devicePixelRatio || 1;
+    this.pagePx = Math.round(Math.max(300, Math.min(this.body.clientWidth - 30, 1100)) * dpr);
+    const width = this.pagePx / dpr;
+    wrap.style.paddingLeft = Math.max(0, Math.round(((this.body.clientWidth - width) / 2) * dpr) / dpr) + "px";
     this.pageEls = info.pages.map(([w, h], i) => {
       const p = el("div", { class: "page", "data-page": i + 1, style: `width:${width}px;height:${(width * h) / w}px` });
       p.append(el("span", { class: "pageno" }, String(i + 1)));
@@ -588,12 +917,12 @@ class DocumentPane {
       for (const p of this.pageEls) if (p.dataset.filled) this.fillWords(p);
     }
   }
-  pageWidthPx() { return Math.round((this.pageWidth * devicePixelRatio) / 200) * 200; }
+
   fillPage(p) {
     if (p.dataset.filled) return;
     p.dataset.filled = "1";
     const n = Number(p.dataset.page);
-    const img = el("img", { src: `/page/${this.info.doc}/${n}?w=${this.pageWidthPx()}`, draggable: "false", alt: "" });
+    const img = el("img", { src: this.pageURL(this.info.doc, n), draggable: "false", alt: "" });
     img.addEventListener("load", () => this.shown(), { once: true });
     p.prepend(img);
     if (this.words) this.fillWords(p);
@@ -633,7 +962,7 @@ class DocumentPane {
     if (!s || s.position + 1 >= s.items.length || !this.pageWidth) return;
     try {
       const info = await docInfo(parseLoc(s.items[s.position + 1]).doc);
-      if (info.pages) fetch(`/page/${info.doc}/1?w=${this.pageWidthPx()}`);
+      if (info.pages) fetch(this.pageURL(info.doc, 1));
     } catch {}
   }
   boxesFor(s, e) {
@@ -710,11 +1039,15 @@ class DocumentPane {
 
   // flow mode: the layer's presentation, in a frame where no script runs
   async renderFlow() {
-    const frame = el("iframe", { class: "web", src: "/presentation/" + this.layer });
+    const frame = el("iframe", { class: "web", src: "/presentation/" + this.layer + (docDark() ? "?doc=dark" : "") });
     this.body.append(frame);
     this.frame = frame;
     await new Promise((res) => frame.addEventListener("load", res, { once: true }));
     const d = frame.contentDocument;
+    themeFrame(frame);
+    // colors of its own (an HTML body) can't be given dark ones: then the frame is inverted
+    this.ownColors = !!d.querySelector("[style*='color'], [bgcolor], [color], [style*='background']");
+    frame.classList.toggle("own-colors", this.ownColors && docDark());
     d.addEventListener("mousedown", () => focus(this.id), true);   // events in a frame don't reach the pane
     d.addEventListener("mouseup", (ev) => this.onMouseUp(ev, d));
     d.addEventListener("keydown", onKey);
@@ -1357,8 +1690,10 @@ class DocumentPane {
     const kids = [];
     // the highlights, labelled, in document order: click one to go to it
     const hs = this.hlList();
+    if (hs.length) kids.push(el("div", { class: "side-h" }, "Highlights"));
     hs.forEach((h, i) => kids.push(el("div", { class: "ann hl-item" + (h === this.hlCur ? " current" : ""), title: "Go to this highlight",
       onclick: () => this.goHighlight(h) }, el("div", {}, h.label || "(no label)"), el("div", { class: "who" }, `highlight ${i + 1} of ${hs.length}`))));
+    if (ranged.length) kids.push(el("div", { class: "side-h" }, "Tags"));
     for (const t of ranged) kids.push(item("", `▍${t.tag}: “${(t.target.quote?.exact || "").slice(0, 60)}”`, t.by, t.target));
     const top = notes.filter((n) => !n.parent || !notes.some((p) => p.note === n.parent));
     const thread = (n, depth) => {
@@ -1370,6 +1705,7 @@ class DocumentPane {
       ]));
       for (const r of notes.filter((x) => x.parent === n.note)) thread(r, depth + 1);
     };
+    if (top.length) kids.push(el("div", { class: "side-h" }, "Notes"));
     top.forEach((n) => thread(n, 0));
     this.side.replaceChildren(...kids);
   }
@@ -1553,6 +1889,7 @@ class WebPane {
   items() { return this.doc() ? [...this.doc().querySelectorAll("[data-locator]")] : []; }
 
   wire() {
+    themeFrame(this.frame);
     const d = this.doc();
     if (!d || !d.body) return;
     d.addEventListener("keydown", onKey);
@@ -2357,6 +2694,7 @@ function entityEditor() {
 // -- keyboard ---------------------------------------------------------------------------------
 
 function onKey(ev) {
+  if (!$("#menu").hidden) return menuKey(ev);
   if (ev.target.closest?.("input,textarea,select") && ev.key !== "Escape") return;
   if (!$("#palette").hidden || !$("#note-editor").hidden || !$("#entity-editor").hidden) return;
   const p = focusedPane();
@@ -2381,7 +2719,7 @@ function onKey(ev) {
   else if (k === "e") entityEditor();
   else if (k === "E") cycleEntityMode();
   else if (k === "v" && doc?.info?.layers.length > 1) { const ls = doc.info.layers; const i = ls.findIndex((l) => l.id === doc.layer); doc.open({ doc: doc.info.doc, layer: ls[(i + 1) % ls.length].id }, { quiet: true }); }
-  else if (k === "f" && doc?.info) { const modes = doc.modes(); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
+  else if (k === "f" && doc?.info) { const modes = doc.modes().filter((m) => m !== "hex" || doc.modes().length === 1); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
   else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev in the sequence, or highlight if none · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
