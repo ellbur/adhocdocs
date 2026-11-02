@@ -3,12 +3,16 @@
 <head>
 <meta charset="utf-8">
 <title>adhocdocs</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/shell.css">
 </head>
 <body class="adhoc-shell">
+<aside id="dock" hidden></aside><div id="dock-split" hidden></div>
+<div id="docs">
 <header id="top"><nav id="tabs"></nav>
   <div id="top-tools"><button id="theme-btn" class="icon-btn" aria-label="Light and dark, for the interface and for documents">◐</button></div></header>
 <main id="panes"><div id="layout"></div></main>
+</div>
 <div id="palette" hidden>
   <input id="palette-input" placeholder="Tag… Enter applies · Shift+Enter: family · Ctrl+Enter: duplicates" autocomplete="off">
   <ul id="palette-list"></ul>
@@ -30,6 +34,9 @@
 <div id="entity-card" hidden></div>
 <div id="menu" role="menu" hidden></div>
 <div id="toast" hidden></div>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/term.js"></script>
 <script src="/entities.js"></script>
 <script src="/dates.js"></script>
 <script src="/shell.js"></script>

@@ -31,6 +31,19 @@ const SHELL_CSS: &str = include_str!("../shell/shell.css");
 const ENTITIES_JS: &str = include_str!("../shell/entities.js");
 const DATES_JS: &str = include_str!("../shell/dates.js");
 
+/// The files every page of the viewer's own can load: the terminal (term.js,
+/// with xterm.js) and the styles, for the launcher as well as the shell.
+pub fn common_file(name: &str) -> Option<(&'static str, &'static [u8])> {
+    Some(match name {
+        "shell.css" => ("text/css", SHELL_CSS.as_bytes()),
+        "term.js" => ("text/javascript", include_bytes!("../shell/term.js")),
+        "vendor/xterm.js" => ("text/javascript", include_bytes!("../shell/vendor/xterm.js")),
+        "vendor/addon-fit.js" => ("text/javascript", include_bytes!("../shell/vendor/addon-fit.js")),
+        "vendor/xterm.css" => ("text/css", include_bytes!("../shell/vendor/xterm.css")),
+        _ => return None,
+    })
+}
+
 pub struct Response {
     pub status: u16,
     pub mime: &'static str,
@@ -114,7 +127,10 @@ impl Handler {
         match parts.as_slice() {
             [""] | ["index.html"] => ok("text/html", SHELL_HTML),
             ["shell.js"] => ok("text/javascript", SHELL_JS),
-            ["shell.css"] => ok("text/css", SHELL_CSS),
+            [..] if common_file(&parts.join("/")).is_some() => {
+                let (mime, body) = common_file(&parts.join("/")).unwrap();
+                Response { status: 200, mime, body: body.to_vec(), csp: false }
+            }
             ["entities.js"] => ok("text/javascript", ENTITIES_JS),
             ["dates.js"] => ok("text/javascript", DATES_JS),
             ["api", "doc", doc] => self.doc_info(doc),

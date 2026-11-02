@@ -183,11 +183,15 @@ def setup(check_only=False, viewer=True, image=True, no_cache=False) -> dict:
         say(f"  {mark} {c.name}" + (f" ({c.detail})" if c.detail else ""))
     missing = [c for c in checks if not c.ok]
     summary = {"checks": {c.name: c.ok for c in checks}}
+    if check_only:
+        summary.update(built())
     if missing:
         say("\nTo fix:")
         for c in missing:
             say(f"  - {c.name}, for {c.needed_for}: {c.fix}")
-        raise SetupError(f"missing prerequisites: {', '.join(c.name for c in missing)}")
+        raise SetupError(f"missing prerequisites: {', '.join(c.name for c in missing)}",
+                         [{"name": c.name, "needed_for": c.needed_for, "fix": c.fix, "detail": c.detail} for c in missing],
+                         summary)
     if check_only:
         return summary
 
@@ -202,6 +206,12 @@ def setup(check_only=False, viewer=True, image=True, no_cache=False) -> dict:
         except (container.ContainerError, subprocess.CalledProcessError) as e:
             raise SetupError(f"the image build failed: {e}") from e
         summary["image"] = container.IMAGE
+    from . import gui
+    entry = gui.install_desktop_entry() if viewer else None
+    if entry:
+        summary["desktop_entry"] = str(entry)
+        say(f"\nadhocdocs is in your desktop's applications menu now ({entry}), or run `uv run adhoc gui`:\n"
+            "it makes matters, adds documents and opens sessions without a command line.")
     say("\nSet up. Next: make a matter, e.g. the demo:\n"
         "  uv run adhoc init ~/matters/demo\n"
         "  uv run adhoc --matter ~/matters/demo ingest --manifest corpus/manifest.toml\n"
@@ -210,4 +220,24 @@ def setup(check_only=False, viewer=True, image=True, no_cache=False) -> dict:
 
 
 class SetupError(Exception):
-    pass
+    def __init__(self, msg, missing=None, summary=None):
+        super().__init__(msg)
+        self.missing = missing
+        self.summary = summary or {}
+
+
+def built() -> dict:
+    """What is built already: the viewer and the session image (the launcher
+    offers to build what isn't)."""
+    from . import container
+    from .view import NotRunning, viewer_binary
+    out = {}
+    try:
+        out["viewer"] = viewer_binary()
+    except NotRunning:
+        out["viewer"] = None
+    try:
+        out["image"] = container.IMAGE if container.image_exists() else None
+    except (container.ContainerError, OSError):
+        out["image"] = None
+    return out

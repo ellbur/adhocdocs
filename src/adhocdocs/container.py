@@ -107,6 +107,8 @@ def image_id() -> str | None:
 
 
 def image_exists() -> bool:
+    if not shutil.which("podman"):
+        raise ContainerError("podman is not installed: see `adhoc setup --check`")
     return subprocess.run(["podman", "image", "exists", IMAGE]).returncode == 0
 
 
@@ -128,7 +130,8 @@ def _bind(src: Path, dst: str, ro=False, bridged=False) -> list[str]:
     return ["-v", f"{src}:{dst}" + (":ro" if ro else "")]
 
 
-def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple[str, str] | None = None) -> list[str]:
+def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple[str, str] | None = None,
+                 tty: bool | None = None) -> list[str]:
     """The `podman run` arguments for a session. Pure, so it can be tested.
     With ``volumes`` (on Windows and macOS: :mod:`adhocdocs.bridge`), the
     socket directories are those two Podman volumes, shared with the bridge,
@@ -138,8 +141,9 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
            "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name,
            "ADHOC_MATTER_ID": m.id or "", "ADHOC_POOL_FOUNDER": m.config.get("founder", "")}
-    tty = ["-it"] if sys.stdin.isatty() else ["-i"]
-    args = ["run", "--rm", *tty, "--name", name, "--hostname", "adhoc",
+    if tty is None:
+        tty = sys.stdin.isatty()
+    args = ["run", "--rm", *(["-it"] if tty else ["-i"]), "--name", name, "--hostname", "adhoc",
             "--network", "none",          # loopback only: no route out, no DNS
             f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",
             "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
@@ -223,8 +227,30 @@ def wait_for(path: Path, seconds=10) -> bool:
     return False
 
 
-def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
+def _end_on_hangup():
+    """Closing the terminal window (SIGHUP) or being told to stop (SIGTERM)
+    ends the session the same way as leaving Claude Code: the cleanup below
+    runs, so the viewer and the services don't outlive it."""
+    if os.name == "nt":
+        return
+    import signal
+
+    def end(signum, frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, end)
+
+
+def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here") -> int:
+    """Run a session to its end. ``terminal``: ``here``, Claude Code in this
+    process's terminal; ``beside`` or ``window``, in the viewer's own
+    terminal (adhocdocs.gui), beside the documents or in a window of its own."""
+    in_viewer = terminal in ("beside", "window")
+    if in_viewer and not viewer:
+        raise ContainerError("the viewer runs Claude Code's terminal here: leave out --no-viewer, or use --terminal here")
     if not image_exists():
+        if in_viewer:
+            raise ContainerError("the session image isn't built yet: run setup first (`adhoc setup`, or Set up in the launcher)")
         print("Building the session image (first run; this takes a few minutes)…", file=sys.stderr)
         build_image()
     (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
@@ -233,12 +259,13 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
     from . import annotations, purge
     annotations.hotkeys(m)          # this installation's own, written before the session can only read them
     purge.enforce(m)
+    notices = []        # said before Claude Code starts, in whichever terminal it has
     for n in purge.pending(m):
-        print(f"Documents were purged from this matter ({n['reason']}, by {n['by']}, {n['at'][:10]}): "
+        notices.append(f"Documents were purged from this matter ({n['reason']}, by {n['by']}, {n['at'][:10]}): "
               f"{len(n['documents'])} document(s)."
               + (f" Workspace files that mention them: {', '.join(n['workspace_files'][:8])}"
                  f"{'…' if len(n['workspace_files']) > 8 else ''}." if n["workspace_files"] else "")
-              + f" {n['steps']} When done: adhoc purges --ack {n['purge']} --user <you>", file=sys.stderr)
+              + f" {n['steps']} When done: adhoc purges --ack {n['purge']} --user <you>")
     (m.root / "run").mkdir(exist_ok=True)
     first = not any((m.root / "claude-home").iterdir())
     base = slug(m)
@@ -260,6 +287,7 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
 
     started = []
     code = None
+    _end_on_hangup()
     try:
         # Everything the session can reach, on sockets in one directory.
         started.append(spawn(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
@@ -275,23 +303,33 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
             # a watcher already running for this matter keeps it, and this one exits
             started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "sync", "watch"],
                                  m.root / "run" / "sync.log"))
-        if viewer:
-            from .view import annotate_command, viewer_binary
-            started.append(spawn([viewer_binary(), "--matter", str(m.root), "--user", user,
-                                  "--socket", str(sockets / "viewer.sock"),
-                                  "--annotate", annotate_command()], m.root / "run" / "viewer.log"))
+        from .view import annotate_command, viewer_binary
+        viewer_cmd = [viewer_binary(), "--matter", str(m.root), "--user", user,
+                      "--socket", str(sockets / "viewer.sock"), "--annotate", annotate_command()] if viewer else []
+        if viewer and not in_viewer:
+            started.append(spawn(viewer_cmd, m.root / "run" / "viewer.log"))
         for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
             if not wait_for(sockets / sock):
                 raise ContainerError(f"{sock} did not start; see {m.root / 'run'}")
         if bridged:
             bridge = _start_bridge(name, sockets, volumes, started, m.root / "run" / "link.log")
         if first:
-            print(ACCOUNT_NOTICE, file=sys.stderr)
-        args = session_args(m, name, sockets, command, volumes)
+            notices.append(ACCOUNT_NOTICE)
+        args = session_args(m, name, sockets, command, volumes, tty=True if in_viewer else None)
         audit.append(session=session, source="launcher", kind="session-start", user=user, container=name,
                      image=IMAGE, image_id=image_id(), command=list(command) or None, viewer=viewer,
                      allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args,
                      **({"bridge_args": bridge} if bridged else {}))
+        if in_viewer:
+            # The viewer is the terminal: it runs podman on a pseudo-terminal of its own,
+            # and exits with podman's exit code.
+            run = [*viewer_cmd, "--dock", terminal, "--banner", "\n".join(notices), "--run", "podman", *args]
+            viewer_proc = spawn(run, m.root / "run" / "viewer.log")
+            started.append(viewer_proc)
+            code = viewer_proc.wait()
+            return code
+        for text in notices:
+            print(text, file=sys.stderr)
         # The terminal goes straight to the container: no relay in between.
         code = subprocess.call(["podman", *args])
         return code
@@ -299,6 +337,12 @@ def open_session(m: Matter, user: str, viewer=True, command=()) -> int:
         audit.append(session=session, source="launcher", kind="session-end", exit=code)
         for p in started:
             stop(p)
+        if in_viewer or code is None:
+            # the viewer, or the terminal, closed with the session still running: make sure it ends
+            try:
+                podman("rm", "-f", "-t", "2", name, check=False)
+            except ContainerError:
+                pass
         if bridged:
             podman("rm", "-f", "-t", "1", f"{name}-bridge", check=False)
             podman("volume", "rm", "-f", *volumes, check=False)

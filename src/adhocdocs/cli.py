@@ -11,7 +11,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import annapi, annotations, entities, lists, locators, view as viewmod
+from . import annapi, annotations, entities, gui, lists, locators, view as viewmod
 from .matter import Matter, MatterNotFound
 
 
@@ -60,6 +60,36 @@ SYNC_ERRORS = {"SyncError", "PoolError", "InviteError", "HubError", "BadLog", "P
 
 # -- adhoc: host-side matter administration -------------------------------------------
 
+def _hold():
+    try:
+        input("\nPress Enter to close.")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
+def _open(a, container) -> int:
+    """adhoc open: in this terminal, the viewer's, or a terminal program's (adhocdocs.gui)."""
+    m = Matter.find(a.path or a.matter)
+    gui.remember(m.root, opened=True)
+    terminal = a.terminal
+    if terminal == "auto":
+        terminal = "here" if sys.stdin.isatty() and sys.stdout.isatty() else "beside"
+    if terminal == "app":
+        from .portable import spawn
+        argv = [*gui.adhoc_command(), "open", str(m.root), "--terminal", "here", "--hold", "--user", a.user,
+                *(["--no-viewer"] if a.no_viewer else []), *(["--", *a.command] if a.command else [])]
+        proc = spawn(gui.in_terminal_app(argv))
+        out({"terminal": gui.terminal_app()[0], "pid": proc.pid})
+        return 0
+    if a.hold and sys.stdout.isatty():
+        print(f"\033]0;adhocdocs: {m.root.name}: Claude Code\007", end="", flush=True)      # the terminal window's title
+    code = container.open_session(m, a.user, not a.no_viewer, a.command, terminal)
+    if code and a.hold:
+        print(f"\nThe session ended with exit status {code}.", file=sys.stderr)
+        _hold()
+    return code
+
+
 @run
 def adhoc(argv=None):
     p = parser("adhoc", "Matter administration (host side).")
@@ -86,7 +116,18 @@ def adhoc(argv=None):
     s.add_argument("path", nargs="?", help="the matter (default: --matter, $ADHOC_MATTER or the enclosing matter)")
     s.add_argument("--no-viewer", action="store_true")
     s.add_argument("--user", default=os.environ.get("USER", "user"), help="who the viewer writes tags and notes as")
+    s.add_argument("--terminal", choices=["auto", "here", "beside", "window", "app"], default="auto",
+                   help="where Claude Code runs: here (this terminal), beside (in the viewer, beside the documents), "
+                        "window (in the viewer, a window of its own), app (a new window of the system's terminal "
+                        "program). auto: here when started from a terminal, else beside")
+    s.add_argument("--hold", action="store_true", help="if the session fails, wait for Enter before exiting "
+                                                       "(for a terminal window that would close)")
     s.add_argument("command", nargs="*", help="run this instead of claude (after --)")
+    s = sub.add_parser("gui", help="open the launcher: make matters, add documents and open sessions without a command line")
+    s.add_argument("--install", action="store_true", help="only add adhocdocs to the desktop's application menu")
+    s = sub.add_parser("matters", help="the matters on this user's list (the launcher's), most recent first")
+    s.add_argument("action", nargs="?", choices=["add", "forget"])
+    s.add_argument("path", nargs="?")
     s = sub.add_parser("image", help="build the session image on this machine")
     s.add_argument("action", choices=["build"])
     s.add_argument("--no-cache", action="store_true")
@@ -194,20 +235,38 @@ def adhoc(argv=None):
 
     if a.cmd == "init":
         m = Matter.create(a.path)
+        gui.remember(m.root)
         out({"matter": str(m.root)})
+        return
+    if a.cmd == "gui":
+        if a.install:
+            out({"desktop_entry": str(gui.install_desktop_entry())})
+            return
+        sys.exit(gui.launch())
+    if a.cmd == "matters":
+        if a.action:
+            if not a.path:
+                p.error(f"matters {a.action}: needs a path")
+            if a.action == "add":
+                gui.remember(Matter.find(a.path).root)
+            else:
+                gui.forget(a.path)
+        out(gui.matters())
         return
     if a.cmd == "hub":
         return _hub(a)
     if a.cmd == "sync" and a.action == "join":
         from . import invite
-        out(invite.join(a.code, a.path, a.name, a.address))
+        r = invite.join(a.code, a.path, a.name, a.address)
+        gui.remember(a.path)
+        out(r)
         return
     if a.cmd == "setup":
         from . import setup
         try:
             out(setup.setup(a.check, not a.no_viewer, not a.no_image, a.no_cache))
         except setup.SetupError as e:
-            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            print(json.dumps({"error": str(e), **e.summary, **({"missing": e.missing} if e.missing else {})}), file=sys.stderr)
             sys.exit(1)
         return
     if a.cmd in ("open", "image", "status"):
@@ -218,9 +277,11 @@ def adhoc(argv=None):
             elif a.cmd == "image":
                 container.build_image(a.no_cache)
             else:
-                sys.exit(container.open_session(Matter.find(a.path or a.matter), a.user, not a.no_viewer, a.command))
-        except container.ContainerError as e:
+                sys.exit(_open(a, container))
+        except (container.ContainerError, MatterNotFound, RuntimeError) as e:
             print(json.dumps({"error": str(e)}), file=sys.stderr)
+            if getattr(a, "hold", False):
+                _hold()
             sys.exit(1)
         return
     if a.cmd == "ingest":
@@ -231,6 +292,7 @@ def adhoc(argv=None):
     m = Matter.find(a.matter)
     if a.cmd == "ingest":
         from .ingest import ingest_manifest, ingest_paths
+        gui.remember(m.root)
 
         def report(doc, name, ext, children):
             out({"doc": doc, "name": name, "kind": ext.kind,

@@ -11,6 +11,11 @@
 //! Document pages are rendered natively by MuPDF and served as images; all
 //! other HTML (presentations, pages, lists, Claude's panes) is shown in
 //! sandboxed iframes where no script can run.
+//!
+//! With `--run`, the viewer is also the session's terminal (term.rs): it runs
+//! the session's command on a pseudo-terminal and shows it beside the
+//! documents or in a window of its own, for when `adhoc open` was started
+//! without a terminal (from the launcher, `--launcher`: launcher.rs).
 
 mod api;
 mod chrono;
@@ -18,6 +23,8 @@ mod endpoint;
 mod matter;
 mod overview;
 mod export;
+mod launcher;
+mod term;
 mod protocol;
 mod render;
 
@@ -43,6 +50,9 @@ pub enum UserEvent {
     Service(String, Value, Value),
     /// A download's outcome: the window, the request ID and the result.
     Exported(String, Value, Value),
+    /// The terminal's output, and its program's exit code.
+    TermOut(Vec<u8>),
+    TermExit(u32),
 }
 
 struct Args {
@@ -50,10 +60,18 @@ struct Args {
     socket: Option<PathBuf>,
     user: String,
     annotate: Option<String>,
+    /// the session's command, run in the viewer's own terminal
+    run: Vec<String>,
+    /// shown in the terminal before the command starts
+    banner: String,
+    /// where the terminal starts: "beside" the documents, or in a "window" of its own
+    dock: String,
+    launcher: bool,
 }
 
 fn args() -> Result<Args, String> {
-    let mut a = Args { matter: PathBuf::new(), socket: None, user: std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or("user".into()), annotate: None };
+    let mut a = Args { matter: PathBuf::new(), socket: None, user: std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or("user".into()), annotate: None,
+                      run: vec![], banner: String::new(), dock: "beside".into(), launcher: false };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -61,14 +79,19 @@ fn args() -> Result<Args, String> {
             "--socket" => a.socket = Some(it.next().ok_or("--socket needs a path")?.into()),
             "--user" => a.user = it.next().ok_or("--user needs an id")?,
             "--annotate" => a.annotate = Some(it.next().ok_or("--annotate needs a command")?),
+            "--banner" => a.banner = it.next().ok_or("--banner needs text")?,
+            "--launcher" => a.launcher = true,
+            "--dock" => a.dock = it.next().ok_or("--dock needs beside or window")?,
+            "--run" => { a.run = it.by_ref().collect(); }
             "-h" | "--help" => {
-                println!("adhoc-viewer --matter <dir> [--socket <path>] [--user <id>] [--annotate <cmd>]");
+                println!("adhoc-viewer --matter <dir> [--socket <path>] [--user <id>] [--annotate <cmd>] [--banner <text>] [--run <command>…]\n\
+                          adhoc-viewer --launcher --annotate <adhoc command>");
                 std::process::exit(0);
             }
             _ => return Err(format!("unknown argument {}", x)),
         }
     }
-    if a.matter.as_os_str().is_empty() {
+    if a.matter.as_os_str().is_empty() && !a.launcher {
         return Err("--matter is required".into());
     }
     Ok(a)
@@ -138,15 +161,47 @@ struct App {
     user: String,
     job_tx: mpsc::Sender<Job>,
     proxy: EventLoopProxy<UserEvent>,
+    term: Option<Session>,
+}
+
+/// The session's terminal, when the viewer runs it (`--run`).
+struct Session {
+    argv: Vec<String>,
+    banner: String,
+    /// started when the first window says how big the terminal is
+    term: Option<term::Term>,
+    /// the window showing it, and the window made for it alone (if it has one)
+    win: String,
+    alone: Option<String>,
+    attached_once: bool,
+    ended_by_user: bool,
+}
+
+impl Session {
+    fn running(&self) -> bool {
+        self.term.as_ref().map_or(true, |t| t.exited.is_none())
+    }
+    fn exit_code(&self) -> i32 {
+        self.term.as_ref().and_then(|t| t.exited).unwrap_or(0) as i32
+    }
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 impl App {
     fn open_window(&mut self, target: &EventLoopWindowTarget<UserEvent>) -> String {
+        self.open_window_as(target, None, (1400.0, 900.0))
+    }
+
+    fn open_window_as(&mut self, target: &EventLoopWindowTarget<UserEvent>, title: Option<String>, size: (f64, f64)) -> String {
         self.next_window += 1;
         let id = format!("w{}", self.next_window);
         let window = WindowBuilder::new()
-            .with_title(if id == "w1" { self.title.clone() } else { format!("{} ({})", self.title, id) })
-            .with_inner_size(tao::dpi::LogicalSize::new(1400.0, 900.0))
+            .with_title(title.unwrap_or_else(|| if id == "w1" { self.title.clone() } else { format!("{} ({})", self.title, id) }))
+            .with_inner_size(tao::dpi::LogicalSize::new(size.0, size.1))
             .build(target)
             .unwrap();
         let job_tx = Mutex::new(self.job_tx.clone());
@@ -359,6 +414,64 @@ impl App {
         }
     }
 
+    // -- the session's terminal ---------------------------------------------------------------
+
+    /// Show the terminal in its window, redrawn from its output so far.
+    fn term_attach(&mut self) {
+        let Some(s) = self.term.as_mut() else { return };
+        let info = json!({
+            "title": "Claude Code", "alone": s.alone.as_deref() == Some(s.win.as_str()), "first": !s.attached_once,
+            "exited": s.term.as_ref().and_then(|t| t.exited).filter(|c| *c != 0).map(|c| json!({"code": c})),
+        });
+        s.attached_once = true;
+        let replay = s.term.as_ref().map(|t| b64(t.replay())).unwrap_or_default();
+        let win = s.win.clone();
+        if self.windows.get(&win).is_some_and(|w| w.ready) {
+            self.eval(&win, &format!("adhocTerm.attach({}, {})", json!(replay), info));
+        }
+    }
+
+    /// Move the terminal: into a new window of its own, or back beside the documents.
+    fn term_move(&mut self, target: &EventLoopWindowTarget<UserEvent>, to: &str) {
+        let Some(s) = self.term.as_ref() else { return };
+        let from = s.win.clone();
+        let dest = if to == "window" {
+            if s.alone.as_deref() == Some(from.as_str()) { return }
+            let title = format!("{}: Claude Code", self.title);
+            let w = self.open_window_as(target, Some(title), (900.0, 860.0));
+            self.term.as_mut().unwrap().alone = Some(w.clone());
+            // the documents' window stays the one Claude's commands go to
+            self.focused = from.clone();
+            w
+        } else {
+            let others = |w: &&String| **w != from && Some(w.as_str()) != s.alone.as_deref();
+            let Some(w) = self.windows.keys().find(others).or_else(|| s.alone.as_ref().filter(|a| **a != from)).cloned() else { return };
+            w
+        };
+        self.eval(&from, "adhocTerm.detach()");
+        self.term.as_mut().unwrap().win = dest.clone();
+        self.term_attach();
+        if to != "window" {
+            let alone = self.term.as_mut().unwrap().alone.take();
+            // the window made for the terminal goes, unless documents were moved into it
+            if let Some(w) = alone.filter(|w| !self.owners.values().any(|(x, _)| x == w)) {
+                self.close_window(&w);
+            }
+        }
+    }
+
+    /// The terminal's program ended.
+    fn term_exited(&mut self, code: u32) {
+        let Some(s) = self.term.as_mut() else { return };
+        if let Some(t) = s.term.as_mut() { t.exited = Some(code) }
+        if code == 0 || s.ended_by_user {
+            quit(code as i32);
+        }
+        let win = s.win.clone();
+        let msg = format!("The session ended with an error (exit {}). Its output is above; close the window when you're done.", code);
+        self.eval(&win, &format!("adhocTerm.exited({}, {})", code, json!(msg)));
+    }
+
     fn result(&mut self, win: &str, seq: u64, mut result: Value, matter: &Mutex<Matter>) {
         let Some((_, waiter)) = self.waiting.remove(&seq) else { return };
         match waiter {
@@ -387,6 +500,16 @@ impl App {
     }
 }
 
+/// Leave, with the session's exit code (the launcher passes it on).
+fn quit(code: i32) -> ! {
+    if let Some(s) = SOCKET.get() {
+        let _ = std::fs::remove_file(s);
+    }
+    std::process::exit(code)
+}
+
+static SOCKET: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 fn main() {
     let a = match args() {
         Ok(a) => a,
@@ -395,6 +518,9 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if a.launcher {
+        launcher::run(a.annotate.unwrap_or_default());
+    }
     let matter = match Matter::open(&a.matter) {
         Ok(m) => Arc::new(Mutex::new(m)),
         Err(e) => {
@@ -436,12 +562,22 @@ fn main() {
         windows: BTreeMap::new(), by_tao: HashMap::new(), focused: String::new(), next_window: 0,
         owners: BTreeMap::new(), waiting: HashMap::new(), gathers: HashMap::new(), history: Default::default(), seq: 0,
         title: format!("adhocdocs: {}", root_name), user: a.user.clone(), job_tx, proxy: proxy.clone(),
+        term: (!a.run.is_empty()).then(|| Session { argv: a.run.clone(), banner: a.banner.clone(), term: None, win: "w1".into(),
+                                                     alone: None, attached_once: false, ended_by_user: false }),
     };
     app.open_window(&event_loop);
+    if a.dock == "window" && app.term.is_some() {
+        let w = app.open_window_as(&event_loop, Some(format!("{}: Claude Code", app.title)), (900.0, 860.0));
+        let s = app.term.as_mut().unwrap();
+        s.win = w.clone();
+        s.alone = Some(w);
+        app.focused = "w1".into();
+    }
 
     // The API: commands go to the shells, results come back over IPC.
     let socket = a.socket.clone().unwrap_or_else(|| api::default_socket(&matter.lock().unwrap().root));
     api::serve(socket.clone(), proxy.clone(), panes.clone());
+    let _ = SOCKET.set(socket.clone());
     eprintln!("{}", json!({"viewer": "running", "socket": socket}));
     let annotate = a.annotate.clone();
 
@@ -450,18 +586,38 @@ fn main() {
         match event {
             Event::WindowEvent { window_id, event: WindowEvent::CloseRequested, .. } => {
                 let Some(w) = app.by_tao.get(&window_id).cloned() else { return };
-                if app.windows.len() > 1 {
+                if let Some(s) = app.term.as_ref().filter(|s| s.running() && s.win == w) {
+                    // closing the terminal ends the session: ask first
+                    let mut choices = vec![json!({"label": "End the session", "action": "end", "primary": true})];
+                    if s.alone.as_deref() == Some(w.as_str()) && app.windows.len() > 1 {
+                        choices.push(json!({"label": "Put it back beside the documents", "action": "back"}));
+                    }
+                    choices.push(json!({"label": "Cancel", "action": "cancel"}));
+                    let text = "Claude Code is still running. Closing its window ends the session. \
+                                (To continue the conversation later: claude --resume.)";
+                    app.eval(&w, &format!("adhocTerm.confirmClose({}, {})", json!(text), json!(choices)));
+                } else if app.windows.len() > 1 {
+                    if app.term.as_ref().is_some_and(|s| s.win == w) {
+                        app.term_move(target, "back");
+                    }
                     app.close_window(&w);
                 } else {
-                    let _ = std::fs::remove_file(&socket);
-                    *control_flow = ControlFlow::Exit
+                    quit(app.term.as_ref().map_or(0, |s| s.exit_code()));
                 }
             }
             Event::WindowEvent { window_id, event: WindowEvent::Focused(true), .. } => {
-                if let Some(w) = app.by_tao.get(&window_id) {
+                // Claude's commands go to the window the user last looked at documents in
+                if let Some(w) = app.by_tao.get(&window_id).filter(|w| app.term.as_ref().and_then(|s| s.alone.as_ref()) != Some(*w)) {
                     app.focused = w.clone();
                 }
             }
+            Event::UserEvent(UserEvent::TermOut(bytes)) => {
+                let Some(s) = app.term.as_mut() else { return };
+                if let Some(t) = s.term.as_mut() { t.saw(&bytes) }
+                let win = s.win.clone();
+                app.eval(&win, &format!("adhocTerm.out(\"{}\")", b64(&bytes)));
+            }
+            Event::UserEvent(UserEvent::TermExit(code)) => app.term_exited(code),
             Event::UserEvent(UserEvent::Command(cmd, reply)) => app.dispatch(target, cmd, reply),
             Event::UserEvent(UserEvent::Service(win, id, result)) => {
                 app.eval(&win, &format!("adhoc.served({}, {})", id, result));
@@ -481,7 +637,58 @@ fn main() {
                             let _ = w.webview.evaluate_script(&format!("adhoc.command({}, {})", seq, cmd));
                         }
                         app.broadcast_panes();
+                        if app.term.as_ref().is_some_and(|s| s.win == win) {
+                            app.term_attach();
+                        }
                     }
+                    "term-size" => {
+                        let (cols, rows) = (v["cols"].as_u64().unwrap_or(80) as u16, v["rows"].as_u64().unwrap_or(24) as u16);
+                        let Some(s) = app.term.as_mut().filter(|s| s.win == win) else { return };
+                        if let Some(t) = &s.term {
+                            t.resize(cols, rows);
+                            return;
+                        }
+                        // the first size: start the session's command at it
+                        let (out, exit) = (proxy.clone(), proxy.clone());
+                        let banner = s.banner.replace('\n', "\r\n");
+                        match term::Term::spawn(&s.argv, cols, rows, move |b| { let _ = out.send_event(UserEvent::TermOut(b)); },
+                                                move |c| { let _ = exit.send_event(UserEvent::TermExit(c)); }) {
+                            Ok(mut t) => {
+                                if !banner.is_empty() {
+                                    let b = format!("\x1b[2m{}\x1b[0m\r\n", banner.trim_end());
+                                    t.saw(b.as_bytes());
+                                    app.eval(&win, &format!("adhocTerm.out(\"{}\")", b64(b.as_bytes())));
+                                }
+                                app.term.as_mut().unwrap().term = Some(t);
+                            }
+                            Err(e) => {
+                                eprintln!("{}", json!({"error": format!("the session's command did not start: {}", e)}));
+                                quit(1);
+                            }
+                        }
+                    }
+                    "term-in" => {
+                        let data = v["data"].as_str().unwrap_or("");
+                        let bytes: Vec<u8> = if v["binary"].as_bool().unwrap_or(false) { data.chars().map(|c| c as u8).collect() } else { data.as_bytes().to_vec() };
+                        if let Some(t) = app.term.as_mut().and_then(|s| s.term.as_mut()) { t.input(&bytes) }
+                    }
+                    "term-move" => app.term_move(target, v["to"].as_str().unwrap_or("")),
+                    "term-close" => match v["action"].as_str().unwrap_or("") {
+                        "end" => {
+                            let Some(s) = app.term.as_mut() else { return };
+                            s.ended_by_user = true;
+                            match s.term.as_mut() {
+                                Some(t) if t.exited.is_none() => t.kill(),
+                                _ => quit(s.exit_code()),
+                            }
+                        }
+                        "back" => {
+                            let w = win.clone();
+                            app.term_move(target, "back");
+                            if app.windows.len() > 1 && app.windows.contains_key(&w) { app.close_window(&w); }
+                        }
+                        _ => {}
+                    },
                     "result" => app.result(&win, v["seq"].as_u64().unwrap_or(0), v["result"].clone(), &matter),
                     "state" => {
                         // which panes this window has now

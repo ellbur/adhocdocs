@@ -21,3 +21,11 @@ base64 = "0.22"
 percent-encoding = "2"
 sha2 = "0.10"
 libc = "0.2"
+portable-pty = "0.9"
+
+# file dialogs: GTK's own on Linux (the launcher's window is GTK), rfd elsewhere
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = "0.15"

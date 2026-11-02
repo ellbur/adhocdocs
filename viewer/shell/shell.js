@@ -204,6 +204,7 @@ function applyTheme() {
   r.dataset.doc = docDark() ? "dark" : "light";
   for (const f of document.querySelectorAll("iframe")) themeFrame(f);
   if (wasDoc && wasDoc !== r.dataset.doc) for (const p of adhoc.panes) p.docThemeChanged?.();
+  window.adhocTerm?.retheme();
 }
 // cropping pages' blank margins: one setting for every paginated document
 function cropMargins() { return prefGet("adhoc.cropMargins", "") === "1"; }
@@ -367,8 +368,13 @@ function renderTabs() {
   };
   $("#layout").replaceChildren(build(adhoc.tree, true));
   adhoc.slots = slots;
+  dockLayout();
   for (const p of adhoc.panes) p.root.classList.toggle("focused", p.id === adhoc.focused);
   positionPanes();
+}
+// A window holding only the terminal shows only the terminal.
+function dockLayout() {
+  document.body.classList.toggle("dock-only", !adhoc.panes.length && document.body.classList.contains("has-dock"));
 }
 // Each pane over its slot; panes in tabs not showing are hidden.
 function positionPanes() {
@@ -2758,6 +2764,7 @@ function entityEditor() {
 // -- keyboard ---------------------------------------------------------------------------------
 
 function onKey(ev) {
+  if (ev.target.closest?.("#dock")) return;          // the terminal's keys are the program's
   if (!$("#menu").hidden) return menuKey(ev);
   if (ev.target.closest?.("input,textarea,select") && ev.key !== "Escape") return;
   if (!$("#palette").hidden || !$("#note-editor").hidden || !$("#entity-editor").hidden) return;
@@ -2979,5 +2986,14 @@ setInterval(refreshAnnotations, 2000);
 entityCard.init();
 refreshAnnotations();
 refreshCandidates(true);
+// The session's terminal, when the viewer runs Claude Code itself (adhoc open
+// --terminal window): beside the documents, or in a window of its own.
+adhocTerm.init({
+  title: "Claude Code",
+  buttons: (info) => [info.alone
+    ? { label: "⇲", title: "Put Claude Code back beside the documents", onclick: () => post({ type: "term-move", to: "back" }) }
+    : { label: "⇱", title: "Move Claude Code to a window of its own", onclick: () => post({ type: "term-move", to: "window" }) }],
+  onLayout: () => { dockLayout(); positionPanes(); },
+});
 renderTabs();
 post({ type: "ready" });

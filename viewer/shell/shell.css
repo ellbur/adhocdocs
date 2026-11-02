@@ -8,6 +8,7 @@
   --hl: rgba(255, 204, 0, .38); --hl-cur: rgba(255, 166, 0, .62); --hl-edge: #c77700; --mark: rgba(214, 70, 40, .25);
   --ent: #1f8a70; --ent-bg: rgba(31, 138, 112, .07); --ent-sug: rgba(31, 138, 112, .55); --date: rgba(176, 108, 20, .7);
   --warn-ink: #8a5a00; --warn-bg: #fff4d6; --warn-line: #c90; --shadow: rgba(0, 0, 0, .25);
+  --term-bg: #fdfcfa; --term-ink: #1d1d1b; --bad: #b42318;
   /* documents, which have a theme of their own (data-doc on the root) */
   --doc-bg: #fff; --doc-ink: #1d1d1b; --doc-muted: #6b6b66; --doc-line: #dedad2; --doc-alt: #f6f5f2; --doc-well: #e9e8e4;
   --doc-sel: rgba(45, 95, 211, .28); --doc-hl: rgba(255, 204, 0, .38); --doc-hl-cur: rgba(255, 166, 0, .62); --doc-hl-edge: #c77700;
@@ -20,6 +21,7 @@
   --hl: rgba(255, 204, 0, .3); --hl-cur: rgba(255, 170, 0, .55); --hl-edge: #ffb84d; --mark: rgba(255, 120, 90, .3);
   --ent: #4cc9a4; --ent-bg: rgba(76, 201, 164, .08); --ent-sug: rgba(76, 201, 164, .6); --date: rgba(240, 180, 90, .75);
   --warn-ink: #f0c060; --warn-bg: rgba(240, 180, 60, .12); --warn-line: #a07020; --shadow: rgba(0, 0, 0, .6);
+  --term-bg: #141415; --term-ink: #e8e6e1; --bad: #ff7b72;
   color-scheme: dark;
 }
 /* dark documents: page images come from MuPDF already inverted (render.rs:
@@ -38,8 +40,33 @@
 :root[data-doc="dark"] .docview, :root[data-doc="dark"] body.adhoc-presentation { color-scheme: dark; }
 :root[data-doc="light"] .docview, :root[data-doc="light"] body.adhoc-presentation { color-scheme: light; }
 
-body.adhoc-shell { margin: 0; height: 100vh; display: flex; flex-direction: column; background: var(--bg); color: var(--ink);
+body.adhoc-shell { margin: 0; height: 100vh; display: flex; background: var(--bg); color: var(--ink);
   font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+#docs { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* the terminal dock (term.js): Claude Code beside the documents, or alone in a window of its own */
+#dock { flex: none; width: 44%; min-width: 320px; display: flex; flex-direction: column; background: var(--term-bg); }
+#dock[hidden], #dock-split[hidden] { display: none; }
+#dock-split { flex: none; width: 5px; cursor: col-resize; background: var(--line); border-left: 2px solid var(--bg); border-right: 2px solid var(--bg); box-sizing: border-box; }
+#dock-split:hover { background: var(--accent); }
+body.dock-only #docs, body.dock-only #dock-split { display: none; }
+body.dock-only #dock { flex: 1; width: auto !important; }
+.dock-head { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 12px; background: var(--head); border-bottom: 1px solid var(--line); flex: none; min-height: 25px; }
+.dock-title { font-weight: 600; }
+.dock-status { color: var(--muted); flex: 1; }
+.dock-status.bad { color: var(--bad); }
+.dock-tools { display: flex; gap: 2px; }
+.dock-screen { flex: 1; min-height: 0; padding: 4px 0 0 8px; position: relative; }
+.dock-screen .xterm { height: 100%; }
+.dock-screen .xterm-viewport { background: var(--term-bg) !important; }
+#dock { position: relative; }
+.dock-dialog { position: absolute; left: 12px; right: 12px; top: 44px; background: var(--pane); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; box-shadow: 0 6px 24px var(--shadow); padding: 4px 16px 14px; z-index: 5; }
+.dock-dialog[hidden] { display: none; }
+.dock-dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dock-dialog button, .launcher button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--pane); color: var(--ink); cursor: pointer; }
+.dock-dialog button:hover, .launcher button:hover { background: var(--hover); }
+.dock-dialog button.primary, .launcher button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.dock-dialog button.primary:hover, .launcher button.primary:hover { filter: brightness(1.08); }
 /* the top bar: the window's tabs, then the window's own controls */
 #top { display: flex; align-items: flex-end; border-bottom: 1px solid var(--line); flex: none; }
 #tabs { display: flex; gap: 2px; padding: 5px 6px 0; flex: 1; min-width: 0; overflow-x: auto; }
@@ -364,3 +391,53 @@ blockquote.note { margin: 6px 0 0; padding: 4px 8px; border-left: 3px solid var(
 blockquote.note:hover { border-left-color: var(--accent); }
 blockquote.note .who { display: block; color: var(--muted); font-size: 11px; }
 .home-foot { color: var(--muted); font-size: 12px; margin-top: 16px; }
+
+/* -- the launcher (launcher.js) ------------------------------------------------------------- */
+body.launcher { font-size: 13.5px; }
+body.launcher #docs { overflow-y: auto; }
+.l-top { display: flex; align-items: center; gap: 16px; padding: 14px 28px; border-bottom: 1px solid var(--line); background: var(--head); position: sticky; top: 0; z-index: 2; }
+.l-top h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -.01em; flex: 1; }
+.l-actions { display: flex; gap: 8px; }
+.l-main { padding: 6px 28px 40px; max-width: 920px; }
+.l-main h2 { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 22px 0 8px; }
+.launcher .hint { color: var(--muted); }
+.launcher .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.launcher button:disabled { opacity: .5; cursor: default; }
+.l-matters { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--pane); overflow: hidden; }
+.l-matter + .l-matter { border-top: 1px solid var(--line); }
+.l-matter.gone .l-name strong { color: var(--muted); text-decoration: line-through; }
+.l-row { display: flex; align-items: center; gap: 16px; padding: 12px 14px 12px 16px; }
+.l-row:hover { background: var(--hover); }
+.l-name { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.l-name strong { font-size: 14.5px; font-weight: 600; }
+.l-path { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-facts { color: var(--muted); font-size: 12px; }
+.l-buttons { display: flex; gap: 6px; align-items: center; flex: none; }
+.l-badge { color: var(--ent); background: var(--ent-bg); border: 1px solid var(--ent); border-radius: 12px; padding: 3px 10px; font-size: 12px; }
+.l-add { border-top: 1px dashed var(--line); padding: 4px 16px 10px 16px; background: var(--head); }
+.l-label { font-weight: 600; min-width: 3em; }
+.l-chosen { margin: 2px 0 6px; padding-left: 18px; color: var(--ink); font-size: 12px; font-family: ui-monospace, monospace; }
+.l-chosen li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin: 8px 0 0; }
+.l-fields label { display: grid; gap: 3px; font-weight: 600; }
+.l-fields .hint { grid-column: 1 / -1; margin: 0; font-weight: normal; }
+.l-fields input { font: inherit; font-weight: normal; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--pane); color: var(--ink); }
+.l-fields input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.l-job { display: flex; align-items: center; gap: 10px; padding: 10px 0 4px; }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.l-empty { border: 1px solid var(--line); border-radius: 8px; background: var(--pane); padding: 4px 22px 14px; margin-top: 22px; }
+.l-empty h2 { text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--ink); }
+.l-empty p { max-width: 60ch; }
+#setup { border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 8px; padding: 2px 18px 6px; margin-top: 20px; }
+#setup h2 { color: var(--warn-ink); text-transform: none; letter-spacing: 0; font-size: 14px; }
+#setup ul { padding-left: 18px; }
+#setup pre { white-space: pre-wrap; font-size: 12px; }
+.l-settings { margin-top: 10px; }
+.l-settings .hint { margin: 0 0 8px; }
+#terminal-choice { display: grid; gap: 4px; }
+.l-radio { display: flex; gap: 10px; align-items: baseline; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.l-radio:hover { background: var(--hover); }
+.l-radio.disabled { opacity: .55; cursor: default; }
+.l-radio span { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+body.launcher #dock { width: 52%; }
