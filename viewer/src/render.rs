@@ -14,6 +14,8 @@ pub struct Renderer {
     // recently rendered pages, so a prefetched page is served at once
     pages: HashMap<(String, i32, u32, bool), Vec<u8>>,
     page_order: Vec<(String, i32, u32, bool)>,
+    // where each page's ink is (see `margins`), kept while the viewer runs: small, and costly to find again
+    margins: HashMap<(String, i32), [f32; 4]>,
 }
 
 pub fn magic_for(kind: &str, name: &str) -> String {
@@ -27,7 +29,7 @@ pub fn magic_for(kind: &str, name: &str) -> String {
 
 impl Renderer {
     pub fn new() -> Self {
-        Renderer { docs: HashMap::new(), order: vec![], pages: HashMap::new(), page_order: vec![] }
+        Renderer { docs: HashMap::new(), order: vec![], pages: HashMap::new(), page_order: vec![], margins: HashMap::new() }
     }
 
     fn doc(&mut self, content: &str, bytes: impl FnOnce() -> Option<(Vec<u8>, String)>) -> Result<&Document, String> {
@@ -54,6 +56,27 @@ impl Renderer {
                 Ok((b.x1 - b.x0, b.y1 - b.y0))
             })
             .collect()
+    }
+
+    /// Where page `n`'s ink is, as fractions of the page ([x0, y0, x1, y1]),
+    /// with a little room around it: what's left when the blank margins are
+    /// cropped. Found on a small grayscale rendering (about 1.5 ms a page);
+    /// a blank page is all margin, and is kept whole.
+    pub fn margins(&mut self, content: &str, n: i32, bytes: impl FnOnce() -> Option<(Vec<u8>, String)>) -> Result<[f32; 4], String> {
+        let key = (content.to_string(), n);
+        if let Some(m) = self.margins.get(&key) {
+            return Ok(*m);
+        }
+        let d = self.doc(content, bytes)?;
+        let page = d.load_page(n - 1).map_err(|e| e.to_string())?;
+        let b = page.bounds().map_err(|e| e.to_string())?;
+        let scale = 200.0 / (b.x1 - b.x0).max(1.0);
+        let pix = page
+            .to_pixmap(&Matrix::new_scale(scale, scale), &Colorspace::device_gray(), false, false)
+            .map_err(|e| e.to_string())?;
+        let m = ink_box(pix.samples(), pix.width() as usize, pix.height() as usize, pix.stride() as usize);
+        self.margins.insert(key, m);
+        Ok(m)
     }
 
     /// Page `n` (from 1) as PNG, `width` pixels wide; `dark` for the dark
@@ -114,7 +137,19 @@ pub fn darken(px: &mut [u8], n: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::darken;
+    use super::{darken, ink_box};
+
+    #[test]
+    fn ink_box_finds_the_text_and_ignores_specks() {
+        let (w, h) = (100, 200);
+        let mut px = vec![255u8; w * h];
+        for y in 50..60 { for x in 20..70 { px[y * w + x] = 0; } }
+        px[5 * w + 95] = 0;                          // a speck in the corner
+        let b = ink_box(&px, w, h, w);
+        assert!((b[0] - 0.175).abs() < 1e-4 && (b[2] - 0.725).abs() < 1e-4);
+        assert!(b[1] > 0.2 && b[1] < 0.25 && b[3] > 0.3 && b[3] < 0.32);
+        assert_eq!(ink_box(&vec![255u8; w * h], w, h, w), [0.0, 0.0, 1.0, 1.0]);   // blank: kept whole
+    }
 
     #[test]
     fn dark_pages_invert_lightness_and_keep_hue() {
@@ -124,4 +159,38 @@ mod tests {
         assert_eq!(&px[3..6], &[228, 228, 228]);    // ink
         assert!(px[6] > px[7] && px[6] > px[8]);    // red stays red
     }
+}
+
+/// The box around a grayscale image's ink, as fractions, with room around
+/// it. Ink is darker than near-white; a row or column needs two such
+/// pixels to count, so a speck of scanner dust doesn't hold a margin open.
+pub fn ink_box(px: &[u8], w: usize, h: usize, stride: usize) -> [f32; 4] {
+    const INK: u8 = 235;
+    const PAD: f32 = 0.025;
+    if w == 0 || h == 0 {
+        return [0.0, 0.0, 1.0, 1.0];
+    }
+    let mut cols = vec![0u32; w];
+    let mut rows = vec![0u32; h];
+    for y in 0..h {
+        for (x, &v) in px[y * stride..y * stride + w].iter().enumerate() {
+            if v < INK {
+                cols[x] += 1;
+                rows[y] += 1;
+            }
+        }
+    }
+    let first = |v: &[u32]| v.iter().position(|&c| c >= 2);
+    let last = |v: &[u32]| v.iter().rposition(|&c| c >= 2);
+    let (Some(x0), Some(x1), Some(y0), Some(y1)) = (first(&cols), last(&cols), first(&rows), last(&rows)) else {
+        return [0.0, 0.0, 1.0, 1.0];
+    };
+    // the same room on every side, in page widths (pages are taller than wide)
+    let pad_y = PAD * w as f32 / h as f32;
+    [
+        (x0 as f32 / w as f32 - PAD).max(0.0),
+        (y0 as f32 / h as f32 - pad_y).max(0.0),
+        ((x1 + 1) as f32 / w as f32 + PAD).min(1.0),
+        ((y1 + 1) as f32 / h as f32 + pad_y).min(1.0),
+    ]
 }

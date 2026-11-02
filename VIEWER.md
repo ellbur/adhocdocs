@@ -194,6 +194,20 @@ layer text line by line, exactly what search, quotes and Claude read) and
 *Cells* (grid). Hex mode is in the ⋯ menu, since few documents need it,
 unless nothing else can show the document; `f` cycles the others.
 
+**Cropping blank margins** (the ⋯ menu, one setting for every paginated
+document) shows each page through a window onto its ink, so the text is
+larger. The host finds the ink on a small grayscale rendering (about 1.5 ms
+a page, kept while the viewer runs: `/api/margins/<doc>?from=&to=`); a row
+or column needs two dark pixels to count, so specks don't hold a margin
+open, and a blank page is kept whole. Each page is cropped to its own ink,
+but all at one scale, so type is the same size throughout: the widest ink
+fits the pane. The first four pages' margins come before layout; the
+rest are guessed from them and set a batch at a time, the scroll moving
+with any page above the view that changes height. The window isn't a
+positioned element, so geometry, highlights, regions and selections work
+on the whole page as before. Nothing is ever cut off: only blank margins
+go.
+
 ## Downloads
 
 The ⋯ menu saves the document to the user's Downloads folder

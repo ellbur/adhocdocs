@@ -128,6 +128,7 @@ impl Handler {
             ["api", "annotations"] => self.annotations(),
             ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
+            ["api", "margins", doc] => self.margins(doc, &query(q)),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
             ["presentation", layer] => self.presentation(layer, &query(q)),
             ["image", content] => self.image(content, &query(q)),
@@ -459,6 +460,30 @@ impl Handler {
             Ok(png) => ok("image/png", png),
             Err(e) => not_found(&e),
         }
+    }
+
+    /// Where the ink is on pages `from`..=`to` (from 1), for cropping blank margins.
+    fn margins(&mut self, id: &str, q: &HashMap<String, String>) -> Response {
+        let (content, kind, name) = {
+            let m = self.matter.lock().unwrap();
+            let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+            let meta = m.metadata(&doc);
+            (m.state.documents[&doc].clone(), meta["kind"].as_str().unwrap_or("").to_string(), meta["name"].as_str().unwrap_or("").to_string())
+        };
+        let from: i32 = q.get("from").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+        let to: i32 = q.get("to").and_then(|v| v.parse().ok()).unwrap_or(from).min(from + 199);
+        let mut boxes = vec![];
+        for n in from..=to {
+            let (matter, c, kind, name) = (self.matter.clone(), content.clone(), kind.clone(), name.clone());
+            match self.renderer.margins(&content, n, || {
+                let m = matter.lock().unwrap();
+                m.bytes(&c).map(|b| (b, magic_for(&kind, &name)))
+            }) {
+                Ok(b) => boxes.push(json!(b)),
+                Err(_) => break,                      // past the last page
+            }
+        }
+        json_resp(json!({"from": from, "boxes": boxes}))
     }
 
     /// An inline image a presentation shows (an email's `image` segment):
