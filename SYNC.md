@@ -496,8 +496,21 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   what it received is what carries changes between members that can't
   reach each other. And it keeps a long poll open to each member it can
   reach, which answers when that member's logs change, so a laptop hears of
-  others' changes within a second or two, usually from the hub. Every five
-  minutes it syncs with everyone anyway. `adhoc sync now` syncs once.
+  others' changes within a second or two, usually from the hub. When a
+  member is reached again (it was off, or this machine slept), it syncs
+  with it at once. Every five minutes it syncs with everyone anyway.
+  `adhoc sync now` syncs once.
+
+  The aim is that a change reaches every member that can be reached within
+  about ten seconds, and that nothing local waits on the network. Writers
+  only append to their logs; the watcher notices. Each member gets its own
+  sync thread, one sync at a time, so a member that's slow or gone holds up
+  no one else. An address that doesn't answer is given up on after ten
+  seconds. Changes made while a sync runs are buffered and go together in
+  the next one, and a failed sync is retried after 5 seconds, then less
+  often, up to every two minutes. The one deliberate wait is reserving
+  Bates or exhibit numbers, which syncs with the hub before and after
+  (below).
   The viewer refreshes from the feeds, and Claude sees new events through
   `idx changes` and `ann log --since`.
 
@@ -567,6 +580,8 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
   product, membership. Not synced: the workspace, indexes, `claude-home/`.
 - Work product made in the workspace syncs only when published, explicitly.
 - Keyboard shortcuts (tag hotkeys) aren't synced.
+- Sync is continuous and never blocks local work: changes reach reachable
+  members within about ten seconds, buffered into batches.
 - Bates and exhibit numbers are reserved, and the reservation synced, before
   a production or exhibit set uses them.
 - Documents can be purged everywhere, by a person; what's in the workspace

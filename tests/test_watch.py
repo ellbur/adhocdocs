@@ -148,3 +148,66 @@ def test_heard_announcements_cant_be_pointed_elsewhere_or_flood(tmp_path):
     for i in range(100):
         li.handle(js.dumps(good).encode(), f"10.0.1.{i}")
     assert li.todo.qsize() <= lan.Listener.QUEUE
+
+
+def test_a_member_that_hangs_holds_up_no_one_else(tmp_path):
+    """c says it listens at an address that accepts connections and never
+    answers. b's changes still reach a within seconds."""
+    import socket as sk
+    from adhocdocs import pool
+    hang = sk.socket()
+    hang.bind(("127.0.0.1", 0))
+    hang.listen(16)                         # accepts (the kernel does), never answers
+    hang_addr = f"127.0.0.1:{hang.getsockname()[1]}"
+    a = Matter.create(tmp_path / "a")
+    text_doc(a, "a.txt", "hello")
+    srv, addr = serve(a)
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "c")
+    c = Matter(tmp_path / "c")
+    pool.set_addresses(c, "user:carol", [hang_addr])
+    peer.sync_with(Matter(c.root), addr, a.origin)
+    invite.join(invite.create(Matter(a.root), ALICE, [addr])["code"], tmp_path / "b")
+    b = Matter(tmp_path / "b")
+    assert pool.Pool.load(b).members[c.origin]["addresses"] == [hang_addr]
+    wb = watch.Watcher(b, every=600, debounce=0.1, poll=0.1, wait=5, log=lambda r: None)
+    wb.start()
+    try:
+        time.sleep(0.5)                     # b's first sync with everyone is under way, c's hanging
+        annotations.write(Matter(b.root), BOB, {"op": "define-tag", "tag": "past-the-hang"})
+        t = time.time()
+        assert eventually(lambda: defined(a, "past-the-hang"))
+        assert time.time() - t < 5
+    finally:
+        wb.stop()
+        srv.stop()
+        hang.close()
+
+
+def test_a_member_back_after_being_off_is_caught_up_at_once(tmp_path):
+    """b is a laptop (it doesn't listen). a goes off; meanwhile both change.
+    When a is back, b hears and both sides catch up, without waiting for the
+    every-few-minutes sync."""
+    a = Matter.create(tmp_path / "a")
+    text_doc(a, "a.txt", "hello")
+    srv, addr = serve(a)
+    port = int(addr.rsplit(":", 1)[1])
+    invite.join(invite.create(a, ALICE, [addr])["code"], tmp_path / "b")
+    b = Matter(tmp_path / "b")
+    wb = watch.Watcher(b, every=600, debounce=0.1, poll=0.1, wait=2, log=lambda r: None)
+    wb.start()
+    try:
+        time.sleep(0.5)
+        srv.stop()
+        time.sleep(0.5)
+        annotations.write(Matter(b.root), BOB, {"op": "define-tag", "tag": "while-a-was-off"})
+        annotations.write(Matter(a.root), ALICE, {"op": "define-tag", "tag": "while-b-couldnt-hear"})
+        time.sleep(1)
+        srv2 = peer.Server([Matter(a.root)], "127.0.0.1", port)
+        srv2.start()
+        try:
+            assert eventually(lambda: defined(b, "while-b-couldnt-hear"), 15)
+            assert eventually(lambda: defined(a, "while-a-was-off"), 15)
+        finally:
+            srv2.stop()
+    finally:
+        wb.stop()
