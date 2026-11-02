@@ -71,6 +71,13 @@ text is now at the old offsets.
 - `ptr=/items/3/amount` (RFC 6901 JSON Pointer, percent-encoded) names a
   value in a JSON or JSON Lines document. Like `pl=`, it is an alias: it
   resolves to the `char` range of the value's text. See [DATA.md](DATA.md).
+- `xpath=/orders/order[2]/sku` (a small subset of XPath, percent-encoded)
+  names an element's content or an attribute's value in an XML document;
+  an alias for its `char` range, like `ptr=`.
+- `col=Amount&row=7` names spreadsheet (and CSV) cells by the column's
+  header text: an alias for `cells=` (`row=7-9` for several, `col` alone
+  for the column below its header, `header=2` if the header isn't row 1).
+  The viewer is sent what an alias names (`view open` expands it).
 
 ## Decisions to confirm
 

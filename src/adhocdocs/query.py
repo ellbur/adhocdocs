@@ -11,7 +11,8 @@
 ``pallet /s received``, ``pallet /p received``  in the same sentence, or paragraph
 ``from:smith@acme.com`` ``to:`` ``cc:``     field filters (an address, or part of one)
 ``bcc:`` ``custodian:smith-j`` ``kind:email``
-``name:memo``
+``name:memo``, ``signature:sqlite``         ``signature:`` matches part of a signature
+                                            the file's first bytes match (``raw info``)
 ``date:2026-03``, ``date:2026-03-01..2026-03-15``
 ``tag:hot``, ``-tag:privileged``            tags, read live
 ==========================================  ==================================
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 
 from . import textnorm
 
-FIELDS = ("from", "to", "cc", "bcc", "custodian", "kind", "date", "tag", "name")
+FIELDS = ("from", "to", "cc", "bcc", "custodian", "kind", "date", "tag", "name", "signature")
 
 
 class QueryError(ValueError):

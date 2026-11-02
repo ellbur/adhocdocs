@@ -4,24 +4,30 @@ metadata. Addresses are lowercased, one row each in ``addrs``.
 Schema::
 
     docs(doc PRIMARY KEY, content, custodian, collection, path, parent, part,
-         kind, name, date, subject, title, author, pages)
+         kind, name, date, subject, title, author, pages, signature)
     addrs(doc, field, addr)        field is from, to, cc or bcc
 
-Tags are not here: search reads them live from the annotation log.
+``signature`` is the signatures a file's first bytes match (raw.SIGNATURES),
+one per line. Tags are not here: search reads them live from the annotation
+log.
+
+The index is cheap to make again from the change feed, so one built with an
+older schema is rebuilt on first use rather than refused.
 """
 
 from .base import Index
 
 COLUMNS = ("doc", "content", "custodian", "collection", "path", "parent", "part",
-           "kind", "name", "date", "subject", "title", "author", "pages")
+           "kind", "name", "date", "subject", "title", "author", "pages", "signature")
 ADDRESS_FIELDS = ("from", "to", "cc", "bcc")
 
 
 class FieldsIndex(Index):
     kind = "fields"
+    rebuilds_itself = True
 
     def settings(self):
-        return {"schema": 2}
+        return {"schema": 3}
 
     def init_db(self):
         super().init_db()
@@ -53,9 +59,10 @@ class FieldsIndex(Index):
         elif op == "set-metadata":
             meta = self.m.objects.get_object(ev["metadata"])
             self.db.execute(
-                "UPDATE docs SET kind=?, name=?, date=?, subject=?, title=?, author=?, pages=? WHERE doc=?",
+                "UPDATE docs SET kind=?, name=?, date=?, subject=?, title=?, author=?, pages=?, signature=? WHERE doc=?",
                 (meta.get("kind"), meta.get("name"), meta.get("date"), meta.get("subject"),
-                 meta.get("title"), meta.get("author"), meta.get("pages"), ev["doc"]))
+                 meta.get("title"), meta.get("author"), meta.get("pages"),
+                 "\n".join(meta.get("signature") or []) or None, ev["doc"]))
             self.db.execute("DELETE FROM addrs WHERE doc=?", (ev["doc"],))
             self.db.executemany("INSERT INTO addrs VALUES(?,?,?)",
                                 [(ev["doc"], f, a) for f in ADDRESS_FIELDS for a in meta.get(f, [])])

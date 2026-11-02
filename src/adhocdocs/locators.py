@@ -6,7 +6,8 @@ String form::
 
 with selectors ``page=14``, ``page=14-16``, ``char=1200,1340``,
 ``page=3&xywh=0.1,0.2,0.5,0.05``, ``sheet=Q3&cells=B2:D10``,
-``bytes=0,16`` and ``ptr=/items/3/amount``. Hash prefixes of 8 or more hex
+``bytes=0,16``, ``ptr=/items/3/amount``, ``xpath=/orders/order[2]/sku``
+and ``sheet=Q3&col=Amount&row=7``. Hash prefixes of 8 or more hex
 digits are accepted on input and expanded.
 
 ``bytes`` is a half-open range of the original's bytes, not of any layer
@@ -16,6 +17,17 @@ digits are accepted on input and expanded.
 ``ptr`` is an RFC 6901 JSON Pointer (percent-encoded in the string form)
 into a JSON or JSON Lines document. It is an alias: it resolves to the
 ``char`` range of the value's text in the layer (see adhocdocs.structured).
+
+``xpath`` names an element or attribute of an XML document, by a small
+subset of XPath (percent-encoded in the string form); it is an alias for
+the ``char`` range of its text, like ``ptr``.
+
+``col`` names a spreadsheet column (CSV too) by the text of its header
+cell, ``row`` a row (``7``) or rows (``7-9``) by the sheet's own row
+numbers, and ``header`` the header's row if it isn't the first. They are
+an alias for ``cells``: ``col=Amount&row=7`` is ``cells=D7`` when D1 says
+"Amount", and ``col`` alone is the column below its header. A header that
+appears twice is an error, not a guess at which.
 
 ``cells`` is a rectangle (``B2:D10``, or one cell ``B2``) on a sheet named by
 ``sheet`` (percent-encoded in the string form; the first sheet if left
@@ -63,8 +75,13 @@ def _parse_selector(s: str) -> dict:
         elif key == "bytes":
             a, b = val.split(",")
             sel["bytes"] = [int(a), int(b)]
-        elif key in ("sheet", "ptr"):
+        elif key in ("sheet", "ptr", "xpath", "col"):
             sel[key] = _unpct(val)
+        elif key == "row":
+            a, _, b = val.partition("-")
+            sel["row"] = [int(a), int(b)] if b else int(a)
+        elif key == "header":
+            sel["header"] = int(val)
         elif key in ("cells", "label", "pl"):
             sel[key] = val
         else:
@@ -76,12 +93,16 @@ def _format_selector(sel: dict) -> str:
     parts = []
     for key, val in sel.items():
         if isinstance(val, list):
-            sep = "-" if key == "page" else ","
+            sep = "-" if key in ("page", "row") else ","
             parts.append(f"{key}={sep.join(str(v) for v in val)}")
         elif key == "sheet":
             parts.append(f"sheet={_pct(val, safe='')}")
         elif key == "ptr":
             parts.append(f"ptr={_pct(val, safe='/~')}")
+        elif key == "xpath":
+            parts.append(f"xpath={_pct(val, safe='/@*[]')}")
+        elif key == "col":
+            parts.append(f"col={_pct(val, safe='')}")
         else:
             parts.append(f"{key}={val}")
     return "&".join(parts)
@@ -297,9 +318,9 @@ def resolve(matter, loc) -> Resolution:
         sel = loc["select"]
     if "bytes" in sel:
         return _resolve_bytes(matter, loc, content, notes)
-    if "ptr" in sel:
+    if "ptr" in sel or "xpath" in sel or "col" in sel:
         try:
-            loc = expand_pointer(matter, loc, content)
+            loc = expand_pointer(matter, loc, content) if "col" not in sel else expand_columns(matter, loc, content)
         except ValueError as e:
             return Resolution(status="broken", loc=loc, error=str(e))
         sel = loc["select"]
@@ -402,14 +423,79 @@ def _resolve_bytes(matter, loc, content, notes) -> Resolution:
 
 
 def pointer_kind(matter, doc: str) -> str | None:
-    """``json`` or ``ndjson`` from the document's metadata (kind, or the
-    format a text file was found to be), if it says."""
+    """``json``, ``ndjson`` or ``xml`` from the document's metadata (kind,
+    or the format a text file was found to be), if it says."""
     h = matter.state.metadata.get(doc)
     meta = matter.objects.get_object(h) if h else {}
     for v in (meta.get("kind"), meta.get("format")):
-        if v in ("json", "ndjson"):
+        if v in ("json", "ndjson", "xml"):
             return v
     return None
+
+
+def expand(matter, loc) -> dict:
+    """A locator with its aliases (``pl``, ``label``, ``ptr``, ``xpath``,
+    ``col``/``row``) turned into the canonical selector they name, for
+    whatever reads only those (the viewer). Raises LocatorError."""
+    loc = parse(loc, matter.objects)
+    sel = loc.get("select") or {}
+    state = matter.state
+    content = state.documents.get(loc["doc"])
+    if content is None:
+        return loc
+    if "pl" in sel or "label" in sel:
+        loc = expand_alias(matter, loc, content)
+    if "ptr" in loc.get("select", {}) or "xpath" in loc.get("select", {}):
+        loc = expand_pointer(matter, loc, content)
+    if "col" in loc.get("select", {}):
+        loc = expand_columns(matter, loc, content)
+    return loc
+
+
+def expand_columns(matter, loc: dict, content: str) -> dict:
+    """Turn ``col=`` (with ``row=``, ``header=``) into ``cells=``, by the
+    header row's text, in the given layer or the primary one."""
+    state = matter.state
+    sel = dict(loc["select"])
+    name, rows, header = sel.pop("col"), sel.pop("row", None), sel.pop("header", 1)
+    if "cells" in sel or "char" in sel:
+        raise LocatorError("col names cells by itself; don't combine it with cells or char")
+    layer = state.layer(loc["layer"]) if loc.get("layer") else state.primary_layer(content)
+    if layer is None or layer not in state.layers.get(content, []):
+        raise LocatorError("no such layer in this document")
+    text = matter.objects.get_text(layer.text)
+    s, e = sheet_range(text, _segments(matter, layer), sel.get("sheet"))
+    lines = text[s:e].split("\n")
+    if not 1 <= header <= len(lines):
+        raise LocatorError(f"no row {header} for the header (the sheet has {len(lines)})")
+    heads = [h.strip() for h in lines[header - 1].split("\t")]
+    found = [i for i, h in enumerate(heads) if h == name.strip()]
+    if not found:
+        shown = ", ".join(repr(h) for h in heads if h)[:300]
+        raise LocatorError(f"no column headed {name!r} in row {header} (the headers: {shown})")
+    if len(found) > 1:
+        letters = ", ".join(_col_name(i) for i in found)
+        raise LocatorError(f"{len(found)} columns are headed {name!r} ({letters}); name the cells instead")
+    letter = _col_name(found[0])
+    if rows is None:
+        last = max((r for r, line in enumerate(lines, 1) if line.strip()), default=header)
+        if last <= header:
+            raise LocatorError(f"nothing below the header {name!r}")
+        r0, r1 = header + 1, last
+    else:
+        r0, r1 = (rows, rows) if isinstance(rows, int) else rows
+        if not 1 <= r0 <= r1:
+            raise LocatorError(f"not a row range: {r0}-{r1}")
+    return {**loc, "layer": layer.id, "select": {**sel, "cells": f"{letter}{r0}" + (f":{letter}{r1}" if r1 != r0 else "")}}
+
+
+def _col_name(i: int) -> str:
+    out = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        out = chr(65 + r) + out
+    return out
 
 
 def expand_pointer(matter, loc: dict, content: str) -> dict:
@@ -418,14 +504,20 @@ def expand_pointer(matter, loc: dict, content: str) -> dict:
     from . import structured
     state = matter.state
     sel = dict(loc["select"])
-    ptr = sel.pop("ptr")
-    if "char" in sel or "page" in sel:
-        raise LocatorError("ptr names a value by itself; don't combine it with char or page")
+    xml = "xpath" in sel
+    ptr = sel.pop("xpath" if xml else "ptr")
+    if "char" in sel or "page" in sel or ("ptr" in sel and xml):
+        raise LocatorError(f"{'xpath' if xml else 'ptr'} names a value by itself; don't combine it with char or page")
     layer = state.layer(loc["layer"]) if loc.get("layer") else state.primary_layer(content)
     if layer is None or layer not in state.layers.get(content, []):
         raise LocatorError("no such layer in this document")
     text = matter.objects.get_text(layer.text)
     kind = pointer_kind(matter, loc["doc"]) or structured.sniff(text)
+    if xml:
+        if kind != "xml" and not text.lstrip("\ufeff \t\r\n").startswith("<"):
+            raise LocatorError("xpath needs an XML document")
+        s, e = structured.xpath_range(text, ptr)
+        return {**loc, "layer": layer.id, "select": {**sel, "char": [s, e]}}
     if kind not in ("json", "ndjson"):
         raise LocatorError("ptr needs a JSON or JSON Lines document")
     s, e = structured.pointer_range(text, ptr, lines=kind == "ndjson")

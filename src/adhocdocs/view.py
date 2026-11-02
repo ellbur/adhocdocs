@@ -130,6 +130,9 @@ def list_html(m: Matter, path: Path) -> tuple[dict, list[str]]:
         out = [f"<h2>{title}</h2>"]
         if note:
             out.append(f'<p class="adhoc-query">{html.escape(str(note))} · {len(items)} items</p>')
+        if header.get("unofficial"):         # interp search --list: places in Claude's readings
+            out.append('<p class="adhoc-interp-label">Interpretation by Claude, not the documents’ own content. '
+                       'Each row opens the evidence its reading points at; quote that, not the row.</p>')
         nav = []
         if n > 0:
             nav.append(f'<a href="{"index" if n == 1 else f"page{n}"}.html">← rows {(n - 1) * ROWS_PER_PAGE + 1}–{n * ROWS_PER_PAGE}</a>')

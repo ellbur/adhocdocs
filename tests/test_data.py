@@ -92,6 +92,36 @@ def test_binary_metadata_records_signatures(tmp_path):
     assert meta(m, "x.db")["signature"] == ["SQLite database"]
 
 
+def test_signature_search_field(tmp_path):
+    import json as _json
+    from adhocdocs.index import open_index
+    from adhocdocs.search import Options, Searcher
+    (tmp_path / "f").mkdir()
+    (tmp_path / "f" / "x.db").write_bytes(b"SQLite format 3\x00" + bytes(200))
+    (tmp_path / "f" / "y.gz").write_bytes(b"\x1f\x8b" + bytes(200))
+    (tmp_path / "f" / "z.txt").write_text("sqlite is mentioned here")
+    m = Matter.create(tmp_path / "m")
+    ingest_paths(m, [tmp_path / "f"], None, "c")
+    m = Matter(m.root)
+
+    def names(where):
+        s = Searcher(Matter(m.root), Options(where=where))
+        _, items = s.finish(*s.all())
+        return sorted(m.objects.get_object(m.state.metadata[i["loc"][4:]])["name"] for i in items)
+
+    assert names("signature:sqlite") == ["x.db"]                      # part of "SQLite database", any case
+    assert names("signature:gzip OR signature:sqlite") == ["x.db", "y.gz"]
+    assert names("kind:other -signature:gzip") == ["x.db"]
+    assert names("signature:pdf") == []
+    # a fields index from before signatures were in it is rebuilt, not refused
+    idx = open_index(m, "fields")
+    man = idx.manifest()
+    man["settings"] = {"schema": 2}
+    idx.manifest_path.write_text(_json.dumps(man))
+    assert names("signature:sqlite") == ["x.db"]
+    assert open_index(m, "fields").manifest()["settings"] == {"schema": 3}
+
+
 # -- bytes ----------------------------------------------------------------------------------
 
 def test_byte_locators(m):
@@ -307,3 +337,96 @@ def test_search_interpretations(m, tmp_path):
     header, items = interp.search(m, "pallet", only=["tab"])
     assert header["coverage"]["searched"] == 1
     assert items[0]["hits"][0]["row"] == 1 and items[0]["hits"][0]["column"] == "what"
+
+
+def test_interp_search_as_a_list(m, tmp_path):
+    import base64
+    from adhocdocs import lists, view
+    run_ledger(m)
+    led = doc_named(m, "ledger.txl")
+    csvp = tmp_path / "csv.py"
+    csvp.write_text("print('who,what'); print('dk,signed for pallet 3')\n")
+    interp.run(m, [led], "tab", [sys.executable, str(csvp)], "A table", type_="csv")
+    header, items = interp.search(m, "bellwether OR pallet")
+    head, rows = interp.search_list(header, items)
+    assert head["unofficial"] and head["made_by"] == "interp search"
+    by = {r["fields"]["reading"]: r for r in rows}
+    assert by["ledger"]["loc"] == f"doc:{led}#bytes=32,56"            # the evidence, not the hit
+    assert by["ledger"]["fields"]["where"] == "/records/1/party"
+    assert by["tab"]["loc"] == f"doc:{led}" and by["tab"]["fields"]["evidence"].startswith("none")
+    assert by["tab"]["fields"]["where"] == "row 1, what"
+    assert {r["group"] for r in rows} == {"Ledger records (ledger)", "A table (tab)"}
+    p = tmp_path / "r.list.jsonl"
+    lists.write(p, head, rows)
+    files, seq = view.list_html(m, p)
+    page = base64.b64decode(files["index.html"]).decode()
+    assert "Interpretation by Claude" in page and "Bellwether" in page
+    assert seq[0].startswith("doc:")
+
+
+# -- XML paths and spreadsheet columns by header -----------------------------------------------
+
+def test_xpath_locators(m):
+    doc = doc_named(m, "feed.xml")
+    text = m.objects.get_text(m.state.primary_layer(m.state.documents[doc]).text)
+    r = locators.resolve(m, f"doc:{doc}#xpath=/orders/order%5B2%5D/sku")
+    assert r["status"] == "exact" and r["text"] == "B"
+    assert locators.resolve(m, f"doc:{doc}#xpath=/orders/order[@id='2']/@id")["text"] == "2"
+    assert locators.resolve(m, f"doc:{doc}#xpath=/orders/order[1]")["text"] == "<sku>A</sku>"      # content as written
+    bad = locators.resolve(m, f"doc:{doc}#xpath=/orders/order/sku")
+    assert bad["status"] == "broken" and "say which" in bad["error"]
+    assert locators.resolve(m, f"doc:{doc}#xpath=/orders/order[3]")["status"] == "broken"
+    assert locators.resolve(m, f"doc:{doc_named(m, 'export.json')}#xpath=/a")["status"] == "broken"
+    # the string form round-trips, and expanding gives the char range the viewer reads
+    loc = locators.parse(f"doc:{doc}#xpath=/orders/order%5B@id='2'%5D/sku")
+    assert locators.parse(locators.format(loc)) == loc
+    ex = locators.expand(m, loc)
+    a, b = ex["select"]["char"]
+    assert text[a:b] == "B"
+    # the schema gives each example its path
+    paths = {p["path"]: p for p in raw_schema_xml(m, doc)["paths"]}
+    assert paths["/orders/order/sku"]["examples"][1] == {"value": "B", "xpath": "/orders/order[2]/sku[1]"}
+    assert locators.resolve(m, f"doc:{doc}#xpath=/orders/order[2]/sku[1]")["text"] == "B"
+
+
+def raw_schema_xml(m, doc):
+    return structured.xml_schema(raw.read(m, m.state.documents[doc]))
+
+
+def test_xml_paths_by_hand():
+    t = ('<?xml version="1.0"?>\n<!DOCTYPE x [<!ENTITY a "b">]>\n<o xmlns:p="u"><!-- <o> --><i id="1"/>'
+         "<p:i id='2'><s>B &amp; C</s><n><![CDATA[<x>]]></n></p:i></o>")
+    def at(p):
+        a, b = structured.xpath_range(t, p)
+        return t[a:b]
+    assert at("/o/i[2]/s") == "B &amp; C"                   # verbatim, escapes and all; prefixes needn't be written
+    assert at("/o/*[2]/@id") == "2" and at("/o/i[1]") == ""
+    assert at("/o/i[2]/n") == "<![CDATA[<x>]]>"
+    for p, why in [("/o/i", "say which"), ("/o/i[1]/@x", "no attribute"), ("o/i", "starts with /"),
+                   ("/o/i[1]/@id/x", "last step"), ("/o/i[last()]", "subset")]:
+        with pytest.raises(structured.PointerError, match=why):
+            structured.xpath_range(t, p)
+    with pytest.raises(structured.PointerError, match="closes"):
+        structured.xpath_range("<a><b></a></b>", "/a")
+
+
+def test_columns_by_header(tmp_path):
+    (tmp_path / "f").mkdir()
+    (tmp_path / "f" / "pay.csv").write_text("Date,Party,Amount\n2026-03-09,Harrowgate,1250.00\n2026-03-10,Bellwether,-310.50\n")
+    (tmp_path / "f" / "dup.csv").write_text("Note,x,Note\n1,2,3\n")
+    m = Matter.create(tmp_path / "m")
+    ingest_paths(m, [tmp_path / "f"], None, "c")
+    m = Matter(m.root)
+    pay, dup = doc_named(m, "pay.csv"), doc_named(m, "dup.csv")
+    r = locators.resolve(m, f"doc:{pay}#col=Amount&row=3")
+    assert r["status"] == "exact" and r["text"] == "-310.50" and r["loc"]["select"]["cells"] == "C3"
+    assert locators.resolve(m, f"doc:{pay}#col=Party")["text"] == "Harrowgate\nBellwether"         # the column below its header
+    assert locators.resolve(m, f"doc:{pay}#col=Party&row=2-3")["loc"]["select"]["cells"] == "B2:B3"
+    assert locators.resolve(m, f"doc:{pay}#sheet=pay.csv&col=Date&row=2")["text"] == "2026-03-09"
+    assert locators.resolve(m, f"doc:{pay}#header=2&col=Harrowgate&row=3")["text"] == "Bellwether"
+    bad = locators.resolve(m, f"doc:{pay}#col=Total")
+    assert bad["status"] == "broken" and "'Amount'" in bad["error"]                       # says what the headers are
+    assert "2 columns" in locators.resolve(m, f"doc:{dup}#col=Note")["error"]
+    loc = locators.parse(f"doc:{pay}#col=Amount%20due&row=2-3")
+    assert loc["select"] == {"col": "Amount due", "row": [2, 3]} and locators.parse(locators.format(loc)) == loc
+    assert locators.expand(m, f"doc:{pay}#col=Amount&row=2")["select"] == {"cells": "C2"}

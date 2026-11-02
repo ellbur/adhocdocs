@@ -89,6 +89,8 @@ class Searcher:
             return (row["kind"] or "") == v
         if f.name == "name":
             return v in (row["name"] or "").lower()
+        if f.name == "signature":
+            return any(v in sig.lower() for sig in (row["signature"] or "").split("\n") if sig)
         if f.name == "date":
             d = row["date"] or ""
             if not d:

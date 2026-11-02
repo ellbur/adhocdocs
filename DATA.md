@@ -37,8 +37,16 @@ the signature its first bytes match (SQLite, gzip, Parquet, EVTX, …),
 entropy (near 8 bits a byte: compressed or encrypted), how much looks like
 text, and whether text is JSON, JSON Lines or XML. `raw strings` finds runs
 of ASCII, UTF-8 and UTF-16 text, each with its byte locator, and `raw hex`
-dumps a range. Ingest records the signature in the document's metadata
-(`signature`). `search 'kind:other'` lists every file nothing reads, and
+dumps a range.
+
+The viewer's **hex mode** shows the same dump, for any document and as the
+only mode for a file nothing reads. A byte locator opens in it, scrolled to
+and highlighted, and dragging over bytes selects them, so `view selection`
+gives a `bytes=a,b` locator. It reads the original a window at a time, so
+a file of any size opens at once. Ingest records the signature in the document's metadata
+(`signature`), and the fields index holds it, so `search all --where
+'signature:sqlite'` finds files whose first bytes match part of that
+signature's name. `search 'kind:other'` lists every file nothing reads, and
 `kind:json`, `kind:ndjson` and `kind:xml` the structured ones.
 
 ### Values in structured data
@@ -57,8 +65,21 @@ standard even when their schema isn't, so:
 - **`raw schema`** lists every path in the data (`/items/*/amount`, with
   `*` for any index), the types and counts found there, how many of its
   parent objects have it, and examples, each with its `ptr=` locator.
-  XML gets element and attribute paths with counts and examples, but no
-  pointers yet.
+  XML gets element and attribute paths with counts and examples, each
+  with its `xpath=` locator.
+- **`xpath=` locators** do for XML what `ptr=` does for JSON, with a small
+  subset of XPath: `/orders/order[2]/sku` (steps of names, `[n]` from 1),
+  `order[@id='7']` (the child with that attribute value), `*`, and a last
+  step `@attr`. An element resolves to its content between its tags, as
+  written (child markup and `&amp;` included); an attribute to its value
+  inside the quotes. Names match without their namespace prefix. A step
+  that matches several siblings without saying which is an error, like a
+  duplicate key.
+- **`col=` locators** name spreadsheet and CSV cells by their column's
+  header, not their letter: `col=Amount&row=7` is `cells=D7` when D1 says
+  "Amount", and stays right when someone's copy has a column inserted.
+  `col` alone is the column below its header; `header=N` says which row
+  the header is in. A header that appears twice is an error.
 
 ### Interpretations
 
@@ -109,7 +130,12 @@ evidence locator its record gives, if any. Hits are marked
 quoted is the evidence, not the hit. Field filters (`from:`, `tag:`) are
 refused: they describe documents. Pictures aren't searched, and the
 coverage says how many were left out. It is a separate search on purpose,
-so a reading never turns up among `search`'s results.
+so a reading never turns up among `search`'s results. `interp search --list
+F` writes the hits as a list file for `view list F`: a row per hit, grouped
+by reading, each opening the evidence its record points at (or, with no
+evidence, the reading's input, and saying so). The header is marked
+`"unofficial": true`, and the list display captions it as Claude's
+readings.
 
 **Showing them.** `interp view` puts one in a viewer pane and `interp
 render` writes HTML: a table, a tree (collapsible, no scripts), text, a
@@ -170,17 +196,11 @@ Read as records, the largest payment went to :interp{#top-party}.
 
 ## Not built yet
 
-- Semantic search of interpretations, and showing `interp search` hits in
-  a list pane.
-- Pointers into XML (an XPath subset), and pointers into CSV and
-  spreadsheets by header name rather than cell.
+- Semantic search of interpretations.
+- `raw schema` for spreadsheets and CSV (each column's header, types and
+  examples, with `col=` locators).
 - Interpretations travelling with published pages: publish the
   interpretation's folder alongside the page (`work publish`) for now.
-- A hex mode in the viewer's document pane. Byte locators open the
-  document, but the viewer doesn't scroll to or highlight the bytes. For
-  now, Claude shows bytes with `raw hex`, in pages, or in a pane it builds.
-- A `signature:` search field (the signature is in metadata, not yet in
-  the fields index).
 - Built-in readers for common structured binaries (SQLite, Parquet, EVTX).
   Claude can decode them itself with an interpretation. Formats used often
   enough to deserve an official reader become extractors, with real layers.

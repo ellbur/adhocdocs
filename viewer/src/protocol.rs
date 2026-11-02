@@ -7,6 +7,7 @@
 //!   /api/doc/<doc>             a document's metadata, layers, pages, family
 //!   /api/layer/<id>/text       layer text (also /segments, /geometry)
 //!   /api/text?loc=…            text at a locator, checked
+//!   /api/bytes/<doc>?start=&end=  a range of the original's bytes, as hex (hex mode)
 //!   /api/overview              what the matter holds, for the landing page
 //!   /page/<doc>/<n>?w=…        a page image, rendered by MuPDF
 //!   /presentation/<layer>      a layer's presentation, sanitized
@@ -122,6 +123,7 @@ impl Handler {
             ["api", "around"] => self.around(&query(q)),
             ["api", "layer", id, part] => self.layer_part(id, part),
             ["api", "text"] => self.text_at(&query(q)),
+            ["api", "bytes", doc] => self.byte_range(doc, &query(q)),
             ["api", "docs"] => self.docs(),
             ["api", "annotations"] => self.annotations(),
             ["api", "entity-candidates"] => self.entity_candidates(),
@@ -347,7 +349,7 @@ impl Handler {
                 }
                 break;
             }
-            let info = json!({"doc": doc, "content": content, "meta": meta, "custodian": obj.get("custodian"),
+            let info = json!({"doc": doc, "content": content, "size": m.size(&content), "meta": meta, "custodian": obj.get("custodian"),
                               "layers": layers, "children": children, "parent": parent,
                               "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
                               "dated": crate::chrono::strip(&m, &doc),
@@ -379,6 +381,23 @@ impl Handler {
             "geometry" => json_resp(json!(m.geometry(id))),
             _ => not_found("no such part"),
         }
+    }
+
+    /// Hex mode reads the original a window at a time: at most BYTES_MAX
+    /// bytes per request, so a large file is never read whole.
+    fn byte_range(&self, id: &str, q: &HashMap<String, String>) -> Response {
+        const BYTES_MAX: u64 = 1 << 16;
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+        let content = m.state.documents[&doc].clone();
+        let Some(size) = m.size(&content) else { return not_found("original not in the store") };
+        let start = q.get("start").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(size);
+        let end = q.get("end").and_then(|v| v.parse::<u64>().ok()).unwrap_or(start + BYTES_MAX)
+            .clamp(start, size).min(start + BYTES_MAX);
+        let Some(data) = m.byte_range(&content, start, end) else { return not_found("can't read the original") };
+        let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+        json_resp(json!({"doc": doc, "size": size, "start": start, "end": start + data.len() as u64, "hex": hex}))
     }
 
     fn text_at(&self, q: &HashMap<String, String>) -> Response {
