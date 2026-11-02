@@ -99,6 +99,16 @@ Add more documents at any time; the session catches its indexes up when it
 starts. Each `ingest` names the collection the files came from. The
 custodian is optional.
 
+A production served on you (a volume of load files, page images, natives
+and text) goes in with `ingest-production`. Each record becomes one
+document, named by its Bates numbers. Run it with `--check` first to see
+how the load file was read ([RECEIVED.md](RECEIVED.md)):
+
+```sh
+uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp." --check
+uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp."
+```
+
 To try it out, make a matter from the sample documents in `corpus/`. It
 holds a fictional supply dispute, buried the way real ones are in several
 hundred irrelevant documents (marketing email, calendar invitations, office
@@ -325,6 +335,7 @@ data system-wide, put `eng.traineddata` in
 - [LISTS.md](LISTS.md): document lists and the list display
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
+- [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](VIEWER.md): the document viewer

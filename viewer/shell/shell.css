@@ -128,6 +128,7 @@ body.drag-h { cursor: row-resize; }
 .pane-head .icon-btn { margin-left: -4px; }
 .pane-head .status { color: var(--muted); margin-left: auto; white-space: nowrap; }
 .pane-head .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.pane-head .produced { color: var(--muted); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
 .pane-head .fetchnote { color: var(--muted); font-size: 12px; }
 .pane-head .fetchnote.failed { color: var(--warn-ink); }
 .pane-head .fetchnote a { color: var(--accent); cursor: pointer; text-decoration: underline; }

@@ -209,6 +209,10 @@ positioned element, so geometry, highlights, regions and selections work
 on the whole page as before. Nothing is ever cut off: only blank margins
 go.
 
+**Received documents** ([RECEIVED.md](RECEIVED.md)) show their Bates range
+and the producing party beside the title, and the status line gives each
+page's Bates number, as for documents we produced.
+
 ## Downloads
 
 The ⋯ menu saves the document to the user's Downloads folder

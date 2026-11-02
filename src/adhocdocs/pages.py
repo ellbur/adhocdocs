@@ -697,10 +697,9 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
         raise PageError(f"reference {rid} exists; pass --replace")
     parts = []
     for s in locs:
-        if isinstance(s, str) and s.startswith(("bates:", "exh:")):          # the document (and pages) they name
-            from .exhibits import resolve_exhibit
-            from .produce import resolve_bates
-            s = (resolve_bates if s.startswith("bates:") else resolve_exhibit)(m, s)[0]["loc"]
+        from .received import NAMES, resolve_name
+        if isinstance(s, str) and s.startswith(NAMES):          # the document (and pages) they name
+            s = resolve_name(m, s)[0]["loc"]
         r = locators.resolve(m, s if isinstance(s, dict) else (s if s.lstrip().startswith("{") else "doc:" + s.removeprefix("doc:")))
         if r["status"] == "broken":
             raise PageError(f"locator is broken: {r.get('error')}")

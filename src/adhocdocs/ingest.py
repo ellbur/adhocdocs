@@ -51,10 +51,10 @@ def ingest_bytes(m: Matter, data: bytes, name: str | None, identity: dict, repor
     return _ingest(m, m.objects.put_bytes(data), name, identity, report, data)
 
 
-def ingest_file(m: Matter, path, name: str | None, identity: dict, report=None) -> str:
+def ingest_file(m: Matter, path, name: str | None, identity: dict, report=None, extra: dict | None = None) -> str:
     """Ingest a file on disk, of any size: it is copied into the store in
     blocks (see :func:`_ingest` for how it is read from there)."""
-    return _ingest(m, m.objects.put_file(path), name, identity, report)
+    return _ingest(m, m.objects.put_file(path), name, identity, report, extra=extra)
 
 
 def ingest_stream(m: Matter, f, name: str | None, identity: dict, report=None) -> str:
@@ -98,11 +98,19 @@ def _maybe_msg(path) -> bool:
 _MEMBER_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError, ValueError)
 
 
-def _ingest(m: Matter, content: str, name, identity: dict, report, data: bytes | None = None) -> str:
+def _ingest(m: Matter, content: str, name, identity: dict, report, data: bytes | None = None,
+            extra: dict | None = None) -> str:
     """A document's metadata is recorded last, after its children, so a
     document without it is unfinished: an ingest that was interrupted (in
     the middle of a large mailbox, say) picks up where it stopped when run
-    again. Children already in carry on being skipped, quickly."""
+    again. Children already in carry on being skipped, quickly.
+
+    ``extra`` is what a load file says about it (received.py): ``metadata``
+    filling what the extraction lacks (and kept whole under ``produced``),
+    ``text`` (the producer's, a layer of view ``produced``, primary only
+    when the extraction found no text), and ``children``: False when the
+    production lists the document's attachments itself."""
+    extra = extra or {}
     state = m.state
     docobj = {"type": "document", "v": 1, "content": content, **identity}
     doc = object_id(docobj)
@@ -121,6 +129,17 @@ def _ingest(m: Matter, content: str, name, identity: dict, report, data: bytes |
     except Exception as e:  # an unreadable original is still in the matter, just unextracted
         print(f"warning: could not extract {name}: {e}", file=sys.stderr)
         ext = Extraction(kind=failed_kind())
+    if extra.get("text"):
+        from .extract import Layer, clean
+        ours = any(l.text.strip() for l in ext.layers)
+        if not ours:
+            for l in ext.layers:
+                l.primary = False
+        ext.layers.append(Layer(view="produced", text=clean(extra["text"]), primary=not ours))
+    if extra.get("children") is False:
+        if hasattr(ext.children, "close"):
+            ext.children.close()
+        ext.children = []
     if content not in state.layers:
         store_layers(m, content, ext)
 
@@ -159,8 +178,14 @@ def _ingest(m: Matter, content: str, name, identity: dict, report, data: bytes |
         meta["members"] = n
     if error:
         meta["extraction_error"] = error
-    if name:
-        meta["name"] = os.path.basename(name)
+    if extra.get("name") or name:
+        meta["name"] = os.path.basename(extra.get("name") or name)
+    had_date = bool(meta.get("date"))
+    for k, v in (extra.get("metadata") or {}).items():
+        if k == "date_source" and had_date:
+            continue                    # the date is the extraction's: so is where it came from
+        if v not in (None, "", []) and meta.get(k) in (None, "", []):
+            meta[k] = v
     ev = m.logs["store"].append(op="set-metadata", doc=doc, metadata=m.objects.put_object(meta))
     state.apply(ev)
     if report:
