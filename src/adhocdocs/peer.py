@@ -844,6 +844,9 @@ def split_address(address: str) -> tuple[str, int]:
     return host.strip("[]"), int(port)
 
 
+CONNECT_TIMEOUT = 10         # seconds to wait for a member to accept a connection
+
+
 class _Connection(http.client.HTTPSConnection):
     """HTTPS to one origin: SNI names the matter, and the server's key must
     hash to the origin. Every (re)connect checks, including the ones
@@ -858,7 +861,9 @@ class _Connection(http.client.HTTPSConnection):
         self.ctx, self.origin, self.sni = ctx, origin, sni
 
     def connect(self):
-        sock = socket.create_connection((self.host, self.port), self.timeout)
+        # an address that doesn't answer is given up on quickly; a slow transfer once connected isn't
+        sock = socket.create_connection((self.host, self.port), min(self.timeout, CONNECT_TIMEOUT))
+        sock.settimeout(self.timeout)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         tls = self.ctx.wrap_socket(sock, server_hostname=self.sni)
         got, _ = cert_origin(tls.getpeercert(binary_form=True))
