@@ -1586,8 +1586,10 @@ is), E show entities (all, known, none), tag hotkeys, v layer, f mode, Tab pane,
 H overview, Alt-drag a region on a page, ? help. Spreadsheets open as a grid: click, drag, or
 Shift+arrows select cells, and row and column headers select whole rows
 and columns. The selection is a `sheet=…&cells=B2:D10` locator.
-Hex mode (f, or opening a bytes= locator) shows the original's bytes; a
-drag selects a `bytes=a,b` locator.
+Hex mode (the pane's ⋯ menu, or opening a bytes= locator) shows the
+original's bytes; a drag selects a `bytes=a,b` locator. The same menu
+saves the document to the user's Downloads folder (original, PDF, PDF
+with annotations, text); that is the user's to do, not Claude's.
 
 Highlights: a document pane's highlights get a bar with Prev/Next
 buttons, the current one's label, and a side-panel list of all of them by

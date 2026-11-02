@@ -17,6 +17,7 @@ mod chrono;
 mod endpoint;
 mod matter;
 mod overview;
+mod export;
 mod protocol;
 mod render;
 
@@ -40,6 +41,8 @@ pub enum UserEvent {
     Ipc(String, String),
     /// A service's answer for a pane: the window, the request ID and the result.
     Service(String, Value, Value),
+    /// A download's outcome: the window, the request ID and the result.
+    Exported(String, Value, Value),
 }
 
 struct Args {
@@ -79,7 +82,12 @@ fn http_response(r: Response) -> wry::http::Response<Vec<u8>> {
     b.body(r.body).unwrap()
 }
 
-type Job = (String, String, wry::RequestAsyncResponder);
+/// Work for the worker that owns MuPDF: an adhoc: request, or a download
+/// the user asked for (answered to the window by its request ID).
+enum Job {
+    Request(String, String, wry::RequestAsyncResponder),
+    Export(String, Value, Value),
+}
 
 /// One top-level window: its web view, and commands waiting for it to load.
 struct Win {
@@ -147,7 +155,7 @@ impl App {
             .with_asynchronous_custom_protocol("adhoc".into(), move |_id, req, responder| {
                 let path = req.uri().path().to_string();
                 let q = req.uri().query().unwrap_or("").to_string();
-                let _ = job_tx.lock().unwrap().send((path, q, responder));
+                let _ = job_tx.lock().unwrap().send(Job::Request(path, q, responder));
             })
             .with_ipc_handler(move |req| {
                 let _ = ipc_proxy.send_event(UserEvent::Ipc(ipc_id.clone(), req.body().clone()));
@@ -397,12 +405,21 @@ fn main() {
     let panes: Panes = Arc::new(Mutex::new(HashMap::new()));
 
     // One worker owns MuPDF and answers every adhoc: request, from every window, in order.
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
     let (job_tx, job_rx) = mpsc::channel::<Job>();
     {
-        let (matter, panes) = (matter.clone(), panes.clone());
+        let (matter, panes, proxy) = (matter.clone(), panes.clone(), proxy.clone());
         std::thread::spawn(move || {
             let mut h = Handler::new(matter, panes);
-            for (path, q, responder) in job_rx {
+            for job in job_rx {
+                let (path, q, responder) = match job {
+                    Job::Request(path, q, responder) => (path, q, responder),
+                    Job::Export(win, id, req) => {
+                        let _ = proxy.send_event(UserEvent::Exported(win, id, h.export(&req)));
+                        continue;
+                    }
+                };
                 let t = std::time::Instant::now();
                 let r = h.handle(&path, &q);
                 if r.status != 200 || std::env::var("ADHOC_VIEWER_DEBUG").is_ok() {
@@ -414,8 +431,6 @@ fn main() {
         });
     }
 
-    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    let proxy = event_loop.create_proxy();
     let root_name = a.matter.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let mut app = App {
         windows: BTreeMap::new(), by_tao: HashMap::new(), focused: String::new(), next_window: 0,
@@ -450,6 +465,9 @@ fn main() {
             Event::UserEvent(UserEvent::Command(cmd, reply)) => app.dispatch(target, cmd, reply),
             Event::UserEvent(UserEvent::Service(win, id, result)) => {
                 app.eval(&win, &format!("adhoc.served({}, {})", id, result));
+            }
+            Event::UserEvent(UserEvent::Exported(win, id, result)) => {
+                app.eval(&win, &format!("adhoc.exported({}, {})", id, result));
             }
             Event::UserEvent(UserEvent::Ipc(win, msg)) => {
                 let Ok(v) = serde_json::from_str::<Value>(&msg) else { return };
@@ -519,6 +537,10 @@ fn main() {
                             };
                             let _ = proxy.send_event(UserEvent::Service(win, id, result));
                         });
+                    }
+                    "export" => {
+                        // A download the user asked for, made by the worker that owns MuPDF.
+                        let _ = app.job_tx.send(Job::Export(win.clone(), v["id"].clone(), v["request"].clone()));
                     }
                     "annotate" => {
                         // The user's own tags and notes, written as the user by the host tool.

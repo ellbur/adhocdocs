@@ -129,7 +129,7 @@ impl Handler {
             ["api", "entity-candidates"] => self.entity_candidates(),
             ["api", "overview"] => self.overview(),
             ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
-            ["presentation", layer] => self.presentation(layer),
+            ["presentation", layer] => self.presentation(layer, &query(q)),
             ["image", content] => self.image(content, &query(q)),
             ["pane", content, rest @ ..] => self.pane(content, &rest.join("/")),
             _ => not_found("no such route"),
@@ -451,7 +451,8 @@ impl Handler {
         let w: u32 = q.get("w").and_then(|w| w.parse().ok()).unwrap_or(1000).clamp(100, 4000);
         let matter = self.matter.clone();
         let c = content.clone();
-        match self.renderer.png(&content, n, w, || {
+        let dark = q.get("dark").is_some_and(|v| v == "1");
+        match self.renderer.png(&content, n, w, dark, || {
             let m = matter.lock().unwrap();
             m.bytes(&c).map(|b| (b, magic_for(&kind, &name)))
         }) {
@@ -481,7 +482,7 @@ impl Handler {
         }
     }
 
-    fn presentation(&self, id: &str) -> Response {
+    fn presentation(&self, id: &str, q: &HashMap<String, String>) -> Response {
         let m = self.matter.lock().unwrap();
         if m.layer(id).is_none() {
             return not_found("layer not in this matter");
@@ -489,8 +490,17 @@ impl Handler {
         let obj = m.object(id).unwrap_or(Value::Null);
         let Some(h) = obj.get("presentation").and_then(|v| v.as_str()) else { return not_found("no presentation") };
         let html = sanitize(&m.text(h).unwrap_or_default());
-        let page = format!("<!doctype html><html><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/shell.css\"></head><body class=\"adhoc-presentation\">{}</body></html>", html);
+        // the document theme is set here, so a dark presentation never shows light first
+        let theme = if q.get("doc").is_some_and(|v| v == "dark") { " data-doc=\"dark\"" } else { "" };
+        let page = format!("<!doctype html><html{}><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/shell.css\"></head><body class=\"adhoc-presentation\">{}</body></html>", theme, html);
         Response { status: 200, mime: "text/html; charset=utf-8", body: page.into_bytes(), csp: true }
+    }
+
+    /// A download the user asked for (see export.rs).
+    pub fn export(&self, req: &Value) -> Value {
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        crate::export::export(&m, req)
     }
 
     fn pane(&self, content: &str, path: &str) -> Response {

@@ -6,7 +6,8 @@
 <link rel="stylesheet" href="/shell.css">
 </head>
 <body class="adhoc-shell">
-<nav id="tabs"></nav>
+<header id="top"><nav id="tabs"></nav>
+  <div id="top-tools"><button id="theme-btn" class="icon-btn" aria-label="Light and dark, for the interface and for documents">◐</button></div></header>
 <main id="panes"><div id="layout"></div></main>
 <div id="palette" hidden>
   <input id="palette-input" placeholder="Tag… Enter applies · Shift+Enter: family · Ctrl+Enter: duplicates" autocomplete="off">
@@ -27,6 +28,7 @@
   <div class="row"><span class="hint">Enter saves · Ctrl+Enter in the description · Esc cancels</span></div>
 </div>
 <div id="entity-card" hidden></div>
+<div id="menu" role="menu" hidden></div>
 <div id="toast" hidden></div>
 <script src="/entities.js"></script>
 <script src="/dates.js"></script>
