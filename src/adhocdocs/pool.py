@@ -8,9 +8,12 @@ it, ``user:<id>``), ``prev`` and ``sig``:
 =================  ==============================================================
 ``add-member``     ``member`` (an origin), ``cert`` (its certificate, PEM),
                    ``name`` (for people: "Alice's laptop"), ``role`` (``member``
-                   or ``hub``), ``addresses`` (``host:port`` where it listens)
+                   or ``hub``), ``addresses`` (``host:port`` where it listens),
+                   ``copy`` (``limited``, or left out: ``full``)
 ``remove-member``  ``member``
 ``set-addresses``  ``member`` (the event's own origin), ``addresses``
+``set-copy``       ``member`` (the event's own origin), ``copy`` (``full`` or
+                   ``limited``)
 ``bind-user``      ``user`` (``user:<id>``), and ``member`` (that installation
                    writes for that person), or ``vouch_key`` (whoever proves
                    they hold an invitation's secret will), or ``member`` with
@@ -45,6 +48,15 @@ installation shares. So everyone agrees on the members, and an
 installation that was removed can't add itself back. Any member can add or
 remove any other (SYNC.md, open questions).
 
+**Full and limited copies.** A *full* copy holds every original; a
+*limited* one holds everything else (the logs, metadata, text layers) and
+fetches originals when it needs them, from a full copy. So at least one
+member must stay full: a member becoming limited (``set-copy``, or joining
+limited) counts only if another active member is full when it's replayed,
+and a hub is always full. A ``set-copy`` that doesn't count leaves the
+member full, and since every installation follows the pool's word on its
+own copy, it goes on holding everything.
+
 A removed member's certificate stays known, so its earlier events still
 check. Removing a member stops everyone syncing with it; it can't recall
 what it already has.
@@ -55,6 +67,7 @@ from .origin import cert_origin
 from .signing import BadLog, check_chain, event_hash, sign
 
 ROLES = ("member", "hub")
+COPIES = ("full", "limited")
 
 
 class Pool:
@@ -145,7 +158,10 @@ class Pool:
                                     "role": ev.get("role", "member"), "addresses": list(ev.get("addresses", [])),
                                     "added_by": by, "author": ev.get("author"), "at": ev["at"], "active": True,
                                     "sealed": bool(ev.get("sealed")),     # a hub that can't read what it holds
-                                    "box": ev.get("box") if isinstance(ev.get("box"), str) else None}
+                                    "box": ev.get("box") if isinstance(ev.get("box"), str) else None,
+                                    "copy": "full"}
+            if ev.get("copy", "full") != "full":
+                self._set_copy(ev, origin, ev.get("copy"))
             for u in ev.get("users") or []:          # "the same person as me": the inviter vouches
                 if isinstance(u, str) and u.startswith("user:"):
                     self._vouches.append((u, origin, by))
@@ -164,6 +180,10 @@ class Pool:
             if ev.get("member") != by:
                 return self._ignore(ev, "a member sets only its own addresses")
             self.members[by]["addresses"] = list(ev.get("addresses", []))
+        elif op == "set-copy":
+            if ev.get("member") != by:
+                return self._ignore(ev, "a member sets only its own copy")
+            self._set_copy(ev, by, ev.get("copy"))
         elif op == "bind-user":
             user = ev.get("user")
             if not isinstance(user, str) or not user.startswith("user:"):
@@ -182,6 +202,27 @@ class Pool:
                 self._vouches.append((user, member, by))
             else:
                 self._ignore(ev, f"{member} isn't a member")
+
+    def _set_copy(self, ev, origin, copy):
+        x = self.members[origin]
+        if copy not in COPIES:
+            return self._ignore(ev, f"no copy {copy!r}")
+        if copy == "limited":
+            if x["role"] == "hub":
+                return self._ignore(ev, "a hub holds every original")
+            if not any(o != origin for o in self.full_copies()):
+                return self._ignore(ev, "no other member holds every original")
+        x["copy"] = copy
+
+    def full_copies(self) -> list[str]:
+        """The active members that hold every original."""
+        return [o for o, x in self.members.items() if x["active"] and x.get("copy", "full") == "full"]
+
+    def holds_all(self, origin: str) -> bool:
+        """Whether this member is to hold every original (anyone the pool
+        doesn't know of yet does: a member that's joining, or no pool)."""
+        x = self.members.get(origin)
+        return x is None or x.get("copy", "full") == "full"
 
     _matter_key = ""
 
@@ -233,7 +274,7 @@ class Pool:
         return not bound or origin in bound
 
     def summary(self, me: str | None = None) -> list[dict]:
-        return [{k: x[k] for k in ("origin", "name", "role", "addresses", "active", "at", "author") if k in x}
+        return [{k: x[k] for k in ("origin", "name", "role", "copy", "addresses", "active", "at", "author") if k in x}
                 | {"this": x["origin"] == me, "people": sorted(u for u, os_ in self.users.items() if x["origin"] in os_)}
                 for x in self.members.values()]
 
@@ -341,18 +382,62 @@ def add_self(m: Matter, author: str, name: str, addresses=(), role="member") -> 
 
 
 def add_member(m: Matter, author: str, cert: str, name: str, role="member", addresses=(), same_person=False,
-               sealed: bool = False, box: str | None = None) -> dict:
+               sealed: bool = False, box: str | None = None, copy: str = "full") -> dict:
     p = Pool.load(m)
     if not p.is_member(m.origin):
         raise PoolError("this installation isn't a member of the pool, so it can't add one")
     origin, _ = cert_origin(cert.encode())
     if p.is_member(origin):
         return {"member": origin, "already": True}
+    if copy == "limited":
+        _can_be_limited(p, origin, role)
+    elif copy != "full":
+        raise PoolError(f"no copy {copy!r}")
     return m.pool_log.append(op="add-member", member=origin, cert=cert, name=name, role=role,
                              addresses=list(addresses), author=author,
+                             **({"copy": "limited"} if copy == "limited" else {}),
                              **({"users": [author]} if same_person and author.startswith("user:") else {}),
                              **({"sealed": True} if sealed else {}),
                              **({"box": box} if box else {}))
+
+
+def _can_be_limited(p: Pool, origin: str, role: str):
+    """Refuse a limited copy the pool wouldn't count, or that couldn't fetch
+    what it needs: another member must hold every original and say where it
+    listens."""
+    if role == "hub":
+        raise PoolError("a hub holds every original: it can't be limited")
+    reach = [o for o in p.full_copies() if o != origin and p.members[o]["addresses"]]
+    if not reach:
+        raise PoolError("a limited copy fetches originals from a member that holds them all, and no other member "
+                        "that does says where it listens. Put the matter on a hub first (adhoc sync push), or "
+                        "have a full member listen (adhoc sync serve --advertise).")
+
+
+def set_copy(m: Matter, author: str, copy: str) -> dict | None:
+    """Make this installation a full or a limited copy (SYNC.md). Becoming
+    full, it fetches the originals it lacks as it next syncs. Host only."""
+    p = Pool.load(m)
+    if not p.is_member(m.origin):
+        raise PoolError("this installation isn't a member of the pool")
+    if copy not in COPIES:
+        raise PoolError(f"no copy {copy!r}: full or limited")
+    if p.members[m.origin].get("copy", "full") == copy:
+        return None
+    if copy == "limited":
+        _can_be_limited(p, m.origin, p.members[m.origin]["role"])
+    ev = m.pool_log.append(op="set-copy", member=m.origin, copy=copy, author=author)
+    if copy == "limited":
+        mark_was_limited(m)
+    return ev
+
+
+def mark_was_limited(m: Matter):
+    """Remember that this installation may lack originals: if the pool makes it
+    full, it fetches them (adhocdocs.peer.backfill)."""
+    p = m.sync_dir / "was-limited"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.touch()
 
 
 def remove_member(m: Matter, author: str, origin: str) -> dict:
@@ -361,6 +446,11 @@ def remove_member(m: Matter, author: str, origin: str) -> dict:
         raise PoolError("this installation isn't a member of the pool")
     if not p.is_member(origin):
         raise PoolError(f"{origin} isn't a member")
+    limited = [x["name"] for x in p.active() if x.get("copy") == "limited" and x["origin"] != origin]
+    if limited and p.full_copies() == [origin]:
+        raise PoolError(f"{p.members[origin]['name']} is the only member that holds every original, and "
+                        f"{', '.join(limited)} fetch them from it. Make another member full first "
+                        "(adhoc sync copy full, there).")
     # how much of its logs counts: what this installation holds of them now
     upto = {name: feed.log_for(origin).count()
             for name, feed in (("pool", m.pool_log), ("store", m.logs["store"]), ("annotations", m.annotation_log),
@@ -467,5 +557,5 @@ def check_log(m: Matter, feed, origin: str, pool: Pool | None = None) -> int:
     return len(events)
 
 
-__all__ = ["Pool", "PoolError", "found", "add_member", "remove_member", "set_addresses", "seal", "check_log",
+__all__ = ["Pool", "PoolError", "found", "add_member", "remove_member", "set_addresses", "set_copy", "seal", "check_log",
            "event_hash", "read_toml"]

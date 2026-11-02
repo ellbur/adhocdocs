@@ -3,8 +3,9 @@
 *Status: built, in the five steps under "Order of building", with tests for
 each, and since then: hotkeys kept local, Bates and exhibit numbers
 reserved before use, people bound to installations, removed members' later
-events set aside, syncing as things change, and finding members on the
-local network. Decisions still open are at the end.*
+events set aside, syncing as things change, finding members on the
+local network, and limited copies (the pool's rule and sync; fetching
+originals on demand is next). Decisions still open are at the end.*
 
 A matter can be open on several machines: a lawyer's laptop, a paralegal's
 desktop, a firm server. Cloud document platforms solve this by keeping the
@@ -30,7 +31,7 @@ Two things differ from Syncthing:
 
 | Data | Synced | Why |
 |---|---|---|
-| Documents: originals, text layers, metadata (`store/`) | yes | the matter itself; OCR and extraction run once, where ingested |
+| Documents: originals, text layers, metadata (`store/`) | yes (originals: not to [limited copies](#limited-copies)) | the matter itself; OCR and extraction run once, where ingested |
 | Tags, notes, tag definitions, entities, dated events (`annotations/`) | yes | judgments about the documents |
 | Published work product: pages, chronologies, key sets, lists | yes, **when published** | see below |
 | Pool membership | yes | so every member knows every other |
@@ -339,6 +340,72 @@ memory: a request signed in the five minutes before a restart could be
 replayed once after it, by someone who had it (which, inside TLS, means
 the member who sent it).
 
+### Limited copies
+
+A laptop may not have room for a large matter. A **limited copy** holds
+everything but the originals: every log, all metadata, every text layer.
+It fetches originals when it needs them, from a member that holds them all,
+and keeps what it fetched in a cache with a size limit.
+
+The split works because the two parts differ so much in size. Text layers
+are usually a few percent of the originals (PDFs, scans, email with
+attachments). And the parts a matter is worked from are text and metadata,
+so a limited copy loses less than it might seem:
+
+- **Indexing stays local and ad hoc.** Every index (`fields`, `keyword`,
+  `semantic`, `threads`, `neardup`, `entities`, `dates`, `names`) is built
+  from text layers and metadata, never originals, and so are almost all
+  indexes Claude makes for itself. They build at full speed, and searches
+  stay exhaustive and say what they cover, because no text is missing. So
+  there are no shared indexes, and indexes stay whatever anyone wants.
+- **What's slow is what needs the file itself:** a page image, hex mode,
+  re-OCR, extracting what no one has extracted, producing documents. These
+  are mostly one document at a time, and the viewer can fetch the next few
+  in a list ahead of time.
+- **Bulk work over originals** (re-OCR across the matter, decoding raw bytes
+  of many files) means fetching each one. That's done deliberately:
+  `adhoc fetch <search>` (to come) keeps a set of documents in the cache.
+- **Opening an original needs the network,** unless it's cached. Reading
+  and searching text works offline as ever.
+
+**Someone must hold everything.** Nothing would stop every installation
+from being limited, so the pool doesn't allow it
+([`pool.py`](src/adhocdocs/pool.py)):
+
+- Each member is a **full** or **limited** copy, in the pool log
+  (`add-member` with `copy`, or `set-copy`). A member becoming limited
+  counts only if another active member is full when the pool is replayed;
+  a hub is always full. Two members going limited at the same moment, each
+  seeing the other full, replay in the shared order: the first counts and
+  the second stays full. Every installation follows the pool's word on its
+  own copy, so the one that stays full goes on fetching everything.
+- Becoming limited (`adhoc sync copy limited`, `adhoc sync join --limited`)
+  is refused unless a full member says where it listens, since that's
+  where originals come from. In practice that's the hub.
+- The only full copy can't be removed while limited copies fetch from it.
+- **Back to full**: `adhoc sync copy full` fetches the originals the copy
+  lacks as it next syncs (`filled`), until none are missing.
+
+**Syncing** ([`peer.py`](src/adhocdocs/peer.py)) still sends every event.
+A limited copy just isn't sent the original a new document adds, nor does
+it fetch one (it still fetches the same bytes when something else needs
+them, such as a text file whose layer text *is* its bytes). What it ingests
+itself, it holds, and sends as usual. A full member never takes an event
+without its original. So when it syncs with a limited copy that lacks one
+(say, another member's document), it holds that log there and gets the
+rest from a member that has the original. Both directions do this, and the
+result lists it under `later`, not as a refusal. `adhoc sync status` says
+which copy this is and how many originals it lacks.
+
+**Still to build:** fetching originals on demand wherever they're read
+(the viewer, `raw`, `produce`, extraction, quoting), with the cache and
+its limit. Never evicting an original that no full member holds yet
+(something this copy ingested), or that `adhoc fetch` kept. Prefetching in
+the viewer. And `adhoc fetch`. A copy too small even for the text (a
+tablet, say) would need indexes made elsewhere and synced, checked by
+their settings as local ones are. That's left until it's wanted, since it
+would limit which indexes there can be.
+
 ### Bates and exhibit numbers
 
 Bates numbers and exhibit numbers must not repeat across installations
@@ -531,6 +598,8 @@ On the host (the user's; Claude can't run them in a session):
 | `adhoc sync join <code> <dir>` | join with it, into a new matter directory, and sync |
 | `adhoc sync serve [--listen …] [--advertise host:port --user me]` | be reachable by the other members (and sync as things change) |
 | `adhoc sync watch` | sync as things change, without listening (a laptop) |
+| `adhoc sync join <code> <dir> --limited` | join as a [limited copy](#limited-copies) |
+| `adhoc sync copy full\|limited --user me` | change what this installation holds |
 | `adhoc sync now` | sync with every member that says where it listens |
 | `adhoc sync push <hub code> --user me` | put the matter on a hub |
 | `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |
@@ -561,19 +630,18 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 
 ## Open questions
 
-- **Partial replicas.** A laptop may not have room for a large matter.
-  Every installation would get all logs and text layers, with originals
-  fetched by collection or on first view. That trades away some of the
-  speed that local first is for, so it's opt-in.
 - **Indexes.** Each installation builds its own, and semantic indexing a
-  large matter takes a while. A hub could build and offer them, checked
-  against their settings like any index.
+  large matter takes a while. A full member could build and offer them,
+  checked against their settings like any index (and a copy too small for
+  the text would need them: see limited copies). A sealed hub can't build
+  any.
 - **The audit log.** Should a hub collect members' audit logs, for a firm
   that wants one record of every session on a matter?
 
 ## Decided
 
-- Local first: every installation holds the matter and works offline.
+- Local first: every installation holds the matter (a limited copy, all but
+  the originals) and works offline.
 - One pool per matter; joining through any member joins the pool.
 - An optional hub, which members can push to.
 - Synced: documents, annotations (tags, notes, entities), published work
@@ -588,3 +656,6 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
   and transcripts is left to each installation's user, with a notice.
 - Any member can remove any other, for now.
 - Hubs hold matters sealed, by default: they can't read them.
+- Limited copies: everything but originals, fetched on demand. At least
+  one member holds every original, and a hub always does. Indexes stay
+  local, built from text layers.

@@ -185,6 +185,12 @@ def adhoc(argv=None):
     x.add_argument("path", help="a new, empty directory for the matter")
     x.add_argument("--name", help="this installation's name (default: the host name)")
     x.add_argument("--address", action="append", default=[], help="host:port where this one will listen, if it will")
+    x.add_argument("--limited", action="store_true",
+                   help="hold everything but the originals, fetching those when needed from a member that holds "
+                        "them all (a hub, usually)")
+    x = ss.add_parser("copy", help="make this installation a full copy (every original) or a limited one")
+    x.add_argument("copy", choices=["full", "limited"])
+    x.add_argument("--user", required=True)
     x = ss.add_parser("serve", help="listen for the pool's other members (runs until stopped)")
     x.add_argument("--listen", default=f"0.0.0.0:7480", help="host:port to listen on (default 0.0.0.0:7480)")
     x.add_argument("--advertise", action="append", default=[],
@@ -257,7 +263,7 @@ def adhoc(argv=None):
         return _hub(a)
     if a.cmd == "sync" and a.action == "join":
         from . import invite
-        r = invite.join(a.code, a.path, a.name, a.address)
+        r = invite.join(a.code, a.path, a.name, a.address, "limited" if a.limited else "full")
         gui.remember(a.path)
         out(r)
         return
@@ -387,12 +393,16 @@ Only a person can purge, on the host."""
 
 SYNC_HELP = """\
 Sync this matter with its other installations: laptops, desktops, a hub.
-Every installation keeps a full copy and works offline. Documents, tags,
+Every installation keeps a full copy and works offline, unless it's a
+limited copy: then it holds everything but the originals, and fetches those
+from a member that holds them all. Documents, tags,
 notes, entities and published work sync; the workspace doesn't. See SYNC.md.
 
   adhoc sync invite --user me --address myhost:7480   (on a member) prints a code
   adhoc sync serve --listen 0.0.0.0:7480              (on a member) to be reached
   adhoc sync join <code> ~/matters/smith --name "Bob's desktop"   (the new one)
+  adhoc sync join <code> ~/matters/smith --limited    (no originals, but on demand)
+  adhoc sync copy full|limited --user me              change what this one holds
   adhoc sync now                                      sync with every member
   adhoc sync status | members | conflicts
 
@@ -404,6 +414,9 @@ def _sync(m, a):
     if a.action == "status":
         st = sync.status(m)
         st["members"] = pool.Pool.load(m).summary(st["origin"])
+        if pool.founded(m):
+            st["copy"] = "full" if peer.holds_all(m) else "limited"
+            st["originals_missing"] = len(peer.missing_originals(m))
         out(st)
     elif a.action == "conflicts":
         for c in sync.conflicts(m):
@@ -415,6 +428,12 @@ def _sync(m, a):
         out(invite.create(m, f"user:{a.user}", a.address, a.role, a.hours, a.name, a.same_person))
     elif a.action == "vouch":
         out(pool.vouch(m, f"user:{a.user}", a.origin))
+    elif a.action == "copy":
+        ev = pool.set_copy(m, f"user:{a.user}", a.copy)
+        out({"copy": a.copy, "changed": ev is not None,
+             "note": "Originals this installation lacks come from the others as it next syncs (adhoc sync now)."
+             if a.copy == "full" else
+             "New originals from the others won't be fetched; those here stay. Others fetch from a full member."})
     elif a.action == "remove":
         out({**pool.remove_member(m, f"user:{a.user}", a.origin),
              "note": "No member will sync with it once they have this removal (run adhoc sync now). It keeps "

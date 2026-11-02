@@ -41,6 +41,11 @@ has more events sends the rest, with the objects they name, objects first,
 so an event never arrives before what it points at. Each event is checked
 against its origin's key and the event before it, so a member can pass on
 another's events and the receiver can still tell they're genuine.
+
+**Limited copies** (adhocdocs.pool) aren't sent, and don't fetch, the
+original a new document adds. A full copy never takes an event without its
+original: what a limited peer can't supply waits for a member that can
+(``later`` in the result, not a refusal).
 """
 
 import hashlib
@@ -72,6 +77,11 @@ HASH_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 class SyncError(Exception):
     pass
+
+
+class NotHeld(SyncError):
+    """The peer doesn't have an object (it's a limited copy, or the object
+    hasn't reached it yet)."""
 
 
 class _TooLarge(Exception):
@@ -169,9 +179,38 @@ def _small_object(store: ObjectStore, h: str) -> bytes | None:
     return p.read_bytes()
 
 
-def closure(store: ObjectStore, hashes) -> list[str]:
+def lean_refs(feed: str, ev: dict) -> list[str]:
+    """What a limited copy needs of an event: its objects without the
+    original a document adds. (The same bytes can still be needed some other
+    way, as a text file's layer text, say: then they come that way.)"""
+    if feed == "store" and ev.get("op") == "add-document":
+        return [ev["doc"]]
+    return direct_refs(feed, ev)
+
+
+def document_objects(feed: str, events) -> set[str]:
+    """The document objects ``events`` add: they name an original, which a
+    limited copy doesn't follow."""
+    if feed != "store":
+        return set()
+    return {ev["doc"] for ev in events if ev.get("op") == "add-document" and isinstance(ev.get("doc"), str)}
+
+
+def holds_all(m: Matter) -> bool:
+    """Whether this installation is to hold every original: the pool's word
+    on it (adhocdocs.pool, full and limited copies). A sealed hub does."""
+    if is_sealed(m) or not poolmod.founded(m):
+        return True
+    try:
+        return poolmod.Pool.load(m).holds_all(m.origin)
+    except Exception:
+        return True
+
+
+def closure(store: ObjectStore, hashes, shallow=()) -> list[str]:
     """``hashes`` and everything they name, as far as ``store`` has them
-    (a purged object isn't there, and isn't sent)."""
+    (a purged object isn't there, and isn't sent). What ``shallow`` objects
+    name isn't followed (for a limited copy: documents' originals)."""
     out, todo = [], list(hashes)
     seen = set()
     while todo:
@@ -182,7 +221,7 @@ def closure(store: ObjectStore, hashes) -> list[str]:
         if not store.has(h):
             continue
         out.append(h)
-        data = _small_object(store, h)
+        data = _small_object(store, h) if h not in shallow else None
         if data:
             todo += nested_refs(data)
     return out
@@ -211,11 +250,12 @@ def _purged(m: Matter, feed: str, origin: str, events, pool) -> tuple[set, set, 
     return docs, contents, purge.purged_objects(m)
 
 
-def _refs(feed: str, ev: dict, docs: set, contents: set, objects: set) -> list[str]:
-    """The objects an event needs, leaving out what a purge took."""
+def _refs(feed: str, ev: dict, docs: set, contents: set, objects: set, lean=False) -> list[str]:
+    """The objects an event needs, leaving out what a purge took (and with
+    ``lean``, for a limited copy, the original a document adds)."""
     if feed == "store" and (ev.get("doc") in docs or ev.get("content") in contents):
         return []
-    return [h for h in direct_refs(feed, ev) if h not in objects]
+    return [h for h in (lean_refs if lean else direct_refs)(feed, ev) if h not in objects]
 
 
 def store_only(m: Matter) -> ObjectStore:
@@ -254,7 +294,8 @@ def append_remote(m: Matter, feed: str, origin: str, start: int, events: list[di
     store = store_only(m)
     from . import purge
     docs, contents, objects = _purged(m, feed, origin, events, pool)
-    missing = [h for ev in events for h in _refs(feed, ev, docs, contents, objects) if not store.has(h)]
+    lean = not pool.holds_all(m.origin)
+    missing = [h for ev in events for h in _refs(feed, ev, docs, contents, objects, lean) if not store.has(h)]
     if missing:
         raise SyncError(f"objects missing for {feed}/{origin}: {missing[:3]}")
     log = feed_of(m, feed).log_for(origin)
@@ -932,7 +973,7 @@ class Peer:
             r = self.request("GET", f"objects/{h}")
             if r.status != 200:
                 r.read()
-                raise SyncError(f"the peer doesn't have {h}")
+                raise NotHeld(f"the peer doesn't have {h}")
             got = store.put_stream(r)
         else:
             # sealed under some epoch's key: the newest first
@@ -942,7 +983,7 @@ class Peer:
                     break
                 r.read()
             else:
-                raise SyncError(f"the hub doesn't have {h}")
+                raise NotHeld(f"the hub doesn't have {h}")
             try:
                 got = store.put_stream(seal.Unsealer(self.k, h, r, epoch))
             except Exception as e:
@@ -965,9 +1006,14 @@ class Peer:
             raise SyncError(f"PUT {h}: {r.status} {out.get('error', '')}")
 
 
-def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: int, pool) -> int:
+def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: int, pool, later=None) -> int:
+    """Fetch the events of one log this installation lacks, with the objects
+    they need (for a limited copy, not the originals). If the peer lacks an
+    object (it's limited itself), stop there: they'll come from a member that
+    has it. That's noted in ``later``."""
     store = store_only(m)
     got = 0
+    limited = not pool.holds_all(m.origin) and not is_sealed(m)
     while mine < theirs:
         events = peer.json("GET", f"events/{feed}/{origin}?from={mine}&limit={BATCH}")["events"]
         if not events:
@@ -986,43 +1032,72 @@ def _pull_log(peer: Peer, m: Matter, feed: str, origin: str, mine: int, theirs: 
         docs, contents, objects = _purged(m, feed, origin, events, pool)
         check_chain(feed_of(m, feed).log_for(origin).last_event(), events, key, f"{feed}/{origin}",
                     lambda ev: purge.may_hide(ev, docs))
-        need = [h for ev in events for h in _refs(feed, ev, docs, contents, objects)]
+        shallow = document_objects(feed, events) if limited else set()
+        need = [h for ev in events for h in _refs(feed, ev, docs, contents, objects, limited)]
         seen = set()
-        while need:
-            h = need.pop()
-            if h in seen or h in objects:
-                continue
-            seen.add(h)
-            if not store.has(h):
-                peer.fetch_object(h, store)
-            data = _small_object(store, h)
-            if data:
-                need += nested_refs(data)
+        try:
+            while need:
+                h = need.pop()
+                if h in seen or h in objects:
+                    continue
+                seen.add(h)
+                if not store.has(h):
+                    peer.fetch_object(h, store)
+                data = _small_object(store, h) if h not in shallow else None
+                if data:
+                    need += nested_refs(data)
+        except NotHeld as e:
+            if later is not None:
+                later.append({"log": f"{feed}/{origin}", "why": str(e)})
+            break
         mine = append_remote(m, feed, origin, mine, events, pool)
         got += len(events)
     return got
 
 
-def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: int) -> int:
+def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: int, peer_holds_all=True,
+              later=None) -> int:
+    """Send one log's events the peer lacks, objects first. A limited peer
+    isn't sent originals. An event needing an original neither side has (this
+    one is limited) isn't sent: the peer gets it from a member that has the
+    original. That's noted in ``later``."""
     store = store_only(m)
     sent = 0
     while theirs < mine:
         events = read_events(m, feed, origin, theirs, BATCH)
-        objs = closure(store, [h for ev in events for h in direct_refs(feed, ev)])
+        lean = not peer_holds_all
+        shallow = document_objects(feed, events) if lean else set()
+        refs = [h for ev in events for h in (lean_refs if lean else direct_refs)(feed, ev)]
+        objs = closure(store, refs, shallow)
+        lacking = {h for h in refs if HASH_RE.fullmatch(h) and not store.has(h)}
         if peer.k:
             from . import seal
             # under any epoch's key, it's there already
-            names = {seal.blind(peer.k, h, e): h for h in objs for e in peer.k.keys}
+            names = {seal.blind(peer.k, h, e): h for h in [*objs, *lacking] for e in peer.k.keys}
         else:
-            names = {h: h for h in objs}
+            names = {h: h for h in [*objs, *lacking]}
         listed = list(names)
         missing: dict[str, int] = {}
         for i in range(0, len(listed), 5000):
             for n in peer.json("POST", "missing", {"hashes": listed[i:i + 5000]})["missing"]:
                 missing[names[n]] = missing.get(names[n], 0) + 1
         per = len(peer.k.keys) if peer.k else 1
+        gap = {h for h, n in missing.items() if n == per and h in lacking}
+        if gap:
+            # neither side has it: send only the events before the first that needs it
+            cut = next(i for i, ev in enumerate(events)
+                       if gap & set((lean_refs if lean else direct_refs)(feed, ev)))
+            if later is not None:
+                later.append({"log": f"{feed}/{origin}", "why": f"this copy is limited and the peer lacks "
+                                                                f"{sorted(gap)[0]} too"})
+            if cut == 0:
+                break
+            events = events[:cut]
+            keep = closure(store, [h for ev in events for h in (lean_refs if lean else direct_refs)(feed, ev)],
+                           shallow)
+            missing = {h: n for h, n in missing.items() if h in keep}
         for h, n in missing.items():
-            if n == per:            # missing under every name
+            if n == per and h not in lacking:            # missing under every name
                 peer.send_object(h, store)
         if peer.k and feed != "pool":
             prev = read_events(m, feed, origin, theirs - 1, 1)[0] if theirs else None
@@ -1033,6 +1108,8 @@ def _push_log(peer: Peer, m: Matter, feed: str, origin: str, theirs: int, mine: 
             events = sealed
         theirs = peer.json("POST", f"events/{feed}/{origin}", {"from": theirs, "events": events})["count"]
         sent += len(events)
+        if gap:
+            break
     return sent
 
 
@@ -1044,7 +1121,7 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
     left as it is on both sides and reported under ``refused``; the other
     logs still sync, since each is checked on its own."""
     peer = Peer(m, address, origin)
-    pulled, pushed, refused = {}, {}, []
+    pulled, pushed, refused, later = {}, {}, [], []
 
     def attempt(what, fn):
         try:
@@ -1084,7 +1161,7 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
                         continue
                     if feed == "pool" and known_key(m, o, pool) is None and o != pool.founder:
                         continue
-                    k = attempt(what, lambda: _pull_log(peer, m, feed, o, have, n, pool))
+                    k = attempt(what, lambda: _pull_log(peer, m, feed, o, have, n, pool, later))
                     if k:
                         pulled[what] = pulled.get(what, 0) + k
                         progress += k
@@ -1096,12 +1173,13 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
             reply = peer.json("GET", "vector")
             theirs, their_heads = reply["vector"], reply.get("heads", {})
             mine_heads = heads(m)[feed]
+            peer_full = poolmod.Pool.load(m).holds_all(origin) or bool(peer.k)
             for o, n in sorted(counts(m)[feed].items()):
                 what, t = f"{feed}/{o}", theirs.get(feed, {}).get(o, 0)
                 if any(r["log"] == what for r in refused):
                     continue
                 if n > t:
-                    k = attempt(what, lambda: _push_log(peer, m, feed, o, t, n))
+                    k = attempt(what, lambda: _push_log(peer, m, feed, o, t, n, peer_full, later))
                     if k:
                         pushed[what] = k
                 elif n == t and their_heads.get(feed, {}).get(o) not in (None, mine_heads.get(o)):
@@ -1125,12 +1203,41 @@ def sync_with(m: Matter, address: str, origin: str) -> dict:
                     peer.json("POST", "forget", {"objects": [seal.blind(peer.k, h, e) for h in rec["objects"]
                                                          for e in peer.k.keys],
                                                  "purge": rec["applied"][-1]})
+        filled = backfill(Matter(m.root), peer)
     finally:
         peer.close()
     if pulled:
         after_arrival(m, {k.split("/")[0] for k in pulled})
     return {"peer": origin, "address": address, "pulled": pulled, "pushed": pushed,
-            **({"refused": refused} if refused else {})}
+            **({"refused": refused} if refused else {}), **({"later": later} if later else {}),
+            **({"filled": filled} if filled else {})}
+
+
+def missing_originals(m: Matter) -> list[str]:
+    """The originals of the matter's live documents that aren't here."""
+    from . import purge
+    store = store_only(m)
+    gone = purge.purged_objects(m) | set(purge.record(m)["contents"])
+    return sorted({c for c in m.state.documents.values() if c not in gone and not store.has(c)})
+
+
+def backfill(m: Matter, peer: "Peer") -> int:
+    """A copy that was limited and is now full (the pool says so) fetches the
+    originals it lacks from ``peer``, as far as the peer has them. Once none
+    are missing, it stops looking. Returns how many came."""
+    flag = m.sync_dir / "was-limited"
+    if not flag.exists() or not holds_all(m) or is_sealed(m):
+        return 0
+    store, n, short = store_only(m), 0, 0
+    for h in missing_originals(m):
+        try:
+            peer.fetch_object(h, store)
+            n += 1
+        except NotHeld:
+            short += 1
+    if not short:
+        flag.unlink(missing_ok=True)
+    return n
 
 
 def sync_all(m: Matter) -> list[dict]:
