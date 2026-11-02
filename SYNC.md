@@ -510,7 +510,7 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   the next one, and a failed sync is retried after 5 seconds, then less
   often, up to every two minutes. The one deliberate wait is reserving
   Bates or exhibit numbers, which syncs with the hub before and after
-  (below).
+  (see "Bates and exhibit numbers").
   The viewer refreshes from the feeds, and Claude sees new events through
   `idx changes` and `ann log --since`.
 
