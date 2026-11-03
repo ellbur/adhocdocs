@@ -2255,6 +2255,8 @@ the links between them (`ann link`), and the documents they rest on.
   graph path A B [--max 4]           how two things connect, hop by hop, with the evidence for each
   graph evidence REF                 for a document: the links and entities that rest on it;
                                      for an entity or link: the documents it rests on
+  graph page REF [-o FILE]           a literate page about one entity: its connections, each with its
+                                     evidence quoted by reference, in date order, and where it is named
   graph unsupported [--facet F]      links and events with no evidence recorded (--all: any entity)
   graph export [--format json|dot|mermaid] [-o FILE]
                                      the whole graph (or --around REF), for your own code
@@ -2317,6 +2319,10 @@ def graph(argv=None):
     s = sub.add_parser("unsupported", help="links and events with no evidence recorded")
     s.add_argument("--facet")
     s.add_argument("--all", action="store_true", help="every entity without --see, not only events")
+    s = sub.add_parser("page", help="a literate page about one entity: its links and their evidence, quoted by reference")
+    s.add_argument("ref")
+    s.add_argument("-o", "--out", help="default: entity-<name>.md")
+    s.add_argument("--mentions", type=int, default=15, help="list this many of the documents that name it")
     s = sub.add_parser("export", help="the graph as JSON (nodes, edges), Graphviz dot, or Mermaid")
     s.add_argument("--format", choices=["json", "dot", "mermaid"], default="json")
     s.add_argument("--around", action="append", help="only around these (repeatable)")
@@ -2331,6 +2337,16 @@ def graph(argv=None):
     if a.cmd == "unsupported":
         for row in graphmod.unsupported(ann, a.facet, a.all):
             out(row)
+        return
+    if a.cmd == "page":
+        import re as _re
+        text = graphmod.dossier(m, a.ref, a.mentions)
+        name = text.split("\n", 1)[0].removeprefix("# ")
+        path = Path(a.out or "entity-" + (_re.sub(r"[^a-z0-9]+", "-", entities.fold_text(name)).strip("-") or "page") + ".md")
+        path.write_text(text, encoding="utf-8")
+        from . import literate
+        problems = literate.problems(literate.check(m, text))
+        out({"written": str(path), "problems": problems, "next": f"page view {path}"})
         return
     if a.cmd == "evidence":
         g = graphmod.load(m, facts=True, ann=ann)

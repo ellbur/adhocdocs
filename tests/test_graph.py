@@ -301,3 +301,19 @@ def test_cli(m, cast, monkeypatch, capsys):
     run(cli.ann, "unfile", "delivery", "--entity", "Ames")
     run(cli.ann, "delete-link", lid)
     assert not any(r["link"] == lid for r in run(cli.ann, "links"))
+
+
+def test_entity_page(m, cast):
+    from adhocdocs import literate, locators
+    text = m.objects.get_text(m.state.primary_layer(m.state.documents[m.pod]).text)
+    s = text.index("Received at Dock 4 by Rita Ames")
+    loc = locators.char_locator(m.pod, m.state.primary_layer(m.state.documents[m.pod]).id, text, s, s + 31)
+    write(m, "claude", {"op": "edit-link", "link": cast["received"], "see": [loc]})
+    page = graph.dossier(m, "Ames")
+    assert page.startswith("# Rita Ames\n")
+    assert "Rita Ames **signed for** Dock 4 delivery (2026-03-09)" in page
+    assert "::q{#e1}" in page and "```refs" in page                 # the evidence, quoted by reference
+    assert "[pod.txt](loc:doc:" in page                             # a whole document is a link
+    assert "## In date order" not in page or "2026-03-09" in page
+    assert "found by matching its names" in page
+    assert literate.problems(literate.check(m, page)) == []

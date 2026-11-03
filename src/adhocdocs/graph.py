@@ -655,3 +655,104 @@ def _edge_tip(g: Graph, e: dict) -> str:
         return f"{a} is named {e['count']}× in {b}"
     return f"{a} → {b} ({e['kind']})"
 
+
+
+# -- an entity's page ------------------------------------------------------------------------------
+
+def dossier(m: Matter, ref: str, mentions_limit: int = 15) -> str:
+    """A literate page (PAGES.md) about one entity: what it is, how it is
+    connected, on what evidence, in date order, and where it is named. The
+    evidence is quoted by reference, so every quotation is checked and
+    opens the document; links with no evidence say so. Summaries are the
+    paraphrase of whoever wrote them, attributed. Mentions are found by
+    matching names, and are labeled as such."""
+    import re
+    from . import locators
+    ann = Annotations.load(m)
+    e = entmod.resolve(m, ref, list(ann.entities.values()))
+    ents = ann.entities
+    rows = _doc_rows(m)
+    refs: list[dict] = []
+    seen: dict[str, str] = {}
+    who = lambda by: "Claude" if by == "claude" else "the user" if str(by).startswith("user:") else str(by)
+
+    def quote(t: dict) -> str:
+        """A block quotation of a text range, or a link to a whole document."""
+        doc = m.state.follow(t["doc"])
+        name = doc_label(m, rows, doc)
+        sel = t.get("select") or {}
+        if not ("char" in sel and t.get("quote") and t.get("layer")):
+            return f"[{name}](loc:{locators.format({'doc': doc, **({'select': sel} if sel else {})})})"
+        key = locators.format({k: t[k] for k in ("doc", "layer", "select")})
+        if key not in seen:
+            seen[key] = f"e{len(seen) + 1}"
+            refs.append({"id": seen[key], **{k: t[k] for k in ("doc", "layer", "select", "quote")}})
+        return f"\n::q{{#{seen[key]}}}\n"
+
+    title = e["name"]
+    kind = e["kind"] + (f", {e['date']}" if e.get("date") else "")
+    out = [f"# {title}", "", f"*{kind}*" + (f" · aliases: {', '.join(a for a in e['aliases'] if a != e['name'])}"
+                                            if len(e["aliases"]) > 1 else ""), ""]
+    if e.get("summary"):
+        out += [f"{e['summary']} *(summary by {who(e['set_by'].get('summary', e['by']))})*", ""]
+    facets = ann.facets_of({"entity": e["entity"]})
+    if facets:
+        out += ["Issues: " + ", ".join(facets), ""]
+    if e.get("see"):
+        out += ["## What shows it", ""]
+        for t in e["see"]:
+            out.append(quote(t))
+        out.append("")
+
+    links = [ln for ln in ann.links.values() if e["entity"] in (ln["from"], ln["to"])]
+    if links:
+        out += ["## Connections", ""]
+        links.sort(key=lambda ln: (ln["rel"], str(ln.get("date") or "")))
+        for ln in links:
+            other = ents.get(ln["to"] if ln["from"] == e["entity"] else ln["from"], {"name": "?"})
+            sentence = f"{ents[ln['from']]['name']} **{ln['rel']}** {ents[ln['to']]['name']}"
+            line = f"- {sentence}" + (f" ({ln['date']})" if ln.get("date") else "")
+            if ln.get("summary"):
+                line += f". {ln['summary']} *({who(ln['set_by'].get('summary', ln['by']))})*"
+            out.append(line)
+            if ln.get("see"):
+                for t in ln["see"]:
+                    q = quote(t)
+                    out.append(("  " + q.strip()) if q.startswith("\n") else f"  Evidence: {q}")
+                    out.append("")
+            else:
+                out.append("  *No document recorded for this link.*")
+                out.append("")
+            del other
+
+    dated = [(str(ln["date"]), f"{ents[ln['from']]['name']} {ln['rel']} {ents[ln['to']]['name']}") for ln in links if ln.get("date")]
+    if e.get("date"):
+        dated.append((str(e["date"]), e["name"]))
+    for ln in links:
+        o = ents.get(ln["to"] if ln["from"] == e["entity"] else ln["from"])
+        if o and o.get("date") and o["kind"] == "event":
+            dated.append((str(o["date"]), o["name"]))
+    dated = sorted(set(dated))
+    if len(dated) > 1:
+        out += ["## In date order", ""] + [f"- {d}: {what}" for d, what in dated] + [""]
+
+    found = entmod.mentions(m, [e])
+    per: dict[str, list] = {}
+    for x in found:
+        per.setdefault(x["loc"]["doc"], []).append(x["loc"])
+    if per:
+        out += ["## Where it is named", "",
+                f"Named {len(found)} times in {len(per)} documents (found by matching its names in the text). "
+                f"The {min(mentions_limit, len(per))} with the most:", ""]
+        top = sorted(per.items(), key=lambda kv: (-len(kv[1]), (rows.get(kv[0]) or {}).get("date") or ""))[:mentions_limit]
+        for doc, locs in top:
+            r = rows.get(doc) or {}
+            when = (r.get("date") or "")[:10]
+            out.append(f"- [{doc_label(m, rows, doc)}](loc:{locators.format(locs[0])})" + (f", {when}" if when else "")
+                       + f": {len(locs)}×")
+        out.append("")
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).rstrip() + "\n"
+    if refs:
+        from .literate import format_refs
+        text += "\n" + format_refs(refs)
+    return text

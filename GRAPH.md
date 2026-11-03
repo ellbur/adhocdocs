@@ -90,6 +90,18 @@ should be told have none.
   dicts (`g.nodes`, `g.edges`) with `around`, `paths` and `subgraph`, so a
   one-off analysis can walk it or hand it to a library.
 
+## An entity's page
+
+`graph page REF` writes a literate page ([PAGES.md](PAGES.md)) about one
+entity: its summary (attributed), its connections, each with its evidence
+quoted by reference, the dated ones in order, and the documents that name
+it most (labeled as found by matching). Because the quotations are
+references, the page is checked like any other, its quotes open their
+documents, and it exports with their provenance. It is the dossier a
+paralegal would assemble by hand, built from what has been recorded, so it
+is only as complete as the links are: `graph unsupported` says what still
+has no document.
+
 ## Diagrams
 
 `view graph` draws the graph as a diagram in a viewer pane, with a linked
@@ -152,5 +164,5 @@ under one shouldn't touch a production.
   graph.
 - People known only from email headers aren't entities until someone adds
   them; `analyze people` finds them, and Claude adds the ones that matter.
-- An entity page: a literate page generated for one entity, with its links'
-  evidence quoted by reference and its dated links as a timeline.
+- A timeline pane of an entity's dated links (`view timeline` takes list
+  files; a list made from the links would do it).

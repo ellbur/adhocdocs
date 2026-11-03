@@ -212,6 +212,7 @@ to try on the sample matter:
 - *"Draw who is involved in which transactions."* Or: *"Draw Ames's connections, two steps out, with the documents they rest on."*
 - *"How is Voss connected to Kettering Freight? Show me the documents for each step."*
 - *"Which of the facts we've recorded have no document behind them?"*
+- *"Make me a page on Ibáñez: what connects him to the delivery, with the documents quoted."*
 - *"Set up issues for delivery, damages and notice, and file the entities and notes under them."* Then press `F` in the viewer to see one issue at a time.
 - Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
 
