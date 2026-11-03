@@ -733,6 +733,15 @@ fn image_mime(b: &[u8]) -> Option<&'static str> {
 
 /// Remove scripts, event handlers, frames, objects and remote resources.
 /// Panes keep forms, data-* attributes and loc:/svc: links.
+const SVG_TAGS: [&str; 18] = ["svg", "g", "defs", "marker", "path", "rect", "circle", "ellipse", "line", "polyline",
+    "polygon", "text", "tspan", "desc", "pattern", "linearGradient", "stop", "symbol"];
+// presentation attributes (none of them takes a URL but marker-*, whose url(#id) points inside the drawing)
+const SVG_ATTRIBUTES: [&str; 42] = ["d", "x", "y", "dx", "dy", "cx", "cy", "r", "rx", "ry", "x1", "y1", "x2", "y2", "width", "height",
+    "points", "transform", "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-dasharray", "stroke-opacity",
+    "stroke-linecap", "stroke-linejoin", "opacity", "font-size", "font-weight", "font-family", "font-style", "text-anchor",
+    "dominant-baseline", "marker-end", "marker-start", "marker-mid", "visibility", "display", "vector-effect", "paint-order",
+    "text-decoration"];
+
 pub fn sanitize(html: &str) -> String {
     let html = remote_images(html);
     let mut b = ammonia::Builder::default();
@@ -750,6 +759,15 @@ pub fn sanitize(html: &str) -> String {
         .add_tag_attributes("label", &["for"])
         .add_tag_attributes("link", &["rel", "href"])
         .add_tag_attributes("meta", &["charset"])
+        // drawings: diagrams (`view graph`) and Claude's own SVG. Shapes, text and
+        // markers only: no script, links, <use>, images, foreignObject or animation
+        .add_tags(&SVG_TAGS)
+        .add_tag_attributes("svg", &["xmlns", "width", "height", "viewBox", "preserveAspectRatio"])
+        .add_tag_attributes("marker", &["viewBox", "refX", "refY", "markerWidth", "markerHeight", "orient", "markerUnits"])
+        .add_tag_attributes("pattern", &["width", "height", "patternUnits", "patternTransform"])
+        .add_tag_attributes("linearGradient", &["x1", "y1", "x2", "y2", "gradientUnits", "gradientTransform"])
+        .add_tag_attributes("stop", &["offset", "stop-color", "stop-opacity"])
+        .add_generic_attributes(&SVG_ATTRIBUTES)
         .url_schemes(["loc", "svc"].into_iter().collect())
         .url_relative(ammonia::UrlRelative::PassThrough)
         .link_rel(None)
@@ -848,6 +866,55 @@ mod tests {
         assert!(out.contains("remote image, not loaded: https://e.com/x.png"));
         assert!(out.contains(r#"href="loc:doc:sha256:ab@sha256:cd#char=1,2""#), "{}", out);
         assert!(out.contains(r#"data-text="doc:sha256:ab""#) && out.contains(r#"action="svc:triage""#) && out.contains("checkbox"));
+    }
+
+    #[test]
+    fn sanitize_keeps_drawings_but_not_their_scripts() {
+        let out = sanitize(r##"<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10">
+            <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 z"/></marker></defs>
+            <path class="e" d="M1,1 C2,2 3,3 4,4" marker-end="url(#arr)"><title>a</title></path>
+            <g class="n" data-locator="doc:sha256:ab" transform="translate(1,2)"><rect width="5" height="3" rx="2"/><text x="1" y="2">Voss</text></g>
+            <script>x()</script><a href="javascript:x()"><text>j</text></a><foreignObject><p>f</p></foreignObject>
+            <use href="#arr"/><image href="https://e.com/x.png"/><animate attributeName="href" to="javascript:x()"/>
+            <g onclick="x()"><rect/></g></svg></div>"##);
+        for kept in ["<svg", "viewBox=\"0 0 10 10\"", "refX=\"9\"", "marker-end=\"url(#arr)\"", "data-locator=\"doc:sha256:ab\"",
+                     "transform=\"translate(1,2)\"", "<text x=\"1\" y=\"2\">Voss</text>", "<title>a</title>", "rx=\"2\""] {
+            assert!(out.contains(kept), "{} not in {}", kept, out);
+        }
+        for gone in ["script", "javascript", "foreignObject", "<use", "<image", "animate", "onclick"] {
+            assert!(!out.contains(gone), "{} in {}", gone, out);
+        }
+    }
+
+    #[test]
+    fn links_and_facets_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-links-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-entity", "entity": "e_a", "name": "Rita Ames", "author": "claude"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-entity", "entity": "e_b", "name": "Dock 4 delivery", "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-entity", "entity": "e_c", "name": "Harrowgate", "author": "claude"}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "define-link", "link": "l_1", "from": "e_a", "rel": "signed  for", "to": "e_b",
+                               "see": [{"doc": "d"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "define-link", "link": "l_2", "from": "e_c", "rel": "shipped", "to": "e_b", "author": "claude"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "edit-link", "link": "l_1", "date": "2026-03-09", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "define-facet", "facet": "delivery", "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_1"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_9", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_2"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_10", "at": "t", "op": "file", "facet": "delivery", "item": {"entity": "e_c"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_11", "at": "t", "op": "delete-entity", "entity": "e_c", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // deleting Harrowgate took its link and its filings with it
+        assert_eq!(st["links"].as_array().unwrap().len(), 1);
+        assert_eq!(st["links"][0]["rel"], "signed for");
+        assert_eq!(st["links"][0]["date"], "2026-03-09");
+        assert_eq!(st["facets"][0]["facet"], "delivery");
+        let filed: Vec<&Value> = st["filed"].as_array().unwrap().iter().map(|f| &f["item"]).collect();
+        assert_eq!(filed, [&serde_json::json!({"link": "l_1"})]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

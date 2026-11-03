@@ -396,7 +396,7 @@ impl App {
     fn merge(&self, g: &Gather) -> Value {
         match g.cmd["cmd"].as_str().unwrap_or("") {
             "state" => {
-                let (mut windows, mut panes, mut focused) = (vec![], vec![], Value::Null);
+                let (mut windows, mut panes, mut focused, mut facet) = (vec![], vec![], Value::Null, Value::Null);
                 let mut parts: Vec<&(String, Value)> = g.parts.iter().collect();
                 parts.sort_by_key(|(w, _)| w[1..].parse::<u64>().unwrap_or(0));     // w1, w2, … w10
                 for (w, part) in parts {
@@ -409,8 +409,13 @@ impl App {
                     if *w == self.focused {
                         focused = part["focused"].clone();
                     }
+                    // the issue the user chose (shared by every window, through the shell's storage)
+                    if !part["facet"].is_null() && (facet.is_null() || *w == self.focused) {
+                        facet = part["facet"].clone();
+                    }
                 }
-                json!({"running": true, "focused": focused, "focused_window": self.focused, "windows": windows, "panes": panes})
+                json!({"running": true, "focused": focused, "focused_window": self.focused, "windows": windows, "panes": panes,
+                       "facet": facet})
             }
             _ => json!({}),
         }

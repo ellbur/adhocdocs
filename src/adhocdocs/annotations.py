@@ -568,7 +568,8 @@ class Annotations:
                 raise Refused(f"facet {ev['facet']!r} was defined by {d['by']}; Claude can't edit it")
         elif op in ("file", "unfile"):
             if ev["facet"] not in self.facets:
-                near = [f for f in self.facets if ev["facet"].lower() in f.lower() or f.lower() in ev["facet"].lower()]
+                import difflib
+                near = difflib.get_close_matches(ev["facet"].lower(), list(self.facets), n=3, cutoff=0.7)
                 raise Refused(f"no facet {ev['facet']!r} is defined" + (f" (did you mean {', '.join(near)}?)" if near else "")
                               + "; define it first with define-facet")
             if item_key(ev.get("item")) == "?":

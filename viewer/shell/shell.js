@@ -30,7 +30,7 @@ function parseCells(spec) {
   const [a, b = a] = ends.map((m) => [Number(m[2]) - 1, colIndex(m[1])]);
   return { r0: Math.min(a[0], b[0]), r1: Math.max(a[0], b[0]), c0: Math.min(a[1], b[1]), c1: Math.max(a[1], b[1]) };
 }
-const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "N", "e", "E", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "H", "?"]);
+const BUILTIN_KEYS = new Set(["j", "k", "m", "t", "v", "f", "F", "N", "e", "E", "[", "]", " ", "Tab", "Enter", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "PageDown", "PageUp", "Home", "End", "W", "H", "?"]);
 
 // -- locators -------------------------------------------------------------------------
 
@@ -133,7 +133,9 @@ async function layerDates(id) {
 const adhoc = {
   panes: [], focused: null, user: "user", history: [], nextId: 1, window: "w1",
   elsewhereMap: {},       // pane ID -> {window, kind}, for every window's panes
-  annotations: { definitions: [], tags: [], notes: [], entities: [] }, annLogSize: -1,
+  annotations: { definitions: [], tags: [], notes: [], entities: [], links: [], facets: [], filed: [] }, annLogSize: -1,
+  // the issue the user is working on (a facet): what isn't filed under it is dimmed; null for all
+  facet: (() => { try { return localStorage.getItem("adhoc.facet") || null; } catch { return null; } })(),
   // the entity layer: "all" (known and suggested), "known", or "off"; candidates: detected key -> {docs, …}
   entityMode: (() => { try { return localStorage.getItem("adhoc.entityMode") || "all"; } catch { return "all"; } })(),
   candidates: {}, candidatesAt: 0,
@@ -255,7 +257,7 @@ function addHistory(loc, source) {
 
 function snapshot() {
   return {
-    running: true, focused: adhoc.focused,
+    running: true, focused: adhoc.focused, facet: adhoc.facet,
     windows: [{ id: adhoc.window, layout: adhoc.tile || "tabs", tree: treeSpec(), panes: leaves() }],
     panes: adhoc.panes.map((p) => p.state()),
   };
@@ -1841,8 +1843,10 @@ class DocumentPane {
           title: carriedNote(t.carried) + "\nClick to confirm it still holds.",
           onclick: () => confirmCarried({ tag: t.tag, target: t.target }, `“${t.tag}”`) }, "↪ " + t.tag)
       : el("span", { class: "chip " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`, title: `${t.by}, ${t.at}` }, t.tag)));
-    const ranged = A.tags.filter((t) => t.target.doc === doc && t.target.select);
-    const notes = A.notes.filter((n) => n.target?.doc === doc);
+    const allRanged = A.tags.filter((t) => t.target.doc === doc && t.target.select);
+    const ranged = allRanged.filter((t) => inFacet("tag", t.tag));
+    const allNotes = A.notes.filter((n) => n.target?.doc === doc);
+    const notes = allNotes.filter((n) => inFacet("note", n.note));
     const item = (cls, text, who, target, extra = []) => el("div", { class: "ann " + cls + (who === "claude" ? " by-claude" : ""),
       onclick: () => target?.select && this.highlight(target, "annotation") }, el("div", {}, text), el("div", { class: "who" }, who), ...extra);
     // a carried-over tag or note: marked, with where it came from and a way to confirm it
@@ -1871,6 +1875,17 @@ class DocumentPane {
     };
     if (top.length) kids.push(el("div", { class: "side-h" }, "Notes"));
     top.forEach((n) => thread(n, 0));
+    // the facts that rest on this document: links and entities whose evidence is here
+    const here = (see) => (see || []).filter((t) => t.doc === doc);
+    const facts = [];
+    for (const l of A.links || []) if (here(l.see).length && inFacet("link", l.link)) facts.push({ text: linkSentence(l), by: l.by, at: here(l.see)[0], link: l });
+    for (const e of A.entities || []) if (here(e.see).length && inFacet("entity", e.entity)) facts.push({ text: `${e.name} (${ENTITY_KIND[e.kind] || e.kind})`, by: e.by, at: here(e.see)[0], entity: e });
+    if (facts.length) kids.push(el("div", { class: "side-h", title: "Links and entities whose evidence is in this document" }, "Evidence for"));
+    for (const f of facts) kids.push(el("div", { class: "ann fact" + (f.by === "claude" ? " by-claude" : ""), title: f.at.select ? "Go to the evidence" : "",
+      onclick: () => f.at.select && this.highlight(f.at, f.text) }, el("div", {}, f.text), el("div", { class: "who" }, f.link ? "link" + (f.link.date ? " · " + f.link.date : "") : "entity")));
+    const hidden = (allRanged.length - ranged.length) + (allNotes.length - notes.length);
+    if (adhoc.facet && hidden) kids.push(el("div", { class: "side-more" }, `${plural(hidden, "tag or note", "tags and notes")} on other issues · `,
+      el("a", { onclick: () => setFacet(null) }, "show all")));
     this.side.replaceChildren(...kids);
   }
 
@@ -2639,14 +2654,20 @@ adhoc.served = (id, result) => {
 async function refreshAnnotations() {
   try {
     const before = JSON.stringify(adhoc.annotations.entities || []);
+    const graph = (a) => JSON.stringify([a.links || [], a.facets || [], a.filed || []]);
+    const graphBefore = graph(adhoc.annotations);
     adhoc.annotations = await getJSON("/api/annotations");
     adhoc.annotations.entities ||= [];
+    for (const k of ["links", "facets", "filed"]) adhoc.annotations[k] ||= [];
     const entitiesChanged = JSON.stringify(adhoc.annotations.entities) !== before;
+    const graphChanged = graph(adhoc.annotations) !== graphBefore;
     for (const p of adhoc.panes) {
       p.renderAnnotations?.();
       if (entitiesChanged) p.loadEntities?.();
     }
-    if (entitiesChanged) entityCard.refresh();
+    facetButton();
+    if (graphChanged) facetRefresh();
+    else if (entitiesChanged) entityCard.refresh();
   } catch {}
 }
 const annotateWaiting = new Map();
@@ -2772,8 +2793,66 @@ function cycleEntityMode() {
 const shortDate = (at) => { try { return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; } };
 const who = (by) => by === "claude" ? "Claude" : by === adhoc.user ? "you" : (by || "").replace("user:", "");
 
+// -- links and facets --------------------------------------------------------------------------
+// Links join two entities (a relation, its evidence); facets are issues that
+// entities, links, notes and tags are filed under (annotations.py). With a
+// facet chosen (F, or the ◇ button), what isn't filed under it is dimmed.
+
+function linkById(id) { return (adhoc.annotations.links || []).find((l) => l.link === id); }
+function linkSentence(l) { return `${entityById(l.from)?.name || "?"} ${l.rel} ${entityById(l.to)?.name || "?"}`; }
+function itemKey(i) { const [k, v] = Object.entries(i || {})[0] || []; return k ? `${k}:${v}` : "?"; }
+function facetsOf(kind, id) {
+  const A = adhoc.annotations;
+  const keys = [`${kind}:${id}`];
+  if (kind === "note") {          // a reply is filed where its thread is
+    let n = A.notes.find((x) => x.note === id); const seen = new Set();
+    while (n?.parent && !seen.has(n.note)) { seen.add(n.note); n = A.notes.find((x) => x.note === n.parent) || null; if (n) keys.push(`note:${n.note}`); }
+  }
+  return [...new Set((A.filed || []).filter((f) => keys.includes(itemKey(f.item))).map((f) => f.facet))];
+}
+function inFacet(kind, id) { return !adhoc.facet || facetsOf(kind, id).includes(adhoc.facet); }
+function setFacet(f, quiet = false) {
+  adhoc.facet = f || null;
+  try { f ? localStorage.setItem("adhoc.facet", f) : localStorage.removeItem("adhoc.facet"); } catch {}
+  facetRefresh();
+  if (!quiet) toast(f ? `Showing the issue “${f}”: the rest is dimmed (F to change)` : "Showing all issues");
+  changed();
+}
+function facetButton() {
+  const b = $("#facet-btn");
+  if (!b) return;
+  b.hidden = !(adhoc.annotations.facets || []).length && !adhoc.facet;
+  b.textContent = adhoc.facet ? "◆ " + adhoc.facet : "◇";
+  b.classList.toggle("on", !!adhoc.facet);
+}
+function facetRefresh() {
+  facetButton();
+  for (const p of adhoc.panes) if (p.kind === "document") { p.drawBoxes?.(); p.renderAnnotations?.(); }
+  entityCard.refresh();
+}
+function facetMenu(anchor) {
+  if (!anchor) return;
+  const A = adhoc.annotations, fs = A.facets || [];
+  const count = (f) => (A.filed || []).filter((x) => x.facet === f).length;
+  showMenu(anchor, [{ heading: "Issue: show what is filed under it (F)" },
+    { label: "All issues", checked: !adhoc.facet, onclick: () => setFacet(null) },
+    ...fs.map((f) => ({ label: f.facet, hint: String(count(f.facet)), title: f.description || "", checked: adhoc.facet === f.facet,
+                        onclick: () => setFacet(f.facet) })),
+    ...(fs.length ? [] : [{ label: "No issues yet: ask Claude to define some", disabled: true }]),
+    "-", { label: "Ask Claude to file things under an issue…", onclick: () => askClaude(adhoc.facet
+      ? `File the entities, links and notes that bear on “${adhoc.facet}” under that facet.`
+      : "Define facets for the main issues in this matter, and file the key entities, links and notes under them.") }]);
+}
+window.addEventListener("storage", (ev) => { if (ev.key === "adhoc.facet") { adhoc.facet = ev.newValue || null; facetRefresh(); changed(); } });
+(() => {
+  const b = el("button", { id: "facet-btn", class: "icon-btn", "aria-label": "Issue: show what is filed under one (F)", "aria-haspopup": "menu",
+    title: "Issue (facet): show what is filed under one, dim the rest (F)", onclick: (ev) => facetMenu(ev.currentTarget) }, "◇");
+  $("#top-tools")?.prepend(b);
+  facetButton();
+})();
+
 const entityCard = {
-  el: null, pane: null, mention: null, showTimer: null, hideTimer: null,
+  el: null, pane: null, mention: null, showTimer: null, hideTimer: null, stack: [],
   init() {
     this.el = $("#entity-card");
     this.el.addEventListener("mouseenter", () => clearTimeout(this.hideTimer));
@@ -2792,10 +2871,12 @@ const entityCard = {
     clearTimeout(this.hideTimer);
     this.hideTimer = setTimeout(() => this.hide(), 250);
   },
-  hide() { clearTimeout(this.showTimer); this.el.hidden = true; this.mention = null; },
+  hide() { clearTimeout(this.showTimer); this.el.hidden = true; this.mention = null; this.stack = []; },
   refresh() { if (!this.el.hidden && this.pane && this.mention) this.show(this.pane, this.mention, this.at); },
   show(pane, x, at) {
+    if (this.mention !== x) this.stack = [];
     this.pane = pane; this.mention = x; this.at = at;
+    if (this.stack.length) return this.showEntity(this.stack[this.stack.length - 1], false);
     if (x.isDate) return dateCard.show(this, pane, x, at);
     const body = x.known ? x.entities.map((id) => this.knownBlock(pane, entityById(id))).filter(Boolean) : [this.suggestedBlock(pane, x)];
     this.el.replaceChildren(...body, el("div", { class: "ec-foot" }, x.known
@@ -2810,15 +2891,67 @@ const entityCard = {
     if (top + h > innerHeight - 8) top = Math.max(8, at[1] - h - 12);
     Object.assign(this.el.style, { left: Math.max(8, left) + "px", top: top + "px" });
   },
+  // from one entity to another, inside the card: the names in a summary, and
+  // the entities a link joins, are links themselves; ← goes back
+  showEntity(id, push = true) {
+    if (push) this.stack.push(id);
+    const e = entityById(id);
+    if (!e) { this.stack.pop(); return; }
+    const back = el("a", { class: "ec-back", onclick: (ev) => { ev.stopPropagation(); this.stack.pop(); this.show(this.pane, this.mention, this.at); } },
+      "← " + (this.stack.length > 1 ? entityById(this.stack[this.stack.length - 2])?.name || "back" : "back"));
+    this.el.replaceChildren(el("div", { class: "ec-nav" }, back), this.knownBlock(this.pane, e),
+      el("div", { class: "ec-foot" }, "Not selected: hover a name in the document to select it"));
+    this.place(this.at);
+  },
+  // text with the known entities it names made into links to their cards
+  linkify(text, self) {
+    const cps = Array.from(text);
+    const ents = (adhoc.annotations.entities || []).filter((x) => x.entity !== self);
+    const found = findEntityMentions(cps, ents);
+    if (!found.length) return [text];
+    const out = [];
+    let at = 0;
+    for (const m of found) {
+      if (m.start > at) out.push(cps.slice(at, m.start).join(""));
+      const id = m.entities[0];
+      out.push(el("a", { class: "ec-ent", title: entityById(id)?.summary || "", onclick: (ev) => { ev.stopPropagation(); this.showEntity(id); } },
+        cps.slice(m.start, m.end).join("")));
+      at = m.end;
+    }
+    if (at < cps.length) out.push(cps.slice(at).join(""));
+    return out;
+  },
+  connections(pane, e) {
+    const links = (adhoc.annotations.links || []).filter((l) => l.from === e.entity || l.to === e.entity);
+    if (!links.length) return [];
+    links.sort((a, b) => (inFacet("link", b.link) - inFacet("link", a.link)) || String(a.date || "").localeCompare(String(b.date || "")));
+    const shown = links.slice(0, 8);
+    const rows = shown.map((l) => {
+      const out = l.from === e.entity, other = entityById(out ? l.to : l.from);
+      const ev = (l.see || [])[0];
+      return el("div", { class: "ec-link" + (inFacet("link", l.link) ? "" : " muted") + (ev ? "" : " bare"), title: l.summary || "" },
+        el("span", { class: "ec-rel" }, out ? l.rel : `${l.rel} ←`), " ",
+        other ? el("a", { class: "ec-ent", onclick: (x) => { x.stopPropagation(); this.showEntity(other.entity); } }, other.name) : "?",
+        l.date ? el("span", { class: "ec-date" }, " " + l.date) : "",
+        ev ? el("a", { class: "ec-ev", title: "Open the evidence", onclick: (x) => { x.stopPropagation(); this.hide(); pane?.highlight(ev, linkSentence(l)); } }, " evidence")
+           : el("span", { class: "ec-ev none", title: "No document recorded for this link" }, " no evidence"));
+    });
+    const more = links.length - shown.length;
+    return [el("div", { class: "ec-links" }, el("div", { class: "ec-label" }, "Connections"), ...rows,
+      ...(more ? [el("div", { class: "ec-why" }, `${more} more: ask Claude to draw them (view graph)`)] : []))];
+  },
   knownBlock(pane, e) {
     if (!e) return null;
     const see = (e.see || []).slice(0, 3).map((t) => el("a", { class: "ec-see", title: "open",
       onclick: () => { this.hide(); pane.highlight(t, "entity"); } }, "“" + ((t.quote?.exact || "the document").replace(/\s+/g, " ").slice(0, 60)) + "”"));
+    const facets = facetsOf("entity", e.entity);
     return el("div", { class: "ec-entity" },
-      el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, e.name), el("span", { class: "ec-kind" }, ENTITY_KIND[e.kind] || e.kind)),
-      e.summary ? el("div", { class: "ec-summary" }, e.summary) : el("div", { class: "ec-summary ec-empty" }, "Not described yet: select it and ask Claude."),
-      ...(e.recap ? [el("div", { class: "ec-recap" }, el("span", { class: "ec-label" }, "Last time" + (e.recap_at ? ` (${shortDate(e.recap_at)})` : "") + ": "), e.recap)] : []),
+      el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, e.name), el("span", { class: "ec-kind" }, (ENTITY_KIND[e.kind] || e.kind) + (e.date ? " · " + e.date : ""))),
+      e.summary ? el("div", { class: "ec-summary" }, ...this.linkify(e.summary, e.entity)) : el("div", { class: "ec-summary ec-empty" }, "Not described yet: select it and ask Claude."),
+      ...(e.recap ? [el("div", { class: "ec-recap" }, el("span", { class: "ec-label" }, "Last time" + (e.recap_at ? ` (${shortDate(e.recap_at)})` : "") + ": "), ...this.linkify(e.recap, e.entity))] : []),
+      ...this.connections(pane, e),
       ...(see.length ? [el("div", { class: "ec-sees" }, "See ", ...see.flatMap((a, i) => i ? [" · ", a] : [a]))] : []),
+      ...(facets.length ? [el("div", { class: "ec-facets" }, ...facets.map((f) => el("span", { class: "ec-facet" + (f === adhoc.facet ? " on" : ""), title: "An issue it is filed under" }, f)))] : []),
       el("div", { class: "ec-by" }, `added by ${who(e.by)}` + (e.edited_by && e.edited_by !== e.by ? `, edited by ${who(e.edited_by)}` : "")));
   },
   suggestedBlock(pane, x) {
@@ -2857,7 +2990,11 @@ const entityCard = {
 // citations, documents tagged hot or key). DATES.md has why.
 
 const DATE_SOURCE = { sent: "Sent", attached: "Attached to an email sent", created: "Created", modified: "Last modified", metadata: "Dated" };
-function markClass(x) { return x.isDate ? "ent date" : x.known ? "ent" : "ent sug"; }
+function markClass(x) {
+  if (x.isDate) return "ent date";
+  if (!x.known) return "ent sug";
+  return adhoc.facet && !x.entities.some((id) => inFacet("entity", id)) ? "ent muted" : "ent";
+}
 // "2026-03-09T10:14:00-05:00" -> "Mon, Mar 9, 2026, 10:14", in the time as written (no time-zone shift)
 function fmtDay(s, weekday = true) {
   const m = /^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(s || "");
@@ -3048,11 +3185,12 @@ function onKey(ev) {
   else if (k === "N") newNote();
   else if (k === "e") entityEditor();
   else if (k === "E") cycleEntityMode();
+  else if (k === "F") facetMenu($("#facet-btn"));
   else if (k === "v" && doc?.info?.layers.length > 1) { const ls = doc.info.layers; const i = ls.findIndex((l) => l.id === doc.layer); doc.open({ doc: doc.info.doc, layer: ls[(i + 1) % ls.length].id }, { quiet: true }); }
   else if (k === "f" && doc?.info) { const modes = doc.modes().filter((m) => m !== "hex" || doc.modes().length === 1); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
   else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
-  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev in the sequence, or highlight if none · Space page · m mark · t tag · N note · e entity · E show entities · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
+  else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev in the sequence, or highlight if none · Space page · m mark · t tag · N note · e entity · E show entities · F issue (facet) · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
     const def = adhoc.annotations.definitions.find((d) => d.hotkey === k);
     if (def) applyTag(def.tag); else handled = false;
@@ -3213,7 +3351,15 @@ const commands = {
     const entity = p?.kind === "document" ? p.selectionEntity() : null;
     const date = p?.kind === "document" ? p.selectionDate() : null;
     return { pane: p?.id ?? null, selection: p ? (p.kind === "document" ? p.selection : p.state().selection) : null,
-             ...(entity ? { entity } : {}), ...(date ? { date } : {}), marks: p?.marks || adhoc.listMarks || [] };
+             ...(entity ? { entity } : {}), ...(date ? { date } : {}), marks: p?.marks || adhoc.listMarks || [],
+             ...(adhoc.facet ? { facet: adhoc.facet } : {}) };
+  },
+  // the issue to show (a facet), or none: what isn't filed under it is dimmed
+  async facet(c) {
+    const f = c.facet || null;
+    if (f && !(adhoc.annotations.facets || []).some((x) => x.facet === f)) throw new Error(`no facet ${f}; ann facets lists them`);
+    setFacet(f, true);
+    return { facet: f };
   },
   async "clear-marks"(c) {
     for (const p of adhoc.panes) if (!c.pane || p.id === c.pane) { if (p.marks) { p.marks = []; p.drawBoxes(); } }

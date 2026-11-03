@@ -513,3 +513,25 @@ ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .adhoc-graph [data-locator].adhoc-current { box-shadow: none; }
 .adhoc-graph [data-locator].adhoc-visited .adhoc-graph-name { fill: var(--muted); }
 .adhoc-graph-node.unsupported rect { stroke: var(--bad); }
+
+/* links and facets on the entity card, the side panel and the marks */
+.page .box.ent.muted, .hlbox.ent.muted { border-bottom: 1px solid var(--line); background: none; }
+#entity-card .ec-nav { margin-bottom: 4px; font-size: 11.5px; }
+#entity-card a.ec-back { color: var(--accent); cursor: pointer; }
+#entity-card a.ec-ent { color: var(--ent); cursor: pointer; text-decoration: underline; text-decoration-color: var(--ent-sug); text-underline-offset: 2px; }
+#entity-card .ec-links { margin-top: 6px; }
+#entity-card .ec-link { padding: 1px 0 1px 8px; border-left: 2px solid var(--ent); margin-top: 2px; }
+#entity-card .ec-link.bare { border-left-color: var(--bad); }
+#entity-card .ec-link.muted { opacity: .55; }
+#entity-card .ec-rel { color: var(--muted); }
+#entity-card .ec-date { color: var(--muted); font-size: 11px; }
+#entity-card a.ec-ev { color: var(--accent); cursor: pointer; font-size: 11px; }
+#entity-card .ec-ev.none { color: var(--bad); font-size: 11px; }
+#entity-card .ec-facets { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+#entity-card .ec-facet { font-size: 10.5px; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; color: var(--muted); }
+#entity-card .ec-facet.on { border-color: var(--accent); color: var(--accent); }
+#facet-btn { width: auto; padding: 0 8px; white-space: nowrap; font-size: 12.5px; }
+#facet-btn.on { color: var(--accent); }
+.pane-side .ann.fact { border-left: 3px solid var(--ent); }
+.pane-side .side-more { color: var(--muted); font-size: 11.5px; padding: 6px 8px; }
+.pane-side .side-more a { color: var(--accent); cursor: pointer; }

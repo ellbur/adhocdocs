@@ -1751,7 +1751,7 @@ def _graph_writes(m, a):
         out(an.facets[a.facet])
         for f in an.filed.get(a.facet, {}).values():
             (kind, ref), = f["item"].items()
-            row = {"kind": kind, "filed_by": f["by"]}
+            row = {"item": kind, "filed_by": f["by"]}
             if kind == "entity":
                 row.update(_entity_row(an.entities[ref]))
             elif kind == "link":
@@ -2004,6 +2004,11 @@ lanes (--lanes group, custodian, from, kind). For a chronology, give items
 their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
 label), each with a locator to its evidence.
 
+Issues: the user picks a facet (an issue: `ann --help`) with F or the ◇
+button, and what isn't filed under it is dimmed; `view state` and `view
+selection` report it as "facet". Read it as the issue they're working on.
+`view facet NAME` (or `--clear`) switches it for them.
+
 Diagrams: `view graph` draws the entity list's links as boxes and arrows
 (`view graph "Rita Ames" --depth 2`, `--docs` for the documents they rest
 on, `--facts` to make each link a box documents point at, `--facet F` for
@@ -2107,6 +2112,9 @@ def view(argv=None):
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     _graph_opts(s)
     where(s)
+    s = sub.add_parser("facet", help="show the user one issue (a facet: ann --help), dimming what isn't filed under it")
+    s.add_argument("facet", nargs="?", help="omit, or --clear, for every issue")
+    s.add_argument("--clear", action="store_true")
     s = sub.add_parser("close")
     s.add_argument("pane")
     s = sub.add_parser("home", help="show the overview: what the matter holds (the first window opens on it)")
@@ -2199,6 +2207,8 @@ def view(argv=None):
         files, sequence, summary = graphmod.diagram_html(m, g, title, layout)
         c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "facet":
+        c["facet"] = None if a.clear else a.facet
     elif a.cmd in ("close",):
         c["pane"] = a.pane
     elif a.cmd == "files":
