@@ -221,6 +221,23 @@ impl Handler {
     }
 }
 
+/// How a document relates to others, beyond its family: replies, quotations,
+/// versions and copies (analysis.doc_links), as the near-duplicate index
+/// keeps them in `links.json`. Exact duplicates are listed apart, so copies
+/// of the same content are left out here.
+pub fn related(m: &crate::matter::Matter, doc: &str) -> Vec<Value> {
+    let p = m.root.join("workspace/.adhoc/indexes/neardup/links.json");
+    let Some(v) = std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { return vec![] };
+    let dupes = m.duplicates(doc);
+    v["links"][doc].as_array().into_iter().flatten().filter_map(|x| {
+        let d = x["doc"].as_str()?;
+        if !m.live(d) || (x["rel"] == "copy" && dupes.iter().any(|y| y == d)) { return None; }
+        let meta = m.metadata(d);
+        Some(json!({"rel": x["rel"], "doc": d, "name": meta["subject"].as_str().or(meta["name"].as_str()),
+                    "date": meta["date"], "similarity": x["similarity"], "containment": x["containment"]}))
+    }).collect()
+}
+
 /// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
 ///
 /// The rules that resolve conflicts between installations are Python's
@@ -488,7 +505,8 @@ impl Handler {
             let info = json!({"doc": doc, "content": content, "size": size, "meta": meta, "custodian": obj.get("custodian"),
                               "here": size.is_some(), "fetchable": size.is_none() && m.limited(),
                               "layers": layers, "children": children, "parent": parent,
-                              "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
+                              "duplicates": m.duplicates(&doc), "related": related(&m, &doc),
+                              "page_labels": labels, "bates": bates_for(&m.root, &doc),
                               "dated": crate::chrono::strip(&m, &doc),
                               "exhibits": exhibits_for(&m.root, &doc)});
             (doc, content, info, kind, name)

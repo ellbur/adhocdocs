@@ -1339,6 +1339,22 @@ write a chronology, or when the user asks what matters when.
 Claude can't change a field, remove an alias or delete an entity the user
 set, made or added; it can fill in what the user left blank.
 
+People who appear only in email headers, or in the text, aren't entities
+until someone adds them, so their names aren't marked and the graph can't
+say who emailed whom. `ann people` lists them from the cast (`analyze
+people`), each with its addresses, counts and roles, and whether it looks
+like a person, a group address or a bulk sender:
+
+  ann people [--all]                                  who isn't an entity yet
+  ann add-people "Lena Fairbanks" "Ivy Castellano"    add these, names and addresses as aliases
+  ann add-people --top 10                             the ten most active
+  ann add-people --known                              give known entities the addresses they lack
+
+Add the people who matter to the matter, not everyone in the To line; then
+`graph --email` and `view graph --email` show who corresponds with whom.
+The summary they get is the counts and roles; write a real one with
+edit-entity when you know who they are.
+
 Links (GRAPH.md): how two entities are connected, and on what evidence. They
 make the entity list a graph: the viewer's cards show them and move from
 one entity to the next, `graph` queries them, and `view graph` draws them.
@@ -1484,6 +1500,17 @@ def ann(argv=None):
         s.add_argument("--requested-by")
     s = sub.add_parser("delete-entity")
     s.add_argument("ref")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("people", help="people from email headers and names in the text, and whether each is an entity")
+    s.add_argument("--all", action="store_true", help="also those already entities, and groups and bulk senders")
+    s.add_argument("--min-docs", type=int, default=1, help="named in, or emailing, at least this many documents")
+    s.add_argument("--limit", type=int, default=50)
+    s = sub.add_parser("add-people", help="add people from `ann people` as entities, with their names and addresses as aliases")
+    s.add_argument("names", nargs="*", help="names or addresses from `ann people` (default: none; see --top)")
+    s.add_argument("--top", type=int, help="the N most active people who aren't entities")
+    s.add_argument("--known", action="store_true",
+                   help="also give entities already known the addresses and names they lack (for graph --email)")
+    s.add_argument("--kind", default="person", help="the kind for those added (default person)")
     s.add_argument("--requested-by")
     s = sub.add_parser("link", help="record how two entities are connected: FROM REL TO, with --see evidence")
     s.add_argument("frm", metavar="FROM", help="an entity (ID, name or alias)")
@@ -1639,6 +1666,8 @@ def ann(argv=None):
             if a.see:
                 req["see"] = _targets(m, a.see)
         out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
+    elif a.cmd in ("people", "add-people"):
+        _people(m, a)
     elif a.cmd in ("link", "edit-link", "delete-link", "links", "define-facet", "edit-facet", "facets", "facet",
                    "file", "unfile"):
         _graph_writes(m, a)
@@ -1674,6 +1703,53 @@ def ann(argv=None):
         elif a.cmd in ("define-tag", "edit-tag"):
             req.update(tag=a.tag, color=a.color, hotkey=a.hotkey, group=a.group, description=a.description)
         out(annapi.request(m, req))
+
+
+def _people(m, a):
+    """People from email headers and text who aren't entities (ann people, ann add-people)."""
+    rows = entities.people(m)
+    active = lambda p: p["sent"] + p["received"] + p.get("mentioned_in", 0)
+    if a.cmd == "people":
+        shown = [p for p in rows if a.all or (p["entity"] is None and p["looks_like"] == "person")]
+        shown = [p for p in shown if max(p.get("mentioned_in", 0), p["sent"] + p["received"]) >= a.min_docs]
+        for p in shown[:a.limit]:
+            out({k: p[k] for k in ("name", "looks_like", "entity", "source", "addresses", "sent", "received", "first",
+                                   "last", "roles", "mentioned_in", "missing_aliases") if p.get(k) not in (None, [], "")}
+                | {"entity": p["entity"]})
+        return
+    req = {"requested_by": a.requested_by} if a.requested_by else {}
+    wanted = []
+    for n in a.names:
+        f = " ".join(entities.fold_text(n).split())
+        hits = [p for p in rows if f in {" ".join(entities.fold_text(x).split()) for x in [p["name"], *p.get("names", [])]}
+                or n.lower() in {x.lower() for x in p.get("addresses", [])}]
+        if not hits:
+            raise KeyError(f"no one called {n!r} in `ann people --all`")
+        wanted.append(hits[0])
+    if a.top:
+        wanted += sorted((p for p in rows if p["entity"] is None and p["looks_like"] == "person" and p not in wanted),
+                         key=lambda p: -active(p))[:a.top]
+    if a.known:
+        wanted += [p for p in rows if p["entity"] and p["missing_aliases"] and p not in wanted]
+    if not wanted:
+        raise ValueError("name the people to add, or --top N, or --known (see `ann people`)")
+    done = []
+    for p in wanted:
+        if p["entity"]:
+            if p["missing_aliases"]:
+                annapi.request(m, {**req, "op": "edit-entity", "entity": p["entity"]["entity"], "add_aliases": p["missing_aliases"]})
+                done.append({"updated": p["entity"]["name"], "added_aliases": p["missing_aliases"]})
+            continue
+        kind = {"person": a.kind, "organization": "organization"}.get(p["looks_like"], "other")
+        r = {**req, "op": "define-entity", "name": p["name"], "kind": kind,
+             "aliases": p["missing_aliases"]}
+        if (s := entities.person_summary(p)):
+            r["summary"] = s
+        ev = annapi.request(m, r)["events"][0]
+        done.append({"added": p["name"], "entity": ev["entity"], "aliases": p["missing_aliases"],
+                     **({"looks_like": p["looks_like"]} if p["looks_like"] != "person" else {})})
+    for d in done:
+        out(d)
 
 
 def _link_row(an, ln: dict) -> dict:
@@ -2192,13 +2268,11 @@ def view(argv=None):
     elif a.cmd == "graph":
         from . import graph as graphmod
         ann = annotations.Annotations.load(m)
-        g = _load_graph(m, a, ann)
+        g, ids = _load_graph(m, a, ann, a.refs)
         if a.refs:
-            g = g.around([graphmod.resolve(m, g, r, ann) for r in a.refs], a.depth)
-        if not a.docs:
-            keep = [i for i, n in g.nodes.items() if n["type"] != "doc" or (a.refs and i in
-                    {graphmod.resolve(m, g, r, ann) for r in a.refs})]
-            g = g.subgraph(keep)
+            g = g.around(ids, a.depth)
+        if not (a.docs or a.doc_links):
+            g = g.subgraph([i for i, n in g.nodes.items() if n["type"] != "doc" or i in ids])
         if not a.all and not a.refs:
             joined = {x for e in g.edges for x in (e["from"], e["to"])}
             g = g.subgraph([i for i in g.nodes if i in joined])
@@ -2262,6 +2336,21 @@ the links between them (`ann link`), and the documents they rest on.
                                      the whole graph (or --around REF), for your own code
 
 REF is an entity (ID, name or alias), a link ID (l_…), or a document.
+Documents relate too: --doc-links adds replies (from the headers),
+quotations within a thread, versions (near-duplicate texts, or one mostly
+inside another) and copies, for the documents in the graph (a document you
+name is in it), --doc-links 2 for two steps out. `graph show DOC
+--doc-links` lists a document's relations; `graph path DOC1 DOC2
+--doc-links 3` finds how two documents connect. Versions and quotations are
+estimates (marked derived, with their similarity); replies are facts of
+the headers.
+
+--email adds who emailed whom, from the headers: `emailed` between people
+(with the count and the emails) and `sent`/`received` to each email. It
+needs the people's addresses among their aliases: `ann people` lists people
+from the headers and the text who aren't entities, and `ann add-people`
+adds them with their addresses.
+
 Options shared by all: --mentions adds every document an entity is named in;
 --cooccur adds entities named together in --min-cooccur documents or more
 (default 2); --facts makes each link a node, so documents point at the facts
@@ -2286,12 +2375,25 @@ def _graph_opts(s):
     s.add_argument("--min-cooccur", type=int, default=2)
     s.add_argument("--facts", action="store_true", help="each link a node, joined to its evidence")
     s.add_argument("--facet", help="only what is filed under this facet")
+    s.add_argument("--doc-links", type=int, nargs="?", const=1, default=0, metavar="HOPS",
+                   help="add how documents relate (replies, quotations, versions, copies, attachments), "
+                        "HOPS steps out from the documents already in the graph (default 1)")
+    s.add_argument("--email", action="store_true",
+                   help="add who emailed whom, from the headers, for people whose aliases hold their addresses")
 
 
-def _load_graph(m, a, ann=None):
+def _load_graph(m, a, ann=None, refs=()):
+    """The graph, and the node IDs ``refs`` name. Documents named are in it
+    before document relations are added, so theirs are."""
     from . import graph as graphmod
-    return graphmod.load(m, mentions=a.mentions, cooccur=a.cooccur, facts=a.facts, facet=a.facet,
-                         min_cooccur=a.min_cooccur, ann=ann)
+    g = graphmod.load(m, mentions=a.mentions, cooccur=a.cooccur, facts=a.facts, facet=a.facet,
+                      min_cooccur=a.min_cooccur, ann=ann)
+    if a.email:
+        graphmod.add_correspondence(m, g)
+    ids = [graphmod.resolve(m, g, r, ann) for r in refs]
+    if a.doc_links:
+        graphmod.add_doc_links(m, g, a.doc_links)
+    return g, ids
 
 
 @run
@@ -2374,33 +2476,36 @@ def graph(argv=None):
         out(_link_row(ann, ann.links[node["link"]]))
         return
 
-    g = _load_graph(m, a, ann)
+    refs = {"show": lambda: [a.ref], "around": lambda: a.refs, "path": lambda: [a.a, a.b],
+            "export": lambda: a.around or []}[a.cmd]()
+    g, ids = _load_graph(m, a, ann, refs)
     if a.cmd == "show":
-        nid = graphmod.resolve(m, g, a.ref, ann)
+        nid = ids[0]
         out(g.nodes[nid])
         for e in g.incident(nid):
             o = g.other(e, nid)
             row = {"edge": e["kind"], "direction": "out" if e["from"] == nid else "in",
                    "other": {k: g.nodes[o][k] for k in ("id", "label", "type") if k in g.nodes[o]},
                    "says": graphmod.describe_step(g, {"from": nid, "edge": e, "to": o})["says"]}
-            row.update({k: e[k] for k in ("link", "rel", "date", "see", "loc", "count", "docs", "derived", "summary") if e.get(k)})
+            row.update({k: e[k] for k in ("link", "rel", "date", "see", "loc", "count", "docs", "derived", "summary",
+                                          "similarity", "containment", "field") if e.get(k)})
             out(row)
     elif a.cmd == "around":
-        roots = [graphmod.resolve(m, g, r, ann) for r in a.refs]
-        sub_g = g.around(roots, a.depth)
+        sub_g = g.around(ids, a.depth)
         out(sub_g.to_json())
     elif a.cmd == "path":
-        x, y = graphmod.resolve(m, g, a.a, ann), graphmod.resolve(m, g, a.b, ann)
-        paths = g.paths(x, y, a.max, limit=a.limit, avoid_docs=not a.through_docs)
+        x, y = ids
+        through = a.through_docs or bool(a.doc_links) or x.startswith("doc:") or y.startswith("doc:")
+        paths = g.paths(x, y, a.max, limit=a.limit, avoid_docs=not through)
         if not paths:
             out({"paths": 0, "note": f"no connection within {a.max} hops"
-                 + ("" if a.through_docs else "; --through-docs also walks through shared documents")
+                 + ("" if through else "; --through-docs also walks through shared documents")
                  + ("" if a.mentions or a.cooccur else "; --mentions or --cooccur add connections found in the text")})
         for path in paths:
             out({"hops": len(path), "steps": [graphmod.describe_step(g, st) for st in path]})
     elif a.cmd == "export":
         if a.around:
-            g = g.around([graphmod.resolve(m, g, r, ann) for r in a.around], a.depth)
+            g = g.around(ids, a.depth)
         text = {"json": lambda: json.dumps(g.to_json(), ensure_ascii=False, indent=1) + "\n",
                 "dot": g.to_dot, "mermaid": g.to_mermaid}[a.format]()
         if a.out:

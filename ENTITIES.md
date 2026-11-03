@@ -153,7 +153,8 @@ clicked to go to theirs.
 
 - Joining suggestions across spellings ("T. Kettering", "Mr. Kettering",
   "Thomas Kettering") uses a simple key per spelling. `analyze people` joins
-  them properly; Claude uses it when adding people.
+  them properly, and `ann add-people` adds a person with all of them (and
+  their addresses) as aliases ([GRAPH.md](GRAPH.md#people-from-the-headers)).
 - Spreadsheets in grid mode have no entity layer.
 - Entities with no name-like form (an event, a meeting) are only reachable
   by their aliases. Mentions like "the March 9 call" need an alias that

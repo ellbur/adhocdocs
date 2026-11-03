@@ -94,7 +94,11 @@ them.
   that rest on it, `graph` walks it (`show`, `around`, `path`, `evidence`,
   `unsupported`, `export` as JSON, dot or Mermaid), and `view graph` draws
   it. Facets are issues that entities, links, notes and tags are filed
-  under; the viewer shows one at a time (`F`).
+  under; the viewer shows one at a time (`F`). Documents relate too
+  (replies, quotations, versions, copies: `--doc-links`, and a document
+  pane's link bar), and people from email headers become entities with
+  their addresses (`ann people`, `ann add-people`), so `--email` shows who
+  emailed whom.
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under

@@ -192,3 +192,104 @@ def layer(m: Matter, doc: str, suggestions=True) -> dict:
                         "loc": locators.char_locator(doc, lay.id, text, d["start"], d["end"])})
         out["suggested"] = sug
     return out
+
+
+# -- people who aren't entities yet ----------------------------------------------------------------
+# The cast from email headers and names in text (adhocdocs.analysis.people)
+# holds people nobody has added: a correspondent who appears only in From
+# and To lines is never underlined in a document, and the graph can't say
+# who emailed whom without knowing their addresses. These match the cast to
+# the entity list, and make define-entity requests for the people that
+# matter, with their names, the forms the text uses and their addresses as
+# aliases.
+
+GROUP_WORDS = {"everyone", "all", "staff", "team", "list", "group", "department", "dept", "resources", "office",
+               "desk", "support", "accounts", "payable", "receivable", "sales", "service", "services", "notifications"}
+ORG_WORDS = {"inc", "llc", "ltd", "co", "corp", "corporation", "company", "association", "network", "group", "suites",
+             "hotel", "airways", "airlines", "bank", "monthly", "weekly", "magazine", "news", "club", "league", "soccer",
+             "society", "institute", "council", "foundation", "university", "college", "school", "analytics", "cloud",
+             "benefits", "goods", "supply", "partners", "associates", "llp", "pc", "pllc"}
+BULK_LOCAL = {"noreply", "no-reply", "donotreply", "do-not-reply", "news", "newsletter", "info", "hello", "marketing",
+              "updates", "notifications", "notify", "alerts", "mailer", "bounce", "promo", "deals", "offers"}
+
+
+def looks_like(p: dict) -> str:
+    """What a cast member seems to be: ``person``, ``group`` (a mailing list
+    or a team's address), ``organization``, or ``bulk`` (a newsletter or
+    notification sender: it sends and is never written to)."""
+    words = {w.lower().strip(".,()") for w in p["name"].split()}
+    if p.get("addresses") and p.get("sent") and not p.get("received") and not p.get("roles"):
+        return "bulk"
+    locals_ = {a.split("@", 1)[0].lower() for a in p.get("addresses") or []}
+    domains = p.get("domains") or []
+    if locals_ & BULK_LOCAL or any(d.split(".", 1)[0] in ("news", "mail", "email", "mailer", "e") for d in domains) \
+            and not p.get("received"):
+        return "bulk"
+    if words & GROUP_WORDS:
+        return "group"
+    if words & ORG_WORDS:
+        return "organization"
+    if p.get("addresses") and not p.get("sent") and not p.get("roles") and len(words) != 2:
+        return "group"
+    return "person"
+
+
+def _folded_names(e: dict) -> set[str]:
+    return {" ".join(fold_text(a).split()) for a in [e["name"], *e["aliases"]]}
+
+
+def person_aliases(p: dict) -> list[str]:
+    """The ways a cast member is written: display names, the forms the text
+    uses ("T. Kettering", "Mr. Kettering"), and email addresses."""
+    out, seen = [], {" ".join(fold_text(p["name"]).split())}
+    for a in [*p.get("names", []), *p.get("written_as", []), *p.get("addresses", [])]:
+        a = " ".join(str(a).split())
+        f = " ".join(fold_text(a).split())
+        if len(a) > 2 and f not in seen:        # "MR. KETTERING" is "Mr. Kettering": matching folds case
+            seen.add(f)
+            out.append(a)
+    return out
+
+
+def match_person(p: dict, ents: list[dict]) -> dict | None:
+    """The known entity a cast member is: by an address among its aliases,
+    else by a name (or a form the text uses) it is called, if only one has it."""
+    addrs = {a.lower() for a in p.get("addresses") or []}
+    for e in ents:
+        if addrs & {a.lower() for a in e["aliases"]}:
+            return e
+    names = {" ".join(fold_text(n).split()) for n in [p["name"], *p.get("names", [])]}
+    hits = [e for e in ents if e["kind"] in ("person", "other", "organization") and names & _folded_names(e)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def person_summary(p: dict) -> str:
+    """A line of what the headers and text say about a cast member: counts
+    and roles, not a description (Claude or the user writes that)."""
+    bits = []
+    if p.get("roles"):
+        bits.append("Called " + ", ".join(p["roles"][:3]) + " in the documents")
+    if p.get("addresses"):
+        when = ""
+        if p.get("first") and p.get("last"):
+            when = f", {str(p['first'])[:10]} to {str(p['last'])[:10]}"
+        bits.append(f"Email at {', '.join(p['domains'][:2])}: {p['sent']} sent, {p['received']} received{when}")
+    if p.get("mentioned_in"):
+        bits.append(f"named in {p['mentioned_in']} documents")
+    return "; ".join(bits) + "." if bits else ""
+
+
+def people(m: Matter, ents: list[dict] | None = None) -> list[dict]:
+    """The cast, each with the entity it matches (or None), the aliases that
+    entity lacks, and what it looks like (person, group, bulk sender)."""
+    from .analysis import people as cast
+    ents = known(m) if ents is None else ents
+    out = []
+    for p in cast(m):
+        e = match_person(p, ents)
+        aliases = person_aliases(p)
+        have = _folded_names(e) if e else set()
+        out.append({**p, "looks_like": looks_like(p),
+                    "entity": {"entity": e["entity"], "name": e["name"]} if e else None,
+                    "missing_aliases": [a for a in aliases if " ".join(fold_text(a).split()) not in have] if e else aliases})
+    return out

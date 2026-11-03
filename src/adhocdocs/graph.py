@@ -14,6 +14,17 @@ as facts (``facts=True``), ``link:<id>``. Edges have a ``kind``:
 ``co-mention`` entity — entity: named in the same documents (``count``,
                ``docs``). A lead, not a fact: ``derived``
 ``family``     document → document: an attachment and its parent
+``reply``      email → the email it answers, from its threading headers
+``quotes``     email → an earlier message in its thread whose text it holds
+               (``containment``): ``derived``
+``version``    document — document: near-duplicate texts, or one mostly inside
+               the other (``similarity``, ``containment``): ``derived``
+``copy``       document — document: the same text
+``sent``,      person → email: an address among the entity's aliases is the
+``received``   sender, or a recipient (``field``: to, cc, bcc)
+``emailed``    person — person: emails between their addresses, one edge a pair,
+               from whoever wrote more (``count``, ``sent`` one way,
+               ``replied`` the other, ``docs``)
 ``fact``       entity → link node (``role`` from or to), when ``facts``
 =============  ===========================================================
 
@@ -35,7 +46,8 @@ from . import entities as entmod
 from .annotations import Annotations
 from .matter import Matter
 
-DERIVED = ("mentions", "co-mention")
+DERIVED = ("mentions", "co-mention", "quotes", "version")
+DOC_KINDS = ("family", "reply", "quotes", "version", "copy")
 
 # columns of a diagram laid out by kind, left to right
 KIND_COLUMN = {"organization": 0, "person": 1, "event": 2, "contract": 2, "identifier": 2, "thing": 2, "term": 2,
@@ -176,6 +188,10 @@ class Graph:
         return "\n".join(lines) + "\n"
 
 
+def _emails(n: int) -> str:
+    return "1 email" if n == 1 else f"{n} emails"
+
+
 def _docs(n: int) -> str:
     return "1 document" if n == 1 else f"{n} documents"
 
@@ -185,6 +201,8 @@ def edge_label(e: dict) -> str:
         return e["rel"]
     if e["kind"] in ("mentions", "co-mention"):
         return f"{e['kind']} ×{e.get('count', 1)}"
+    if e["kind"] == "emailed":
+        return f"emailed {e['sent']}" + (f" ↔ {e['replied']}" if e.get("replied") else "")
     if e["kind"] == "fact":
         return e.get("role", "")
     return e["kind"]
@@ -252,7 +270,7 @@ def load(m: Matter, mentions=False, cooccur=False, facts=False, facet=None, fami
         return f"doc:{d}"
 
     for e in ents.values():
-        g.node(f"entity:{e['entity']}", type="entity", label=e["name"], entity=e["entity"], kind=e["kind"],
+        g.node(f"entity:{e['entity']}", type="entity", label=e["name"], entity=e["entity"], kind=e["kind"], aliases=e["aliases"],
                summary=e.get("summary"), date=e.get("date"), by=e["by"],
                facets=ann.facets_of({"entity": e["entity"]}), see=e.get("see") or [])
     for e in ents.values():
@@ -372,6 +390,23 @@ def describe_step(g: Graph, s: dict) -> dict:
         out["evidence"] = [e["loc"]]
     elif e["kind"] == "family":
         out["says"] = f"{name(e['to'])} is attached to {name(e['from'])}"
+    elif e["kind"] == "reply":
+        out["says"] = f"{name(e['from'])} replies to {name(e['to'])}"
+    elif e["kind"] == "quotes":
+        out["says"] = f"{name(e['from'])} quotes {name(e['to'])} (its text is {e['containment']:.0%} inside)"
+    elif e["kind"] == "version":
+        out["says"] = (f"{name(e['from'])} and {name(e['to'])} are versions of one text "
+                       f"(similarity {e['similarity']:.0%}, the shorter {e['containment']:.0%} inside the longer)")
+    elif e["kind"] == "copy":
+        out["says"] = f"{name(e['from'])} and {name(e['to'])} have the same text"
+    elif e["kind"] in ("sent", "received"):
+        out["says"] = f"{name(e['from'])} {'sent' if e['kind'] == 'sent' else 'received'} {name(e['to'])}" + (
+            f" ({e['field']})" if e.get("field") and e["kind"] == "received" else "")
+    elif e["kind"] == "emailed":
+        out["says"] = (f"{name(e['from'])} emailed {name(e['to'])} {_emails(e['sent'])}"
+                       + (f", and {name(e['to'])} wrote back {_emails(e['replied'])}" if e.get("replied") else "")
+                       + " (from the headers)")
+        out["docs"] = e.get("docs", [])
     else:
         out["says"] = f"{name(e['from'])} {edge_label(e)} {name(e['to'])}"
     if e.get("derived"):
@@ -521,10 +556,13 @@ def _path(g, box, route) -> tuple[str, tuple[float, float]]:
             pts.append((x, cy, x + w, cy))            # a waypoint: straight across its column
     # pts: (x_in, y, x_out, y) per stop, entering at x_in and leaving at x_out
     if len(route) == 2 and box[route[0]][0] == box[route[1]][0]:
+        # one column: out past its widest box and back, so the arc and its label clear every box
         (x1, y1, _, _), (x2, y2, _, _) = pts
-        bend = 40 + min(120, abs(y2 - y1) / 3)
-        return (f"M{x1:.0f},{y1:.0f} C{x1 + bend:.0f},{y1:.0f} {x2 + bend:.0f},{y2:.0f} {x2 + 2:.0f},{y2:.0f}",
-                (max(x1, x2) + bend * 0.75, (y1 + y2) / 2))
+        left = box[route[0]][0]
+        right = max(bx + bw for bx, _, bw, _ in box.values() if bx == left)
+        bend = 64 + min(90, abs(y2 - y1) / 4)
+        return (f"M{x1:.0f},{y1:.0f} C{right + bend:.0f},{y1:.0f} {right + bend:.0f},{y2:.0f} {x2 + 2:.0f},{y2:.0f}",
+                (right + bend * 0.75, (y1 + y2) / 2, "middle"))             # on the arc, at its farthest out
     first = pts[0]
     d = [f"M{first[2]:.0f},{first[1]:.0f}"]
     label = None
@@ -537,7 +575,7 @@ def _path(g, box, route) -> tuple[str, tuple[float, float]]:
             d[-1] = f"M{sx:.0f},{ay:.0f}"
         d.append(f"C{mid:.0f},{ay:.0f} {mid:.0f},{by:.0f} {ex:.0f},{by:.0f}")
         if label is None:
-            label = (mid, (ay + by) / 2)
+            label = (mid, (ay + by) / 2, "middle")
         if (bx, bxo) != (ex, ex) and bxo != bx:        # cross a waypoint's column
             d.append(f"L{(bxo if ex == bx else bx):.0f},{by:.0f}")
     return " ".join(d), label
@@ -566,23 +604,28 @@ def diagram_html(m: Matter, g: Graph, title: str = "Relationships", layout: str 
         + ([f"{n_derived} found by matching text (dashed)"] if n_derived else [])
     out.append(f'<p class="adhoc-query">{" · ".join(parts)}' + (f" · {esc(note)}" if note else "")
                + " · click a box or a label to see its evidence</p>")
-    out.append(f'<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
-               f'height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">')
+    svg_at = len(out)
+    out.append("")                      # the <svg> tag, once the labels say how wide it is
     out.append('<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
                'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="adhoc-graph-arrow"/></marker></defs>')
     sequence, labels = [], []
     for e in g.edges:
         if e["id"] not in routes:
             continue
-        d, (mx, my) = _path(g, box, routes[e["id"]])
+        d, (mx, my, anchor) = _path(g, box, routes[e["id"]])
         bare = (e["kind"] == "link" and not e.get("see"))
         cls = f"adhoc-graph-edge kind-{e['kind']}" + (" derived" if e.get("derived") else "") + (" unsupported" if bare else "")
-        marker = ' marker-end="url(#arr)"' if e["kind"] in ("link", "see", "family") or e.get("role") == "to" else ""
+        marker = ' marker-end="url(#arr)"' if e["kind"] in ("link", "see", "family", "reply", "quotes", "sent", "received") \
+            or e.get("role") == "to" else ""
         tip = esc(_edge_tip(g, e))
         out.append(f'<path class="{cls}" d="{d}"{marker}><title>{tip}</title></path>')
-        if e["kind"] in ("link", "co-mention", "mentions"):
-            loc = locators.format(e["see"][0]) if e.get("see") else (locators.format(e["loc"]) if e.get("loc") else None)
-            labels.append([mx, my, _trim(edge_label(e), 32), tip, loc, cls.replace("adhoc-graph-edge", "").strip()])
+        if e["kind"] in ("link", "co-mention", "mentions", "emailed", "reply", "quotes", "version", "copy"):
+            loc = locators.format(e["see"][0]) if e.get("see") else (locators.format(e["loc"]) if e.get("loc") else (
+                f"doc:{e['docs'][0]}" if e.get("docs") else None))
+            text = _trim(edge_label(e), 32)
+            if anchor == "start":           # beside an arc in one column: clear of the boxes it joins
+                mx += (8 + len(text) * 6.1) / 2
+            labels.append([mx, my, text, tip, loc, cls.replace("adhoc-graph-edge", "").strip()])
     for i, (x, y, w, h) in box.items():
         if i not in g.nodes:
             continue
@@ -604,6 +647,11 @@ def diagram_html(m: Matter, g: Graph, title: str = "Relationships", layout: str 
         for prev in labels[:k]:
             if abs(prev[0] - lab[0]) < 90 and abs(prev[1] - lab[1]) < 17:
                 lab[1] = prev[1] + 17
+    for mx, my, text, *_ in labels:
+        width = max(width, mx + (8 + len(text) * 6.1) / 2 + PAD)
+        height = max(height, my + 12)
+    out[svg_at] = (f'<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
+                   f'height="{height:.0f}" viewBox="0 0 {width:.0f} {height:.0f}">')
     for mx, my, text, tip, loc, cls in labels:
         w = 8 + len(text) * 6.1
         attrs = f' data-locator="{esc(loc)}"' if loc else ""
@@ -653,6 +701,9 @@ def _edge_tip(g: Graph, e: dict) -> str:
         return f"{a} and {b} are named together in {_docs(e['count'])}. Found by matching, not a recorded relation."
     if e["kind"] == "mentions":
         return f"{a} is named {e['count']}× in {b}"
+    if e["kind"] == "emailed":
+        return f"{a} emailed {b} {_emails(e['sent'])}" + (f"; {b} wrote back {_emails(e['replied'])}" if e.get("replied") else "") \
+            + ". From the headers; click for the first email."
     return f"{a} → {b} ({e['kind']})"
 
 
@@ -756,3 +807,120 @@ def dossier(m: Matter, ref: str, mentions_limit: int = 15) -> str:
         from .literate import format_refs
         text += "\n" + format_refs(refs)
     return text
+
+
+# -- documents and correspondence ------------------------------------------------------------------
+
+def doc_relations(m: Matter) -> dict[str, list[dict]]:
+    """How documents relate (:func:`adhocdocs.analysis.doc_links`), as the
+    near-duplicate index keeps them."""
+    from .index import open_index
+    idx = open_index(m, "neardup")
+    if idx.behind():
+        idx.update()
+    return idx.links()
+
+
+def add_doc_links(m: Matter, g: Graph, hops: int = 1, kinds=DOC_KINDS) -> Graph:
+    """Add the relations between documents (replies, quotations, versions,
+    copies, families) for the documents in ``g``, ``hops`` steps out: each
+    step adds the documents related to the ones already there."""
+    rel = doc_relations(m) if set(kinds) - {"family"} else {}
+    rows = _doc_rows(m)
+    state = m.state
+    parent = {c: p for p, cs in state.children.items() for c in cs}
+    children = state.children
+    have = {(e["from"], e["to"], e["kind"]) for e in g.edges}
+
+    def node(d):
+        if f"doc:{d}" not in g.nodes:
+            r = rows.get(d) or {}
+            g.node(f"doc:{d}", type="doc", label=doc_label(m, rows, d), doc=d, date=(r.get("date") or "")[:10] or None,
+                   kind=r.get("kind"), loc=f"doc:{d}")
+        return f"doc:{d}"
+
+    def edge(a, b, kind, **attrs):
+        if (a, b, kind) in have or (kind in ("version", "copy") and (b, a, kind) in have):
+            return
+        have.add((a, b, kind))
+        g.edge(a, b, kind, **attrs)
+
+    live = set(state.live_documents())
+    frontier = [n["doc"] for n in g.nodes.values() if n["type"] == "doc"]
+    for _ in range(max(0, hops)):
+        nxt = []
+        for d in frontier:
+            out = []
+            if "family" in kinds:
+                if parent.get(d) in live:
+                    out.append((parent[d], d, "family", {}))
+                out += [(d, c, "family", {}) for c in children.get(d, []) if c in live]
+            for x in rel.get(d, []):
+                o = x["doc"]
+                if o not in live:
+                    continue
+                more = {k: x[k] for k in ("similarity", "containment") if k in x}
+                kind = {"replies-to": "reply", "replied-by": "reply", "quotes": "quotes", "quoted-by": "quotes",
+                        "version": "version", "copy": "copy"}[x["rel"]]
+                if kind not in kinds:
+                    continue
+                a, b = (o, d) if x["rel"] in ("replied-by", "quoted-by") else (d, o)
+                out.append((a, b, kind, more))
+            for a, b, kind, more in out:
+                new = [x for x in (a, b) if f"doc:{x}" not in g.nodes]
+                edge(node(a), node(b), kind, **more)
+                nxt += new
+        frontier = nxt
+    return g
+
+
+def _addresses(e: dict) -> set[str]:
+    return {a.lower() for a in e["aliases"] if "@" in a and " " not in a.strip()}
+
+
+def add_correspondence(m: Matter, g: Graph, docs=True) -> Graph:
+    """Who emailed whom, from the headers. A person entity is matched to
+    emails by the addresses among its aliases (``ann add-people`` puts them
+    there). Adds ``emailed`` edges between entities (with the count and the
+    emails), and, with ``docs``, ``sent`` and ``received`` edges to each email."""
+    state = m.state
+    rows = _doc_rows(m)
+    owner: dict[str, str] = {}
+    for n in g.nodes.values():
+        if n["type"] == "entity":
+            e = {"aliases": n.get("aliases") or []}
+            for a in _addresses(e):
+                owner.setdefault(a, n["id"])
+    if not owner:
+        return g
+    pairs: dict[tuple, list] = {}
+    for d in state.live_documents():
+        r = rows.get(d)
+        if not r or r.get("kind") != "email" or d not in state.metadata:
+            continue
+        md = m.objects.get_object(state.metadata[d])
+        senders = [owner[a.lower()] for a in md.get("from", []) if a.lower() in owner]
+        recips = [(owner[a.lower()], f) for f in ("to", "cc", "bcc") for a in md.get(f, []) if a.lower() in owner]
+        if not senders and not recips:
+            continue
+        if docs:
+            dn = f"doc:{d}"
+            if dn not in g.nodes:
+                g.node(dn, type="doc", label=doc_label(m, rows, d), doc=d, date=(r.get("date") or "")[:10] or None,
+                       kind="email", loc=dn)
+            for s in dict.fromkeys(senders):
+                g.edge(s, dn, "sent", loc=dn)
+            for p, f in dict.fromkeys(recips):
+                g.edge(p, dn, "received", field=f, loc=dn)
+        for s in dict.fromkeys(senders):
+            for p, _ in dict.fromkeys(recips):
+                if p != s:
+                    pairs.setdefault((s, p), []).append(d)
+    # one edge per pair, from whoever wrote more, with the counts both ways
+    for a, b in {tuple(sorted(k)) for k in pairs}:
+        ab, ba = pairs.get((a, b), []), pairs.get((b, a), [])
+        if len(ba) > len(ab):
+            a, b, ab, ba = b, a, ba, ab
+        docs = list(dict.fromkeys(ab + ba))
+        g.edge(a, b, "emailed", count=len(docs), sent=len(ab), replied=len(ba), docs=docs[:50])
+    return g

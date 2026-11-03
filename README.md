@@ -213,6 +213,8 @@ to try on the sample matter:
 - *"How is Voss connected to Kettering Freight? Show me the documents for each step."*
 - *"Which of the facts we've recorded have no document behind them?"*
 - *"Make me a page on Ibáñez: what connects him to the delivery, with the documents quoted."*
+- *"Who in the emails isn't in the entities yet? Add the ones who matter, and draw who corresponds with Kettering."*
+- *"Show me this memo's earlier drafts, and the thread this email belongs to."* A document's link bar lists its replies, quotations and versions too.
 - *"Set up issues for delivery, damages and notice, and file the entities and notes under them."* Then press `F` in the viewer to see one issue at a time.
 - Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
 

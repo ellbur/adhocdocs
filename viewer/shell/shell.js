@@ -796,8 +796,18 @@ class DocumentPane {
     if (info.parent) groups.push(["In", [[info.parent.name || short(info.parent.doc), info.parent.doc]]]);
     if (info.children.length) groups.push([info.children.length > 1 ? "Attachments" : "Attachment", info.children.map((c) => [c.name || short(c.doc), c.doc])]);
     if (info.duplicates.length) groups.push([info.duplicates.length > 1 ? "Duplicates" : "Duplicate", info.duplicates.map((d) => [short(d), d])]);
+    // how it relates to other documents (analysis.doc_links): replies from the headers, the rest estimated
+    const REL = { "replies-to": ["Replies to", "Replies to"], "replied-by": ["Reply", "Replies"], "quotes": ["Quotes", "Quotes"],
+                  "quoted-by": ["Quoted in", "Quoted in"], "version": ["Version", "Versions"], "copy": ["Same text", "Same text"] };
+    for (const rel of Object.keys(REL)) {
+      const xs = (info.related || []).filter((x) => x.rel === rel);
+      if (!xs.length) continue;
+      const pct = (x) => x.similarity != null ? ` (${Math.round(100 * Math.max(x.similarity, x.containment || 0))}% alike: an estimate)` : "";
+      groups.push([REL[rel][xs.length > 1 ? 1 : 0], xs.slice(0, 6).map((x) => [(x.name || short(x.doc)) + (x.date ? " · " + String(x.date).slice(0, 10) : ""),
+        x.doc, (x.name || x.doc) + pct(x)]).concat(xs.length > 6 ? [[`+${xs.length - 6} more`, null, "Ask Claude: graph show this document --doc-links"]] : [])]);
+    }
     this.links.replaceChildren(...groups.map(([label, ds]) => el("span", { class: "grp" }, label + ":",
-      ...ds.map(([t, d]) => el("a", { title: d, onclick: () => open(d) }, t)))));
+      ...ds.map(([t, d, tip]) => el("a", { title: tip || d, onclick: () => d && open(d) }, t)))));
     this.links.hidden = !groups.length;
     this.setFetchNote(this.fetchNote);          // the head was just rebuilt
     this.renderStrip();

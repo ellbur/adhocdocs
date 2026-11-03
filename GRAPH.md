@@ -157,12 +157,58 @@ Facets were chosen over more tags because tags are about documents
 cuts across documents, entities and notes alike, and filing something
 under one shouldn't touch a production.
 
-## Not built yet
+## How documents relate
 
-- Links between documents other than families (a reply, a quoted email, a
-  version) are in the threads and near-duplicate analyses but not in the
-  graph.
-- People known only from email headers aren't entities until someone adds
-  them; `analyze people` finds them, and Claude adds the ones that matter.
+Documents are joined to each other, not only to entities. Each index
+update works out, for every document ([`analysis.doc_links`](src/adhocdocs/analysis.py)):
+
+| Relation | From | |
+|---|---|---|
+| replies to / replied by | the threading headers | a fact of the documents |
+| quotes / quoted in | a later message in the thread holding an earlier one's text | estimated |
+| version | near-duplicate texts, or one mostly inside the other, outside a thread: drafts, revisions, re-sends | estimated, with its similarity and containment |
+| same text | a copy in another format, or a custodian's copy | |
+
+The near-duplicate index keeps them in `links.json`, which the viewer reads
+directly: a document pane's link bar, which already listed the parent,
+attachments and duplicates, now lists *Replies to*, *Replies*, *Quotes*,
+*Quoted in* and *Versions*, so a thread or a run of drafts can be walked
+from the document itself. The graph adds them with `--doc-links` (one step
+out from the documents already in it; `--doc-links 2` for two), so `graph
+path DOC1 DOC2 --doc-links 3` says how two documents connect, and `view
+graph REF --doc-links` draws a document's family, thread and versions.
+Replies are drawn solid; quotations and versions dashed, as estimates.
+
+Candidates come from MinHash banding, finer than `analyze groups` (42
+bands of 3 rows), because a revision that adds a page can share under half
+its shingles with the original and still contain all of it. A short text
+inside a much longer one (a paragraph lifted into a brief) can still be
+missed; `analyze near DOC` compares one document against everything.
+
+## People from the headers
+
+Someone who appears only in From and To lines, or only in the text, isn't
+an entity until someone adds them, so their name isn't marked and the
+graph can't say who emailed whom. `ann people` lists the cast (`analyze
+people`: addresses joined by display name, names in text joined by surname
+and given name) that isn't in the entity list, each with its addresses,
+counts, the roles found beside its name, and whether it looks like a
+person, a group address (everyone@, a team), an organization, or a bulk
+sender (it sends and is never written to: newsletters, notifications).
+Only people are listed unless `--all`.
+
+`ann add-people NAME…` (or `--top N`) adds them as entities, with their
+display names, the forms the text uses ("T. Kettering", "Mr. Kettering")
+and their addresses as aliases, and a summary that is only the counts and
+roles, until someone writes a real one. `--known` gives entities already in
+the list the addresses and forms they lack. That is what connects an
+entity to its email: addresses as aliases mark the headers in the viewer,
+and `graph --email` adds who emailed whom from the headers, one edge a
+pair with the count each way and the emails as its evidence, and `sent`
+and `received` edges to each email. Claude adds the people who matter to
+the matter, not everyone in a To line, since a list that holds everyone
+is as useless as none ([ENTITIES.md](ENTITIES.md)).
+
+## Not built yet
 - A timeline pane of an entity's dated links (`view timeline` takes list
   files; a list made from the links would do it).
