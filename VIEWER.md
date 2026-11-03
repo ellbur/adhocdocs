@@ -161,7 +161,7 @@ needs no thought (open, step, point) is handled by the viewer at once.
 
 | Markup | Behavior |
 |---|---|
-| `<a href="loc:…">` | open the locator, in the linked document pane if there is one |
+| `<a href="loc:…">` | open the locator, in the linked document pane if there is one; `data-mode="page"` (or `flow`, `text`…) opens it in that mode, if the document has it |
 | `data-locator="…"` | pointable: click selects (shift/ctrl for several), double-click or Enter opens, tag keys apply; a linked document pane follows |
 | `data-sequence` | its items become the linked pane's next/previous sequence (`view list` passes the whole list's sequence, across HTML pages) |
 | `data-text="…"` | the text at the locator, inserted as text, never HTML (`data-normalize="inline\|block\|lines"`) |
@@ -435,8 +435,6 @@ whether the user, Claude or a pane went there.
 - Dropping files has been tried on Linux (WebKitGTK, a real XDND drag
   under Xvfb). wry's handler is the same on Windows and macOS, but untried.
 
-- A marker on literate-page quotes that opens the page image (shading
-  low-confidence OCR words exists).
 - The 100 ms target is met most of the time, not always. `view state`
   reports each document pane's `open_ms`: keypress to first page shown.
   Stepping through 15 corpus PDFs (release build, Xvfb with software

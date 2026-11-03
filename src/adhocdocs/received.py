@@ -389,30 +389,49 @@ def summary(v: dict) -> dict:
             "with_text": sum(1 for r in rs if r["text"]), "problems": v["problems"]}
 
 
-def check(root, **kw) -> dict:
-    return summary(read_volume(root, **kw))
+def check(root, m: Matter | None = None, name: str | None = None, replaces: list[str] | None = None, **kw) -> dict:
+    """What :func:`ingest` would do. With the matter: which documents
+    already received it would supersede (``replaces``), or overlap."""
+    v = read_volume(root, **kw)
+    out = summary(v)
+    if m is not None:
+        out.update(_replacing(m, v, name or v["root"].name, replaces, None))
+    return out
 
 
 # -- ingesting -------------------------------------------------------------------------------------
 
 
-def _metadata(v: dict, r: dict, party: str, volume: str) -> dict:
-    cols, row, df = v["columns"], r["row"], v["day_first"]
+def _derived(cols: dict, row: dict, day_first: bool) -> dict:
+    """What a record says about the document, as metadata keys: the people,
+    subject, title, author and the date with its source. Only keys with a
+    value."""
     get = lambda f: row.get(cols[f], "") if f in cols else ""
     meta = {"from": people(get("from")), "to": people(get("to")), "cc": people(get("cc")), "bcc": people(get("bcc")),
             "subject": get("subject") or None, "title": get("title") or None, "author": get("author") or None}
     for src in ("sent", "received", "created", "modified", "date"):
-        d = parse_date(get(src), get(src + "_time"), df)
+        d = parse_date(get(src), get(src + "_time"), day_first)
         if d:
             meta["date"], meta["date_source"] = d, {"date": "metadata"}.get(src, src)
             break
+    if get("name"):
+        meta["name"] = os.path.basename(get("name").replace("\\", "/"))
+    return {k: v for k, v in meta.items() if v not in (None, "", [])}
+
+
+def _metadata(v: dict, r: dict, party: str, volume: str) -> dict:
+    cols, row = v["columns"], r["row"]
+    meta = _derived(cols, row, v["day_first"])
+    meta.pop("name", None)                      # the name is ingest_file's to set (extra["name"])
     pages = None
     if r["as"] == "images":
         pages = r["keys"]
     meta["produced"] = {"party": party, "volume": volume, "begin": r["begin"], "end": r["end"],
                         "begattach": r["begattach"] or None, "endattach": r["endattach"] or None,
                         "control": r["control"], "pages": pages, "as": r["as"],
-                        "custodian": get("custodian") or None, "fields": row}
+                        "custodian": row.get(cols["custodian"], "") if "custodian" in cols else None,
+                        "fields": row, "columns": cols, "day_first": v["day_first"]}
+    meta["produced"]["custodian"] = meta["produced"]["custodian"] or None
     return meta
 
 
@@ -430,7 +449,8 @@ def _hash_problem(v, r) -> str | None:
     return None
 
 
-def ingest(m: Matter, root, party: str, name: str | None = None, report=None, **kw) -> dict:
+def ingest(m: Matter, root, party: str, name: str | None = None, report=None, replaces: list[str] | None = None,
+           **kw) -> dict:
     """Ingest a volume: one document per record, parents before their
     attachments. Returns :func:`summary` plus ``docs`` (Bates -> document)."""
     from .ingest import _ingest, ingest_file
@@ -456,7 +476,7 @@ def ingest(m: Matter, root, party: str, name: str | None = None, report=None, **
         if hp:
             v["problems"].append({"bates": r["begin"], "problem": hp})
         extra = {"metadata": _metadata(v, r, party, volume),
-                 "name": (r["row"].get(cols["name"], "") if "name" in cols else "") or None}
+                 "name": _derived(cols, r["row"], v["day_first"]).get("name")}
         if r["text"] and r["as"] != "text":
             extra["text"] = read_text(r["text"])[0]
         if r.get("attachments"):
@@ -476,7 +496,166 @@ def ingest(m: Matter, root, party: str, name: str | None = None, report=None, **
             continue
         docs[r["begin"]] = doc
     _forget_cache()
-    return {**summary(v), "volume": volume, "party": party, "ingested": len(docs), "docs": docs}
+    out = {**summary(v), "volume": volume, "party": party, "ingested": len(docs), "docs": docs}
+    out.update(_replacing(m, v, volume, replaces, docs))
+    _forget_cache()
+    return out
+
+
+def _replacing(m: Matter, v: dict, volume: str, replaces: list[str] | None, docs: dict | None) -> dict:
+    """A replacement volume's documents supersede those in ``replaces`` that
+    begin at the same Bates numbers. Without ``replaces``, numbers another
+    volume already has are only reported. ``docs`` None: say what would be
+    done (``--check``)."""
+    begins = {r["begin"] for r in v["records"] if r["as"]}
+    others: dict[str, list[dict]] = {}
+    for p in produced(m):
+        if p["volume"] != volume and p["begin"] in begins:
+            others.setdefault(p["begin"], []).append(p)
+    if not replaces:
+        if others:
+            vols = sorted({p["volume"] for ps in others.values() for p in ps})
+            v["problems"].append({"problem": f"{len(others)} documents begin at Bates numbers already received in "
+                                             f"{', '.join(vols)}: both are kept. If this volume replaces that one, "
+                                             f"ingest it with --replaces {vols[0]}"})
+        return {"problems": v["problems"]}
+    known = {p["volume"] for p in produced(m)}
+    for r in replaces:
+        if r not in known and r != volume:
+            raise ValueError(f"--replaces {r}: no received volume has that name (the volumes are "
+                             f"{', '.join(sorted(known)) or 'none'})")
+    plan = [(b, p) for b, ps in sorted(others.items()) for p in ps if p["volume"] in replaces]
+    old, out = produced(m), []
+    for b, p in plan:
+        new = docs.get(b) if docs is not None else None
+        if docs is not None and (new is None or new == p["doc"]):
+            continue
+        item = {"bates": b, "old": p["doc"], "old_volume": p["volume"]}
+        if new:
+            m.state.apply(m.logs["store"].append(op="supersede", old=p["doc"], new=new,
+                                                 reason=f"replaced by {b} in received volume {volume}"))
+            item["new"] = new
+        out.append(item)
+    left = sorted({p["begin"] for p in old if p["volume"] in replaces} - {i["bates"] for i in out})
+    return {"superseded" if docs is not None else "would_supersede": out,
+            "not_replaced": left, "problems": v["problems"]}
+
+
+# -- overlays --------------------------------------------------------------------------------------
+
+# Fields an overlay can't change: they made the document what it is (its
+# files, its family, its identity), so a change is reported, not applied.
+_FIXED = ("begin", "begattach", "endattach", "native", "text", "custodian")
+
+
+def overlay(m: Matter, dat, volume: str | None = None, overrides=None, day_first: bool = False,
+            check: bool = False) -> dict:
+    """Apply an overlay: a later load file that corrects or adds fields to
+    received documents already in, matched by begin Bates number (else
+    control number). Each changed document gets new metadata: the record's
+    fields merged (a blank value leaves the old one), what the load file
+    filled recomputed from them, and the change kept in
+    ``produced.overlays``. What the extraction found stays. ``check``:
+    report, change nothing. Applying the same overlay again changes nothing."""
+    from .matter import now
+    dat = Path(dat)
+    d = parse_dat(dat)
+    cols = map_columns(d["columns"], overrides)
+    key = "begin" if "begin" in cols else "control" if "control" in cols else None
+    if key is None:
+        raise ValueError(f"{dat.name}: no column looks like a begin Bates number or control number (columns: "
+                         f"{', '.join(d['columns'])}); name one with --map begin=COLUMN or --map control=COLUMN")
+    targets = [p for p in produced(m) if volume is None or p["volume"] == volume]
+    if volume is not None and not targets:
+        raise ValueError(f"--volume {volume}: no received volume has that name")
+    by = {}
+    for p in targets:
+        by.setdefault(p["begin"] if key == "begin" else p.get("control"), []).append(p)
+    problems, changed, unchanged = [], [], 0
+    seen = set()
+    for n, row in enumerate(d["rows"], 2):
+        k = row.get(cols[key], "").strip()
+        if not k:
+            problems.append({"line": n, "problem": f"no {key} number"})
+            continue
+        if k in seen:
+            problems.append({"bates": k, "problem": f"in the overlay twice (line {n} skipped)"})
+            continue
+        seen.add(k)
+        hits = by.get(k, [])
+        if not hits:
+            problems.append({"bates": k, "problem": "no received document " + ("begins at" if key == "begin" else
+                                                                                 "has control number") + " " + k})
+            continue
+        if len({p["volume"] for p in hits}) > 1:
+            problems.append({"bates": k, "problem": "received in " + ", ".join(sorted({p["volume"] for p in hits}))
+                                                    + ": name the volume the overlay is for with --volume"})
+            continue
+        for p in hits:
+            r = _overlay_one(m, p, cols, row, day_first, dat.name, now())
+            problems += r["problems"]
+            if r["changed"]:
+                changed.append({"bates": p["begin"], "doc": p["doc"], "volume": p["volume"], "changed": r["changed"]})
+                if not check:
+                    m.state.apply(m.logs["store"].append(op="set-metadata", doc=p["doc"],
+                                                         metadata=m.objects.put_object(r["meta"])))
+            else:
+                unchanged += 1
+    _forget_cache()
+    return {"overlay": str(dat), "dialect": d["dialect"], "encoding": d["encoding"], "matched_by": key,
+            "columns": cols, "unmapped": [c for c in d["columns"] if c not in cols.values()],
+            "records": len(d["rows"]), "changed": len(changed), "unchanged": unchanged,
+            "documents": changed, "problems": problems, "applied": not check}
+
+
+def _overlay_one(m: Matter, p: dict, cols: dict, row: dict, day_first: bool, source: str, at: str) -> dict:
+    meta = dict(m.objects.get_object(m.state.metadata[p["doc"]]))
+    prod = dict(meta["produced"])
+    old_fields = prod.get("fields") or {}
+    old_cols = prod.get("columns") or map_columns(list(old_fields))
+    old_df = prod.get("day_first", day_first)
+    by_norm = {norm(c): c for c in old_fields}
+    fields, new_cols, changes, problems = dict(old_fields), dict(old_cols), {}, []
+    field_of = {c: f for f, c in cols.items()}
+    for c, val in row.items():
+        f = field_of.get(c)
+        target = old_cols.get(f) if f in old_cols else by_norm.get(norm(c), c)
+        if f and f not in new_cols:
+            new_cols[f] = target
+        if val == "" or fields.get(target, "") == val:
+            continue                                # blank: no change
+        if f in _FIXED:
+            if f != "begin":
+                problems.append({"bates": p["begin"], "problem": f"{c}: {fields.get(target, '')!r} -> {val!r} "
+                                                                 "not applied: an overlay can't change a document's "
+                                                                 "files, family or custodian"})
+            continue
+        changes[target] = [fields.get(target), val]
+        fields[target] = val
+    if not changes:
+        return {"changed": None, "problems": problems}
+    before, after = _derived(old_cols, old_fields, old_df), _derived(new_cols, fields, old_df)
+    for k in ("from", "to", "cc", "bcc", "subject", "title", "author", "name"):
+        if meta.get(k) in (None, "", []) or meta.get(k) == before.get(k):       # the load file's, not the extraction's
+            if k in after:
+                meta[k] = after[k]
+            elif k != "name":
+                meta.pop(k, None)
+    ours = meta.get("date") and (meta.get("date"), meta.get("date_source")) != (before.get("date"), before.get("date_source"))
+    if not ours:
+        if "date" in after:
+            meta["date"], meta["date_source"] = after["date"], after["date_source"]
+        else:
+            meta.pop("date", None), meta.pop("date_source", None)
+    get = lambda f: fields.get(new_cols[f], "") if f in new_cols else ""
+    if get("end"):
+        prod["end"] = get("end")
+    if get("control"):
+        prod["control"] = get("control")
+    prod["fields"], prod["columns"] = fields, new_cols
+    prod["overlays"] = list(prod.get("overlays") or []) + [{"dat": source, "at": at, "changed": changes}]
+    meta["produced"] = prod
+    return {"changed": changes, "meta": meta, "problems": problems}
 
 
 def _page_count(pdf: bytes) -> int:

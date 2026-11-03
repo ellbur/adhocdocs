@@ -2053,7 +2053,7 @@ class WebPane {
       const a = ev.target.closest("a[href]");
       if (a && a.getAttribute("href").startsWith("loc:")) {
         ev.preventDefault();
-        openFromPane(this, a.getAttribute("href").slice(4), true);
+        openFromPane(this, a.getAttribute("href").slice(4), true, false, a.dataset.mode);
         return;
       }
       if (a && /^[a-z]+:/i.test(a.getAttribute("href")) && !a.getAttribute("href").startsWith("adhoc:")) { ev.preventDefault(); return; }
@@ -2525,8 +2525,10 @@ $("#menu-btn").addEventListener("click", (ev) => showMenu(ev.currentTarget, [
 // Open a locator from a pane. A list's preview follows it (its linked pane);
 // anything else opens beside the pane, as a new tab among the documents it has
 // opened, or in the tab already showing that document.
-function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
-  if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, { source: "pane" });
+// mode: a link's data-mode (a page's "check against the page image" marker asks for "page")
+function openFromPane(p, loc, newIfUnlinked, forceNew = false, mode = undefined) {
+  const opts = { source: "pane", ...(mode ? { mode } : {}) };
+  if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, opts);
   let target = !forceNew && p.link && pane(p.link);
   if (!target && !forceNew) {
     let doc = null; try { doc = parseLoc(loc).doc; } catch {}
@@ -2537,7 +2539,7 @@ function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
   }
   if (!target) target = addPane(new DocumentPane(newPaneId()), true, { beside: p.id });
   reveal(target.id);
-  target.open(loc, { source: "pane" });
+  target.open(loc, opts);
 }
 
 // Declarative attributes in a pane's static HTML, carried out here.

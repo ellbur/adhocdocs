@@ -51,6 +51,10 @@ through to its source.
   The renderer's own copy sits inside, so the HTML also reads in a browser.
   Marks are separate spans. Quotations link (`loc:`) to their source.
   Re-anchored and low-confidence-OCR quotations get classes for markers.
+  A quotation with low-confidence OCR words is followed by a marker,
+  `[check page 3]`, that opens it on the page image (`data-mode="page"`),
+  to compare the text with what the page shows. Exports leave the marker
+  out.
 - **Quoting more than words.** A quotation can also be shown as:
   - **formatted text** (`as=rich`): bold, italic, underline and so on.
     The formatting comes from the original at render time: Word run
@@ -113,8 +117,6 @@ through to its source.
 
 ## Not built yet
 
-- Clicking a low-confidence marker to see the page image (`as=image` shows
-  it in the page instead).
 - Formatting for OCR text, transcript views and tracked-change views other
   than the one shown, and paragraph-level formatting (headings, lists,
   alignment). Pictures of a Word file or email in its own layout (that

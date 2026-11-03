@@ -109,6 +109,10 @@ uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --pa
 uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp."
 ```
 
+A later overlay `.dat` that corrects fields goes in with
+`overlay-production`. A volume that reproduces earlier numbers goes in with
+`ingest-production … --replaces ACME_VOL001`.
+
 To try it out, make a matter from the sample documents in `corpus/`. It
 holds a fictional supply dispute, buried the way real ones are in several
 hundred irrelevant documents (marketing email, calendar invitations, office

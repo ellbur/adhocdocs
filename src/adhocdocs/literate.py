@@ -148,6 +148,7 @@ class Resolved:
     error: str | None = None
     new: dict | None = None         # the rewritten ref, when re-anchored
     low_confidence: bool = False
+    low_confidence_pages: list = field(default_factory=list)    # the pages its low-confidence words are on
     cells: list | None = None       # a cells reference: rows of cell text
     select: dict | None = None      # a cells or region reference's selector
     region: dict | None = None      # a region reference: page and xywh
@@ -311,7 +312,8 @@ def resolve(m, ref: dict) -> Resolved:
     if err:
         res.status, res.error = "broken", err
         return res
-    res.low_confidence = _low_confidence(m, layer, parts)
+    res.low_confidence_pages = _low_confidence(m, layer, parts)
+    res.low_confidence = bool(res.low_confidence_pages)
     if status == "re-anchored":
         new = {k: v for k, v in ref.items() if not k.startswith("_")}
         new["doc"], new["layer"] = doc, layer_id
@@ -346,14 +348,16 @@ def check_alterations(r: Resolved) -> str | None:
     return None
 
 
-def _low_confidence(m, layer, parts) -> bool:
+def _low_confidence(m, layer, parts) -> list[int]:
+    """The pages the quotation's low-confidence OCR words are on (none: it has none)."""
     obj = m.objects.get_object(layer.id)
     if not obj.get("geometry"):
-        return False
+        return []
+    pages = set()
     for g in m.objects.get_jsonl(obj["geometry"]):
         if "conf" in g and g["conf"] < LOW_CONFIDENCE and any(g["start"] < p.end and p.start < g["end"] for p in parts):
-            return True
-    return False
+            pages.add(g.get("page"))
+    return sorted(x for x in pages if x is not None) or ([1] if pages else [])
 
 
 # -- quotation pieces ------------------------------------------------------------------------

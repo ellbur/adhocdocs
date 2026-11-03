@@ -122,7 +122,21 @@ def adhoc(argv=None):
     s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
                    help="which .dat column a field is, when it isn't recognized (e.g. begin=\"Prod Beg\")")
     s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")
+    s.add_argument("--replaces", action="append", default=[], metavar="VOLUME",
+                   help="this volume replaces a received one (say, after a clawback): its documents supersede "
+                        "the ones there that begin at the same Bates numbers")
     s.add_argument("--check", action="store_true", help="read the volume and report; ingest nothing")
+    s = sub.add_parser("overlay-production", help="apply an overlay: a later .dat correcting received documents' fields",
+                       description="Apply an overlay load file to documents already received: each record is "
+                                   "matched by its begin Bates number (else its control number), and its non-blank "
+                                   "fields replace or add to the document's. Files, families and custodians aren't "
+                                   "changed. Run with --check first. See RECEIVED.md.")
+    s.add_argument("dat", help="the overlay load file (.dat, .csv or tab-separated)")
+    s.add_argument("--volume", help="the received volume it is for (needed only when two volumes have the same numbers)")
+    s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
+                   help="which column a field is, when it isn't recognized")
+    s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")
+    s.add_argument("--check", action="store_true", help="report what would change; change nothing")
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
@@ -330,7 +344,7 @@ def adhoc(argv=None):
             ingest_manifest(m, a.manifest, report)
         else:
             ingest_paths(m, a.paths, a.custodian, a.collection, report)
-    elif a.cmd == "ingest-production":
+    elif a.cmd in ("ingest-production", "overlay-production"):
         from . import received
         overrides = {}
         for x in a.map:
@@ -338,14 +352,17 @@ def adhoc(argv=None):
                 raise ValueError(f"--map {x}: give FIELD=COLUMN")
             k, v = x.split("=", 1)
             overrides[k.strip()] = v.strip()
+        if a.cmd == "overlay-production":
+            out(received.overlay(m, a.dat, a.volume, overrides, a.day_first, check=a.check))
+            return
         kw = {"dat": a.dat, "opt": a.opt, "overrides": overrides, "day_first": a.day_first}
         if a.check:
-            out(received.check(a.volume, **kw))
+            out(received.check(a.volume, m=m, name=a.name, replaces=a.replaces, **kw))
             return
         if not a.party:
             raise ValueError("--party: who produced this volume (or --check to look first)")
         gui.remember(m.root)
-        r = received.ingest(m, a.volume, a.party, a.name, **kw)
+        r = received.ingest(m, a.volume, a.party, a.name, replaces=a.replaces, **kw)
         r.pop("docs")
         out(r)
     elif a.cmd == "withdraw":

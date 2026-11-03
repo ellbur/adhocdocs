@@ -282,9 +282,25 @@ def quote_html(page: Page, r: Resolved, block: bool, layout: str, styles=()) -> 
     classes = "adhoc-quote" + (" adhoc-rich" if styles else "") + (" adhoc-low-confidence" if r.low_confidence else "") + (" adhoc-reanchored" if r.status == "re-anchored" else "")
     body = "".join(out)
     href = _loc(r, r.parts[0].start, r.parts[-1].end)
+    check = ocr_check_html(r, href) if getattr(page, "review", True) else ""
     if block:
-        return f'<blockquote class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a></blockquote>'
-    return f'<q class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a></q>'
+        return (f'<blockquote class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a>'
+                f'{" " + check if check else ""}</blockquote>')
+    return f'<q class="{classes}" data-ref="{r.id}" data-status="{href}"><a href="loc:{href}">{body}</a></q>' + \
+        (" " + check if check else "")
+
+
+def ocr_check_html(r: Resolved, href: str) -> str:
+    """For a quotation with low-confidence OCR words: a marker that opens the
+    quotation on the page image (``data-mode="page"``), to compare the text
+    with what the page shows. Only in pages for review, not exports."""
+    if not r.low_confidence:
+        return ""
+    ps = r.low_confidence_pages
+    where = (f"page {ps[0]}" if len(ps) == 1 else f"pages {ps[0]}–{ps[-1]}") if ps else "the page"
+    return (f'<a class="adhoc-mark adhoc-ocr-check" href="loc:{href}" data-mode="page" '
+            f'title="Some of this text was read by OCR with low confidence: compare it with the page image">'
+            f'[check {where}]</a>')
 
 
 def _sel_loc(r: Resolved) -> str:
@@ -405,11 +421,13 @@ def layout_of(d, r, page=None) -> str:
     return "flow"
 
 
-def render(page: Page, standalone=True, images="data") -> tuple[str, list[dict]]:
+def render(page: Page, standalone=True, images="data", review=True) -> tuple[str, list[dict]]:
     """Static HTML for a page pane (or a browser), and the check results.
     Pictures of pages are inline (``images="data"``) or, for a bundle the
-    viewer can show, files named in ``page.images`` (``"files"``)."""
-    page.images = {}
+    viewer can show, files named in ``page.images`` (``"files"``).
+    ``review``: with the markers for checking quotations against their
+    pages (an export leaves them out)."""
+    page.images, page.review = {}, review
     source, fills = prepare(page)
     footnotes = []
     body = markdown().render(source)
@@ -481,6 +499,7 @@ blockquote.adhoc-quote {{ margin: 1em 2em; }}
 .adhoc-cite {{ margin: -0.5em 2em 1em; }}
 .adhoc-reanchored {{ outline: 1px dashed #c90; }}
 .adhoc-low-confidence {{ text-decoration: underline wavy #c90; }}
+.adhoc-ocr-check {{ font-size: 0.8em; color: #a60; text-decoration: none; white-space: nowrap; }}
 .adhoc-broken {{ color: #fff; background: #c00; padding: 0 .3em; }}
 figure.adhoc-quote {{ margin: 1em 2em; }}
 figure.adhoc-image img {{ max-width: 100%; border: 1px solid #ccc; display: block; margin-bottom: .3em; }}
@@ -564,12 +583,12 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
         raise PageError(f"not exporting: re-anchored reference(s) {', '.join(moved)}; "
                         "run page refs update, or pass --allow-reanchored")
     out = Path(out)
-    html_doc, _ = render(page, standalone=True)
+    html_doc, _ = render(page, standalone=True, review=False)
     if fmt == "html":
         out.write_text(html_doc, encoding="utf-8", newline="\n")
     elif fmt == "pdf":
         import pymupdf
-        html_doc, _ = render(page, standalone=True, images="files")
+        html_doc, _ = render(page, standalone=True, images="files", review=False)
         archive = pymupdf.Archive()
         for name, png in page.images.items():
             archive.add((png, name))
