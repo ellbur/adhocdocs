@@ -134,6 +134,8 @@ body.drag-h { cursor: row-resize; }
 .pane-head .fetchnote a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .chip { border-radius: 9px; padding: 0 7px; font-size: 11px; border: 1px solid currentColor; }
 .chip.by-claude { border-style: dashed; }
+/* carried over from a superseded document, not yet confirmed: it may not reflect the replacement */
+.chip.carried { background: var(--warn-bg); outline: 1px dotted var(--warn-line); outline-offset: 1px; cursor: pointer; }
 .pane-links { padding: 3px 10px; color: var(--muted); border-bottom: 1px solid var(--line); flex: none; font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .pane-links .grp { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
 .pane-links a { color: var(--accent); cursor: pointer; }
@@ -160,6 +162,8 @@ body.drag-h { cursor: row-resize; }
 .pane-side:empty { display: none; }
 .pane-side .ann { border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; margin-bottom: 6px; cursor: pointer; background: var(--pane); }
 .pane-side .ann:hover { border-color: var(--accent); }
+.pane-side .ann.carried { border-left: 4px solid var(--warn-line); }
+.pane-side .ann .carried-note { color: var(--warn-ink); background: var(--warn-bg); font-size: 11px; padding: 2px 4px; margin: 3px 0; border-radius: 3px; }
 .pane-side .ann a { color: var(--accent); cursor: pointer; font-size: 11px; }
 .pane-side .ann .who { color: var(--muted); font-size: 11px; }
 .pane-side .ann.reply { margin-left: 12px; }

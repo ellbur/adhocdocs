@@ -272,3 +272,29 @@ def test_what_arrives_late_about_a_purged_document(m, tmp_path):
         assert not any(b"ATTORNEY" in p.read_bytes() for p in (b2.root / "store/objects").rglob("*") if p.is_file())
     finally:
         srv.stop()
+
+
+def test_a_purge_hides_what_a_carried_over_annotation_says_of_its_old_document(m):
+    """Tags carried over from a superseded document (annotations.carry_over)
+    name the old one and quote it: a purge of the old one hides that, and
+    the carried tag stays on the replacement."""
+    from adhocdocs import locators
+    kid = m.state.children[m.bad][0]
+    layer = m.state.primary_layer(m.state.documents[kid])
+    text = m.objects.get_text(layer.text)
+    s = text.index("pallet")
+    annotations.write(m, ALICE, {"op": "tag", "tag": "hot", "target": locators.char_locator(kid, layer.id, text, s, s + 6)})
+    m.state.apply(m.logs["store"].append(op="supersede", old=kid, new=m.keep, reason="replaced"))
+    c = annotations.carry_over(m, [(kid, m.keep)], ALICE, "a test")
+    (carried,) = c["carried"]
+    assert carried["target"]["doc"] == m.keep and carried["target"]["quote"]["exact"] == "pallet"
+    purge.purge(Matter(m.root), ALICE, [m.bad], "clawback")
+    m2 = Matter(m.root)
+    logs = b"".join(p.read_bytes() for p in (m2.root / "annotations/logs").glob("*"))
+    assert b"attorney" not in logs and b"privileged" not in logs
+    ann = annotations.Annotations.load(m2)
+    kept = [a for a in ann.applications() if a.get("carried")]
+    assert len(kept) == 1 and kept[0]["target"]["doc"] == m.keep and kept[0]["carried"]["from"] == {"doc": kid}
+    from adhocdocs.signing import check_chain, public_key
+    check_chain(None, list(m2.annotation_log.log_for(m2.origin).events()), public_key(m2.identity.public()),
+                may_hide=lambda e: purge.may_hide(e, {m.bad, *m.state.children[m.bad]}))

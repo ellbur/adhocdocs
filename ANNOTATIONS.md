@@ -47,6 +47,19 @@ delete tags and notes directly. Everything else stays programmable.
 - **For filters** (`search tag:hot`, `--tag`, `ann find`), a document has a
   tag if it, or any range in it, does.
 
+## Carried over to a replacement
+
+When a received volume replaces another ([RECEIVED.md](RECEIVED.md)), the
+tags and notes on each superseded document are copied to its replacement.
+The copies are marked `carried`: where they came from (the old target),
+whose they were, and why. A mark means "this was about the old version,
+and may not reflect what changed". It stays until someone confirms it
+(`confirm-carried`, from the viewer or `ann confirm-carried`) or edits the
+note. The rules hold here too: Claude can't confirm the user's. Nobody can
+mark something carried through the viewer or the API; only the host-side
+ingest does. A purge of the old document hides what the mark quoted from
+it.
+
 ## Storage
 
 `annotations/logs/` holds append-only event logs, one per installation of

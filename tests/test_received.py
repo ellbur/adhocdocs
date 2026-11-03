@@ -317,9 +317,9 @@ def test_a_replacement_volume_supersedes(volume, m, tmp_path):
     assert {x["bates"] for x in r["would_supersede"]} == {"ACME000001", "ACME000004", "ACME000006"}
     assert r["not_replaced"] == ["ACME000007", "ACME000008"]
     with pytest.raises(ValueError, match="no received volume"):
-        received.ingest(m, new, "Acme Corp.", replaces=["ACME_VOL009"])
+        received.ingest(m, new, "Acme Corp.", replaces=["ACME_VOL009"], person="user:ann")
 
-    r = received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"])
+    r = received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"], person="user:ann")
     assert {x["bates"] for x in r["superseded"]} == {"ACME000001", "ACME000004", "ACME000006"}
     m = Matter(m.root)
     assert m.state.follow(old["ACME000006"]) == r["docs"]["ACME000006"]
@@ -340,3 +340,63 @@ def test_overlay_cli(volume, m, tmp_path):
     r = run()
     assert r.returncode == 0 and json.loads(r.stdout)["applied"]
     assert json.loads(run().stdout)["changed"] == 0
+
+
+def test_a_replacement_carries_tags_and_notes_over_marked(volume, m, tmp_path):
+    import shutil
+    from adhocdocs import annotations as A
+    old = received.ingest(m, volume, "Acme Corp.")["docs"]
+    m = Matter(m.root)
+    csv = old["ACME000006"]
+    layer = m.state.primary_layer(m.state.documents[csv])
+    text = m.objects.get_text(layer.text)
+    rng = lambda w: A.normalize_target(m, locators.char_locator(csv, layer.id, text, text.index(w), text.index(w) + len(w)))
+    for tag, by in (("hot", "user:ann"), ("check-privilege", "claude"), ("key", "user:ann")):
+        A.write(m, by, {"op": "define-tag", "tag": tag})
+    A.write(m, "user:ann", {"op": "tag", "tag": "hot", "target": {"doc": csv}})
+    A.write(m, "claude", {"op": "tag", "tag": "check-privilege", "target": {"doc": csv}})
+    A.write(m, "user:ann", {"op": "tag", "tag": "key", "target": rng("month")})
+    A.write(m, "user:ann", {"op": "tag", "tag": "key", "target": rng("1200")})          # to be redacted
+    (n1,) = A.write(m, "user:ann", {"op": "note", "target": {"doc": csv}, "body": "The March total."})
+    A.write(m, "claude", {"op": "reply", "parent": n1["note"], "body": "It matches the invoice."})
+    A.write(m, "user:ann", {"op": "note", "target": rng("1200"), "body": "Why 1200?"})
+
+    new = tmp_path / "ACME_VOL001R"
+    shutil.copytree(volume, new)
+    (new / "natives" / "ACME000006.csv").write_text("month,amount\nMarch,[REDACTED]\n")
+    dat = new / "DATA" / "ACME_VOL001.dat"
+    dat.write_bytes(b"\r\n".join(l for l in dat.read_bytes().split(b"\r\n") if b"0" * 32 not in l))
+    with pytest.raises(ValueError, match="--user"):
+        received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"])
+    r = received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"], person="user:bo")
+    rep = r["docs"]["ACME000006"]
+    assert [x["why"] for x in r["annotations_not_carried"]] == ["the tagged passage isn't in the replacement"]
+
+    an = A.Annotations.load(Matter(m.root))
+    tags = {(a["tag"], json.dumps(a["target"].get("select"))): a for a in an.applications() if a["target"]["doc"] == rep}
+    hot, flag = tags[("hot", "null")], tags[("check-privilege", "null")]
+    # a person's is carried as the person who carried it, keeping whose it was; Claude's stays Claude's
+    assert (hot["by"], hot["carried"]["by"]) == ("user:bo", "user:ann") and hot["carried"]["from"] == {"doc": csv}
+    assert flag["by"] == "claude" and "ACME_VOL001R" in flag["carried"]["reason"]
+    key = next(a for (t, _), a in tags.items() if t == "key")
+    assert key["target"]["quote"]["exact"] == "month" and key["carried"]
+    notes = [n for n in an.notes.values() if n["target"]["doc"] == rep]
+    by_body = {n["body"]: n for n in notes}
+    assert by_body["It matches the invoice."]["parent"] == by_body["The March total."]["note"]     # still a thread
+    assert by_body["Why 1200?"]["carried"]["unplaced"] and by_body["Why 1200?"]["target"] == {"doc": rep}
+    # the old document keeps its own
+    assert any(a["target"]["doc"] == csv and a["tag"] == "hot" and not a.get("carried") for a in an.applications())
+
+    # confirming: Claude can confirm its own, not the user's; the user can confirm anything
+    m = Matter(m.root)
+    with pytest.raises(A.Refused, match="Claude can't"):
+        A.write(m, "claude", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    A.write(m, "claude", {"op": "confirm-carried", "tag": "check-privilege", "target": {"doc": rep}})
+    A.write(m, "user:bo", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    with pytest.raises(A.Refused, match="nothing carried"):
+        A.write(m, "user:bo", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    A.write(m, "user:bo", {"op": "edit-note", "note": by_body["Why 1200?"]["note"], "body": "Redacted now."})
+    an = A.Annotations.load(m)
+    left = [a for a in an.applications() if a.get("carried")] + [n for n in an.notes.values() if n.get("carried")]
+    assert sorted(x.get("tag") or x["body"] for x in left) == ["It matches the invoice.", "The March total.", "key"]
+    assert next(a for a in an.applications() if a["tag"] == "hot" and a["target"] == {"doc": rep})["confirmed_by"] == "user:bo"

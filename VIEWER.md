@@ -67,7 +67,7 @@ open source.
 
 | Pane | Shows |
 |---|---|
-| `document` | a document in page, flow (its presentation), text, grid (spreadsheets) or hex mode (the original's bytes), with mode switches (and layer switches, when there's more than one layer), tag chips, a side panel of highlights, range tags and notes, family and duplicate links, and a ⋯ menu for downloads and hex mode |
+| `document` | a document in page, flow (its presentation), text, grid (spreadsheets) or hex mode (the original's bytes), with mode switches (and layer switches, when there's more than one layer), tag chips, a side panel of highlights, range tags and notes (those carried over from a document a replacement superseded are marked `↪`, with a confirm link: [RECEIVED.md](RECEIVED.md)), family and duplicate links, and a ⋯ menu for downloads and hex mode |
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
 | `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |

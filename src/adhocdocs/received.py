@@ -450,12 +450,14 @@ def _hash_problem(v, r) -> str | None:
 
 
 def ingest(m: Matter, root, party: str, name: str | None = None, report=None, replaces: list[str] | None = None,
-           **kw) -> dict:
+           person: str | None = None, **kw) -> dict:
     """Ingest a volume: one document per record, parents before their
     attachments. Returns :func:`summary` plus ``docs`` (Bates -> document)."""
     from .ingest import _ingest, ingest_file
     if not party or not party.strip():
         raise ValueError("--party: who produced this volume")
+    if replaces and not person:
+        raise ValueError("carrying the old documents' tags and notes over is a person's: say who (--user)")
     v = read_volume(root, **kw)
     volume = name or v["root"].name
     cols = v["columns"]
@@ -497,16 +499,18 @@ def ingest(m: Matter, root, party: str, name: str | None = None, report=None, re
         docs[r["begin"]] = doc
     _forget_cache()
     out = {**summary(v), "volume": volume, "party": party, "ingested": len(docs), "docs": docs}
-    out.update(_replacing(m, v, volume, replaces, docs))
+    out.update(_replacing(m, v, volume, replaces, docs, person))
     _forget_cache()
     return out
 
 
-def _replacing(m: Matter, v: dict, volume: str, replaces: list[str] | None, docs: dict | None) -> dict:
+def _replacing(m: Matter, v: dict, volume: str, replaces: list[str] | None, docs: dict | None,
+               person: str | None = None) -> dict:
     """A replacement volume's documents supersede those in ``replaces`` that
-    begin at the same Bates numbers. Without ``replaces``, numbers another
-    volume already has are only reported. ``docs`` None: say what would be
-    done (``--check``)."""
+    begin at the same Bates numbers, and the old ones' tags and notes are
+    carried over to them, marked (annotations.carry_over, as ``person``).
+    Without ``replaces``, numbers another volume already has are only
+    reported. ``docs`` None: say what would be done (``--check``)."""
     begins = {r["begin"] for r in v["records"] if r["as"]}
     others: dict[str, list[dict]] = {}
     for p in produced(m):
@@ -537,8 +541,15 @@ def _replacing(m: Matter, v: dict, volume: str, replaces: list[str] | None, docs
             item["new"] = new
         out.append(item)
     left = sorted({p["begin"] for p in old if p["volume"] in replaces} - {i["bates"] for i in out})
-    return {"superseded" if docs is not None else "would_supersede": out,
-            "not_replaced": left, "problems": v["problems"]}
+    res = {"superseded" if docs is not None else "would_supersede": out, "not_replaced": left, "problems": v["problems"]}
+    pairs = [(i["old"], i["new"]) for i in out if i.get("new")]
+    if pairs:
+        from . import annotations
+        if not person:
+            raise ValueError("carrying the old documents' tags and notes over is a person's: say who (--user)")
+        c = annotations.carry_over(m, pairs, person, f"received volume {volume} replaced {', '.join(replaces)}")
+        res["annotations_carried"], res["annotations_not_carried"] = c["carried"], c["not_carried"]
+    return res
 
 
 # -- overlays --------------------------------------------------------------------------------------

@@ -202,8 +202,26 @@ superseded.
 Without `--replaces`, numbers another volume already has are reported, and
 both documents are kept.
 
+**Tags and notes come along, marked.** Each superseded document's tags and
+notes are copied to its replacement, marked *carried over*: they were
+judgments about the old version, and the replacement may differ (a
+redaction, a corrected page), so they might not hold for it. The viewer
+shows them apart (a `↪` chip, a flagged entry beside the document) until
+someone confirms them, which removes the mark. Editing a carried note
+confirms it too. `ann carried` lists the ones still marked, and `ann
+confirm-carried` confirms one ([ANNOTATIONS.md](ANNOTATIONS.md)).
+
+- A tag or note on a passage moves to where the passage's quote is found in
+  the replacement, as references do. A tagged passage the replacement
+  doesn't have (redacted, say) isn't carried; the result lists it under
+  `annotations_not_carried`. A note on one is carried to the whole
+  document, marked that its passage is gone.
+- Whose they are: a person's are carried as the person running the ingest
+  (`--user`, default `$USER`), since only an installation's own people
+  write from it, and the mark keeps whose it was. Claude's stay Claude's, so
+  a `check-privilege` flag stays a flag. The old document keeps its own.
+- Replies stay under the notes they answer.
+
 ## Not built yet
 
 - IPRO `.lfp` image load files, EDRM XML, and other formats than these.
-- Tags and notes on a superseded document stay on it; they aren't copied
-  to its replacement.
