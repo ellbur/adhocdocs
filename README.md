@@ -208,6 +208,11 @@ to try on the sample matter:
 - *"Who is José Ibáñez? Show me every document that mentions him."*
 - Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
 - *"Add the key people and companies in this dispute to the entities, with a line on each."*
+- *"Record who works for whom, who signed what, and who handled the delivery, as links with their evidence."* Then a hover card lists each entity's connections; click one to go on to the next entity.
+- *"Draw who is involved in which transactions."* Or: *"Draw Ames's connections, two steps out, with the documents they rest on."*
+- *"How is Voss connected to Kettering Freight? Show me the documents for each step."*
+- *"Which of the facts we've recorded have no document behind them?"*
+- *"Set up issues for delivery, damages and notice, and file the entities and notes under them."* Then press `F` in the viewer to see one issue at a time.
 - Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
 
 **Writing**
@@ -308,6 +313,8 @@ uv run analyze threads
 uv run analyze groups                   # near-duplicates and versions
 uv run analyze people                   # from email headers and names in the documents
 uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
+uv run graph path "Raymond Voss" "Rita Ames"   # how two entities connect, with the evidence for each step
+uv run graph export --format mermaid           # the entities and their links, for a diagram
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
 uv run page docs memo.md --list memo.list.jsonl            # the documents memo.md cites
@@ -339,6 +346,7 @@ data system-wide, put `eng.traineddata` in
 - [LISTS.md](LISTS.md): document lists and the list display
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
+- [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
 - [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents

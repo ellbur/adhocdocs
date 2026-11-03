@@ -2929,9 +2929,10 @@ const entityCard = {
     const rows = shown.map((l) => {
       const out = l.from === e.entity, other = entityById(out ? l.to : l.from);
       const ev = (l.see || [])[0];
-      return el("div", { class: "ec-link" + (inFacet("link", l.link) ? "" : " muted") + (ev ? "" : " bare"), title: l.summary || "" },
-        el("span", { class: "ec-rel" }, out ? l.rel : `${l.rel} ←`), " ",
-        other ? el("a", { class: "ec-ent", onclick: (x) => { x.stopPropagation(); this.showEntity(other.entity); } }, other.name) : "?",
+      const name = other ? el("a", { class: "ec-ent", onclick: (x) => { x.stopPropagation(); this.showEntity(other.entity); } }, other.name) : "?";
+      // read from this entity: "signed for Dock 4 delivery", or "Tri-County Freight Lines carried" (it)
+      return el("div", { class: "ec-link" + (inFacet("link", l.link) ? "" : " muted") + (ev ? "" : " bare"), title: linkSentence(l) + (l.summary ? "\n" + l.summary : "") },
+        ...(out ? [el("span", { class: "ec-rel" }, l.rel), " ", name] : [name, " ", el("span", { class: "ec-rel" }, l.rel)]),
         l.date ? el("span", { class: "ec-date" }, " " + l.date) : "",
         ev ? el("a", { class: "ec-ev", title: "Open the evidence", onclick: (x) => { x.stopPropagation(); this.hide(); pane?.highlight(ev, linkSentence(l)); } }, " evidence")
            : el("span", { class: "ec-ev none", title: "No document recorded for this link" }, " no evidence"));

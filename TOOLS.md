@@ -50,6 +50,9 @@ them.
   list`): [LISTS.md](LISTS.md). Search results are shown the same way.
 - **Timeline / chronology display.** *Built*, as a pane (`view timeline`):
   a list's items by date, in lanes ([LISTS.md](LISTS.md#the-timeline-display)).
+- **Relationship diagrams.** *Built*, as a pane (`view graph`): entities,
+  their links and the documents they rest on, laid out in columns
+  ([GRAPH.md](GRAPH.md#diagrams)).
 
 ## Search and indexing
 
@@ -84,6 +87,14 @@ them.
   click. It also suggests names found by rules at indexing (`entities`
   index: people, organizations, defined terms with what they mean, document
   numbers). `ann entities`, `ann suggestions`, `ann define-entity`.
+- **Links, the graph, and facets.** *Built*: [GRAPH.md](GRAPH.md). Links
+  join two entities with a relation and its evidence (`ann link`), so the
+  entity list is a graph: the viewer's cards show each entity's connections
+  and move from one to the next, a document's side panel lists the facts
+  that rest on it, `graph` walks it (`show`, `around`, `path`, `evidence`,
+  `unsupported`, `export` as JSON, dot or Mermaid), and `view graph` draws
+  it. Facets are issues that entities, links, notes and tags are filed
+  under; the viewer shows one at a time (`F`).
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under

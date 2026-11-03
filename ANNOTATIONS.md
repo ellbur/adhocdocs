@@ -14,7 +14,10 @@ the basis (`ann flag-privilege`; see [TOOLS.md](TOOLS.md)).
 
 The annotation log also holds the **entity list** (known people,
 organizations, terms… with a summary and a recap), under the same
-authorship rules, field by field: [ENTITIES.md](ENTITIES.md).
+authorship rules, field by field: [ENTITIES.md](ENTITIES.md); the **links**
+between entities; and **facets**, issues that entities, links, notes and
+tags are filed under so the viewer can show one issue at a time
+([GRAPH.md](GRAPH.md)).
 
 ## Editing in the GUI: an exception to Principle 1
 

@@ -2255,7 +2255,7 @@ the links between them (`ann link`), and the documents they rest on.
   graph path A B [--max 4]           how two things connect, hop by hop, with the evidence for each
   graph evidence REF                 for a document: the links and entities that rest on it;
                                      for an entity or link: the documents it rests on
-  graph unsupported [--facet F]      links and entities with no evidence recorded
+  graph unsupported [--facet F]      links and events with no evidence recorded (--all: any entity)
   graph export [--format json|dot|mermaid] [-o FILE]
                                      the whole graph (or --around REF), for your own code
 
@@ -2314,8 +2314,9 @@ def graph(argv=None):
     _graph_opts(s)
     s = sub.add_parser("evidence", help="what rests on a document, or what an entity or link rests on")
     s.add_argument("ref")
-    s = sub.add_parser("unsupported", help="links and entities with no evidence recorded")
+    s = sub.add_parser("unsupported", help="links and events with no evidence recorded")
     s.add_argument("--facet")
+    s.add_argument("--all", action="store_true", help="every entity without --see, not only events")
     s = sub.add_parser("export", help="the graph as JSON (nodes, edges), Graphviz dot, or Mermaid")
     s.add_argument("--format", choices=["json", "dot", "mermaid"], default="json")
     s.add_argument("--around", action="append", help="only around these (repeatable)")
@@ -2328,7 +2329,7 @@ def graph(argv=None):
     ann = annotations.Annotations.load(m)
 
     if a.cmd == "unsupported":
-        for row in graphmod.unsupported(ann, a.facet):
+        for row in graphmod.unsupported(ann, a.facet, a.all):
             out(row)
         return
     if a.cmd == "evidence":

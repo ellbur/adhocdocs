@@ -381,16 +381,18 @@ def describe_step(g: Graph, s: dict) -> dict:
     return out
 
 
-def unsupported(ann: Annotations, facet=None) -> list[dict]:
-    """Links and entities that rest on nothing: no ``see``. The facts that
-    still need a document, or a word to the user that there is none."""
+def unsupported(ann: Annotations, facet=None, all_entities=False) -> list[dict]:
+    """Links and events that rest on nothing: no ``see``. The facts that
+    still need a document, or a word to the user that there is none.
+    People and organizations are shown by their mentions; with
+    ``all_entities``, every entity without a ``see`` is listed too."""
     out = []
     names = {i: e["name"] for i, e in ann.entities.items()}
     for ln in ann.links.values():
         if not ln.get("see") and ann.in_facet(facet, {"link": ln["link"]}):
             out.append({"link": ln["link"], "says": f"{names.get(ln['from'])} {ln['rel']} {names.get(ln['to'])}", "by": ln["by"]})
     for e in ann.entities.values():
-        if not e.get("see") and ann.in_facet(facet, {"entity": e["entity"]}):
+        if not e.get("see") and ann.in_facet(facet, {"entity": e["entity"]}) and (all_entities or e["kind"] == "event"):
             out.append({"entity": e["entity"], "name": e["name"], "kind": e["kind"], "by": e["by"]})
     return out
 
@@ -402,7 +404,7 @@ def unsupported(ann: Annotations, facet=None) -> list[dict]:
 # column is ordered to cross fewer edges (barycenters, a few sweeps).
 
 NODE_H, ROW_GAP, WAY_H, COL_GAP, PAD = 32, 14, 8, 150, 24
-MIN_W, MAX_W, CHAR_W = 110, 290, 6.9
+MIN_W, MAX_W, CHAR_W, SUB_W = 110, 290, 7.2, 5.9
 
 
 def _columns(g: Graph, layout: str) -> dict[str, int]:
@@ -424,8 +426,8 @@ def _columns(g: Graph, layout: str) -> dict[str, int]:
 
 
 def _width(n: dict) -> float:
-    text = max(len(n["label"]), len(str(_sub(n))) * 0.85)
-    return max(MIN_W, min(MAX_W + (100 if n["type"] == "link" else 0), 18 + text * CHAR_W))
+    text = max(len(n["label"]) * CHAR_W, len(_sub(n)) * SUB_W)
+    return max(MIN_W, min(MAX_W + (100 if n["type"] == "link" else 0), 18 + text))
 
 
 def _sub(n: dict) -> str:
@@ -595,7 +597,7 @@ def diagram_html(m: Matter, g: Graph, title: str = "Relationships", layout: str 
         out.append(f'<g class="{cls}"{attrs} transform="translate({x:.0f},{y:.0f})"><title>{esc(_node_tip(n))}</title>'
                    f'<rect width="{w:.0f}" height="{h}" rx="{4 if n["type"] != "link" else 15}"/>'
                    f'<text x="8" y="14" class="adhoc-graph-name">{esc(_trim(n["label"], chars))}</text>'
-                   f'<text x="8" y="26" class="adhoc-graph-sub">{esc(_trim(_sub(n), int(chars * 1.15)))}</text></g>')
+                   f'<text x="8" y="26" class="adhoc-graph-sub">{esc(_trim(_sub(n), int((w - 14) / SUB_W)))}</text></g>')
     # labels: no two in the same gap on top of each other
     labels.sort(key=lambda l: (round(l[0] / 40), l[1]))
     for k, lab in enumerate(labels):
@@ -630,7 +632,8 @@ def _node_tip(n: dict) -> str:
     elif n["type"] == "link":
         if n.get("summary"):
             bits.append(n["summary"])
-        bits.append(f"{len(n.get('see') or [])} pieces of evidence" if n.get("see") else "no evidence recorded")
+        k = len(n.get("see") or [])
+        bits.append(("1 piece of evidence" if k == 1 else f"{k} pieces of evidence") if k else "no evidence recorded")
     else:
         bits.append(" · ".join(str(x) for x in (n.get("date"), n.get("kind")) if x))
     return "\n".join(b for b in bits if b)

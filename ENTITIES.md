@@ -142,6 +142,13 @@ ann edit-entity REF --recap …           remember what you told the user
 view selection                          the selection, with "entity" when it is one
 ```
 
+## Links between entities
+
+Entities are joined by links (a relation, with its evidence), and filed
+under issues (facets): [GRAPH.md](GRAPH.md). A card lists the entity's
+connections, and names in its summary that are known entities can be
+clicked to go to theirs.
+
 ## Not built yet
 
 - Joining suggestions across spellings ("T. Kettering", "Mr. Kettering",
