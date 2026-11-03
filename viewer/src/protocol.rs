@@ -256,7 +256,9 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
             "tag" => {
                 let k = key(&ev["target"]) + &tag;
                 tags.retain(|(x, _)| *x != k);
-                tags.push((k, json!({"tag": tag, "target": ev["target"], "by": ev["author"], "at": ev["at"]})));
+                let mut t = json!({"tag": tag, "target": ev["target"], "by": ev["author"], "at": ev["at"]});
+                if ev["carried"].is_object() { t["carried"] = ev["carried"].clone(); }
+                tags.push((k, t));
             }
             "untag" => {
                 let k = key(&ev["target"]) + &tag;
@@ -267,13 +269,31 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone())
                         .unwrap_or_else(|| ev["target"].clone())
                 } else { ev["target"].clone() };
-                notes.push((ev["note"].as_str().unwrap_or("").to_string(), json!({"note": ev["note"], "parent": ev["parent"],
-                    "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]})));
+                let mut n = json!({"note": ev["note"], "parent": ev["parent"],
+                    "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]});
+                if ev["carried"].is_object() { n["carried"] = ev["carried"].clone(); }
+                notes.push((ev["note"].as_str().unwrap_or("").to_string(), n));
             }
             "edit-note" => {
                 if let Some((_, n)) = notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()) {
                     n["body"] = ev["body"].clone();
                     n["edited_at"] = ev["at"].clone();
+                    if let Some(o) = n.as_object_mut() { o.remove("carried"); }
+                }
+            }
+            // a carried-over tag or note looked at and kept (annotations.py: carry_over)
+            "confirm-carried" => {
+                let item = if ev["note"].is_string() {
+                    notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()).map(|(_, n)| n)
+                } else {
+                    let k = key(&ev["target"]) + &tag;
+                    tags.iter_mut().find(|(x, _)| *x == k).map(|(_, t)| t)
+                };
+                if let Some(o) = item.and_then(|x| x.as_object_mut()) {
+                    if o.remove("carried").is_some() {
+                        o.insert("confirmed_by".into(), ev["author"].clone());
+                        o.insert("confirmed_at".into(), ev["at"].clone());
+                    }
                 }
             }
             "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
@@ -730,6 +750,25 @@ mod tests {
         assert_eq!(st["definitions"][0]["hotkey"], serde_json::Value::Null);
         std::fs::write(dir.join("annotations/hotkeys.json"), r#"{"v": 1, "keys": {"hot": "h"}}"#).unwrap();
         assert_eq!(super::annotation_state(&dir)["definitions"][0]["hotkey"], "h");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn carried_annotations_keep_their_mark_until_confirmed() {
+        let dir = std::env::temp_dir().join(format!("adhoc-carried-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let carried = serde_json::json!({"from": {"doc": "old"}, "by": "user:b", "at": "t0", "reason": "r"});
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-tag", "tag": "hot", "author": "user:a"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "tag", "tag": "hot", "author": "user:a", "target": {"doc": "new"}, "carried": carried}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "note", "note": "n_1", "body": "b", "author": "user:a", "target": {"doc": "new"}, "carried": carried}),
+            serde_json::json!({"id": "ev_4", "at": "t2", "op": "confirm-carried", "tag": "hot", "author": "user:a", "target": {"doc": "new"}}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        assert!(st["tags"][0]["carried"].is_null() && st["tags"][0]["confirmed_by"] == "user:a");
+        assert_eq!(st["notes"][0]["carried"]["by"], "user:b");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -180,3 +180,32 @@ def test_ref_from_words(m, tmp_path):
         pages.find_words(m, "past-due", ["THE SHIPMENT was never received"])
     with pytest.raises(pages.PageError, match="times in"):
         pages.find_words(m, "past-due", ["the"])
+
+
+def test_low_confidence_ocr_gets_a_marker_to_the_page_image(m, tmp_path, monkeypatch):
+    """A quotation with low-confidence OCR words links to its page image
+    (data-mode="page") for review; exports leave the marker out."""
+    loc, _, _ = loc_of(m, MEMO, "Bellwether")
+    monkeypatch.setattr(literate, "_low_confidence", lambda m, layer, parts: [2])
+    p = write_page(tmp_path, "It says :q{#w}.\n\n::q{#w}\n", [{"id": "w", **loc}])
+    html, results = pages.render(pages.Page(m, p))
+    assert results[0]["low_confidence"]
+    assert html.count('data-mode="page"') == 2 and "[check page 2]" in html
+    assert 'class="adhoc-mark adhoc-ocr-check" href="loc:' in html
+    res = pages.export(pages.Page(m, p), "html", tmp_path / "out.html")
+    out = Path(res["output"]).read_text(encoding="utf-8")
+    assert "[check page" not in out and "data-mode" not in out and "adhoc-low-confidence" in out
+
+
+def test_low_confidence_pages():
+    class Objects:
+        def get_object(self, h):
+            return {"geometry": "g"}
+        def get_jsonl(self, h):
+            return [{"start": 0, "end": 4, "page": 1, "conf": 0.9}, {"start": 5, "end": 9, "page": 2, "conf": 0.3},
+                    {"start": 10, "end": 14, "page": 3, "conf": 0.2}]
+    m = type("M", (), {"objects": Objects()})()
+    layer = type("L", (), {"id": "x"})()
+    P = lambda s, e: type("P", (), {"start": s, "end": e})()
+    assert literate._low_confidence(m, layer, [P(0, 4)]) == []
+    assert literate._low_confidence(m, layer, [P(0, 12)]) == [2, 3]

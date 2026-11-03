@@ -141,6 +141,10 @@ def redact(ev: dict, docs: set) -> dict | None:
         out = {k: (v if k in KEEP else hide(v)) for k, v in ev.items() if k != "target"}
         out["target"] = {k: (v if k == "doc" else hide(v)) for k, v in t.items()}
         return out
+    c = ev.get("carried")
+    if isinstance(c, dict) and _doc_of(c.get("from")) in docs:
+        # carried over from a purged document (annotations.carry_over): where from, but not what it said
+        return {**ev, "carried": {**c, "from": {k: (v if k == "doc" else hide(v)) for k, v in c["from"].items()}}}
     see = ev.get("see")
     if isinstance(see, list) and any(_doc_of(x) in docs for x in see):
         return {**ev, "see": [{k: (v if k == "doc" else hide(v)) for k, v in x.items()} if _doc_of(x) in docs else x
@@ -165,7 +169,12 @@ def may_hide(ev: dict, docs: set) -> bool:
                 return False
         return True
     for k, v in ev.items():
-        if k == "see" and isinstance(v, list):
+        if k == "carried" and isinstance(v, dict) and has_hidden(v):
+            f = v.get("from")
+            if not (isinstance(f, dict) and _doc_of(f) in docs and all(is_hidden(y) or not has_hidden(y) for y in f.values())
+                    and not any(has_hidden(y) for x, y in v.items() if x != "from")):
+                return False
+        elif k == "see" and isinstance(v, list):
             for x in v:
                 if has_hidden(x) and not (isinstance(x, dict) and _doc_of(x) in docs
                                           and all(is_hidden(y) or not has_hidden(y) for y in x.values())):
@@ -184,6 +193,11 @@ def reveal(ev: dict) -> dict | None:
     t = ev.get("target")
     if isinstance(t, dict) and any(is_hidden(x) for x in t.values()) or any(is_hidden(v) for v in ev.values()):
         return None
+    if isinstance(ev.get("carried"), dict) and has_hidden(ev["carried"]):
+        c = ev["carried"]
+        ev = {**ev, "carried": {**c, "from": {k: v for k, v in c["from"].items() if not has_hidden(v)}}}
+        if not has_hidden(ev):
+            return ev
     if isinstance(ev.get("see"), list):
         return {**ev, "see": [x for x in ev["see"] if not has_hidden(x)]}
     return None

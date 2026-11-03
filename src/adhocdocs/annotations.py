@@ -14,6 +14,8 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 ``reply``          ``note`` (new ID), ``parent`` (a note ID), ``body``
 ``edit-note``      ``note``, ``body``
 ``delete-note``    ``note``
+``confirm-carried`` ``tag`` and ``target``, or ``note``: a carried-over tag or
+                   note has been looked at and stands; its mark goes
 ``define-entity``  ``entity`` (new ID), ``name``, and optional ``kind``,
                    ``aliases``, ``summary``, ``recap``, ``see`` (targets),
                    ``date`` (an event's: ``YYYY-MM-DD``, ``YYYY-MM`` or ``YYYY``)
@@ -37,6 +39,13 @@ Authorship comes from the write path, never from the request: the viewer
 writes as ``user:<id>``, and the annotation API (:mod:`adhocdocs.annapi`),
 the only write path from the container, writes as ``claude``. The rules in
 :meth:`Annotations.check` keep Claude from changing the user's work.
+
+A ``tag``, ``note`` or ``reply`` may carry ``carried``: it was copied from a
+document that a replacement superseded (:func:`carry_over`). ``carried``
+says from where (``from``, the old target), whose it was (``by``, ``at``,
+``event`` or ``note``) and why (``reason``), plus ``unplaced`` for a note on
+a passage the replacement doesn't have. The mark stays until someone
+confirms it (``confirm-carried``) or edits the note.
 """
 
 import json
@@ -208,6 +217,8 @@ class Annotations:
             return [ev]
         if op == "delete-note" and ev["note"] not in self.notes:
             return []                   # deleted twice
+        if op == "confirm-carried" and self.carried_item(ev) is None:
+            return []                   # confirmed twice, or gone
         if op == "delete-entity" and ev["entity"] not in self.entities:
             return []
         if op == "edit-entity" and ev.get("remove_aliases") and ev["entity"] in self.entities:
@@ -244,7 +255,8 @@ class Annotations:
         elif op == "tag":
             self.tags.setdefault(target_key(ev["target"]), {})[ev["tag"]] = {
                 "tag": ev["tag"], "target": ev["target"], "by": ev["author"], "at": ev["at"], "event": ev["id"],
-                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {}),
+                **({"carried": ev["carried"]} if ev.get("carried") else {})}
         elif op == "untag":
             self.tags.get(target_key(ev["target"]), {}).pop(ev["tag"], None)
         elif op in ("note", "reply"):
@@ -252,11 +264,18 @@ class Annotations:
             self.notes[ev["note"]] = {
                 "note": ev["note"], "target": parent["target"] if parent else ev["target"],
                 "parent": ev.get("parent"), "body": ev["body"], "by": ev["author"], "at": ev["at"],
-                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {}),
+                **({"carried": ev["carried"]} if ev.get("carried") else {})}
         elif op == "edit-note":
             n = self.notes.get(ev["note"])
             if n:
                 n.update(body=ev["body"], edited_at=ev["at"], edited_by=ev["author"])
+                n.pop("carried", None)          # edited: it says what its editor means now
+        elif op == "confirm-carried":
+            item = self.carried_item(ev)
+            if item:
+                item.pop("carried", None)
+                item["confirmed_by"], item["confirmed_at"] = ev["author"], ev["at"]
         elif op == "delete-note":
             self.notes.pop(ev["note"], None)
         elif op == "define-entity":
@@ -354,6 +373,13 @@ class Annotations:
                     raise Refused(f"{ev['tag']!r} is not on that target")
                 if author == CLAUDE and is_user(current["by"]):
                     raise Refused(f"{ev['tag']!r} was applied by {current['by']}; Claude can't remove it")
+        elif op == "confirm-carried":
+            item = self.carried_item(ev)
+            if item is None:
+                raise Refused("nothing carried over to confirm there" if ev.get("note") or ev.get("tag")
+                              else "confirm-carried needs a note, or a tag and target")
+            if author == CLAUDE and (is_user(item["by"]) or is_user(item["carried"].get("by", ""))):
+                raise Refused("that was the user's: Claude can't confirm it for them")
         elif op == "reply":
             if ev["parent"] not in self.notes and not (replaying and ev.get("target")):
                 raise Refused(f"no note {ev['parent']}")
@@ -429,6 +455,16 @@ class Annotations:
 
     # -- queries ------------------------------------------------------------------------
 
+    def carried_item(self, ev: dict) -> dict | None:
+        """The carried-over tag application or note a confirm-carried names."""
+        if ev.get("note"):
+            item = self.notes.get(ev["note"])
+        elif ev.get("tag") and ev.get("target"):
+            item = self.tags.get(target_key(ev["target"]), {}).get(ev["tag"])
+        else:
+            return None
+        return item if item and item.get("carried") else None
+
     def applications(self) -> list[dict]:
         return [a for per in self.tags.values() for a in per.values()]
 
@@ -483,6 +519,7 @@ OPS = {
     "reply": (("parent", "body"), ()),
     "edit-note": (("note", "body"), ()),
     "delete-note": (("note",), ()),
+    "confirm-carried": ((), ("tag", "target", "note")),
     "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see", "date")),
     "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "date", "add_aliases", "remove_aliases")),
     "delete-entity": (("entity",), ()),
@@ -662,3 +699,101 @@ def entity_check(m: Matter, req: dict) -> list[dict]:
         if req.get(f):
             out += [{**p, "field": f} for p in note_check(m, req[f])]
     return out
+
+
+# -- carrying annotations over to a replacement ------------------------------------------------
+
+
+def carry_over(m: Matter, pairs: list[tuple[str, str]], person: str, reason: str) -> dict:
+    """Copy the tags and notes on each superseded document (``old``) to its
+    replacement (``new``), each marked ``carried``: the replacement may
+    differ (a redaction, a correction), so they are judgments about the old
+    document until someone looks and confirms them.
+
+    Called on the host, after the supersede events, by the person who made
+    the replacement (``person``, ``user:<id>``). A person's tag or note is
+    carried as theirs, the person doing it, since only an installation's
+    own people write from it; ``carried.by`` keeps whose it was. Claude's
+    are carried as Claude's, so a flag stays a flag. A range moves where
+    its quote is found in the replacement (as references follow a
+    supersede: LOCATORS.md). A tagged range that can't be found isn't
+    carried; a note on one goes on the whole document, ``unplaced``.
+    Returns ``{"carried": [...], "not_carried": [...]}``."""
+    from . import pool as poolmod
+    if not is_user(person):
+        raise Refused(f"carrying over is a person's: {person!r} isn't user:<id>")
+    try:
+        poolmod.claim(m, person)
+    except poolmod.PoolError as e:
+        raise Refused(str(e))
+    carried, skipped = [], []
+    with _locked(m):
+        ann = Annotations.load(m)
+        written = []
+
+        def emit(ev):
+            ann.check({**ev, "at": now(), "origin": m.origin})
+            ann.apply({**ev, "id": "pending", "at": now()})
+            written.append(m.annotation_log.append(**ev))
+            return written[-1]
+
+        for old, new in pairs:
+            def place(target):
+                """The old target in the replacement, or None."""
+                if not target.get("select"):
+                    return {"doc": new}
+                try:
+                    t = normalize_target(m, {k: target[k] for k in ("doc", "layer", "select", "quote") if k in target})
+                except (Refused, locators.LocatorError, KeyError, ValueError):
+                    return None
+                return t if t.get("doc") == new else None
+
+            mark = lambda x, **more: {"from": x["target"], "by": x["by"], "at": x["at"], "reason": reason, **more}
+            for app in sorted((a for a in ann.applications() if a["target"].get("doc") == old), key=lambda a: a["at"]):
+                target = place(app["target"])
+                if target is None:
+                    skipped.append({"tag": app["tag"], "from": app["target"], "by": app["by"],
+                                    "why": "the tagged passage isn't in the replacement"})
+                    continue
+                if app["tag"] in ann.tags.get(target_key(target), {}):
+                    continue                            # already there
+                author = CLAUDE if app["by"] == CLAUDE else person
+                ev = {"op": "tag", "tag": app["tag"], "target": target, "author": author,
+                      "carried": mark(app, event=app["event"])}
+                others = ann.group_conflicts(ev)
+                if others:
+                    skipped.append({"tag": app["tag"], "from": app["target"], "by": app["by"],
+                                    "why": f"the replacement has {others[0]['tag']!r}, from the same group"})
+                    continue
+                try:
+                    ev = emit(ev)
+                except Refused as e:
+                    skipped.append({"tag": app["tag"], "from": app["target"], "by": app["by"], "why": str(e)})
+                    continue
+                carried.append({"tag": app["tag"], "target": target, "event": ev["id"]})
+            # notes, parents before replies, so threads stay threads
+            new_id = {}
+            already = {n["carried"].get("note") for n in ann.notes.values() if n.get("carried")}
+            for n in sorted((n for n in ann.notes.values() if (n["target"] or {}).get("doc") == old),
+                            key=lambda n: (n["at"], n["note"])):
+                if n["note"] in already:
+                    continue
+                target = place(n["target"])
+                more = {"note": n["note"]}
+                if target is None:
+                    target, more["unplaced"] = {"doc": new}, True
+                author = CLAUDE if n["by"] == CLAUDE else person
+                ev = {"op": "note", "target": target, "body": n["body"], "author": author, "note": "n_" + new_event_id()[3:],
+                      "carried": mark(n, **more)}
+                if n.get("parent") in new_id:
+                    ev.update(op="reply", parent=new_id[n["parent"]])
+                try:
+                    written_ev = emit(ev)
+                except Refused as e:
+                    skipped.append({"note": n["note"], "from": n["target"], "by": n["by"], "why": str(e)})
+                    continue
+                new_id[n["note"]] = written_ev["note"]
+                carried.append({"note": written_ev["note"], "target": target, "from_note": n["note"],
+                                **({"unplaced": True} if more.get("unplaced") else {})})
+        save_replay(m, ann)
+    return {"carried": carried, "not_carried": skipped}

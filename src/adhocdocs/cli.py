@@ -122,7 +122,24 @@ def adhoc(argv=None):
     s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
                    help="which .dat column a field is, when it isn't recognized (e.g. begin=\"Prod Beg\")")
     s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")
+    s.add_argument("--replaces", action="append", default=[], metavar="VOLUME",
+                   help="this volume replaces a received one (say, after a clawback): its documents supersede "
+                        "the ones there that begin at the same Bates numbers, and their tags and notes are "
+                        "carried over to them, marked so")
+    s.add_argument("--user", default=os.environ.get("USER", "user"),
+                   help="with --replaces: who carries the old documents' tags and notes over (default: $USER)")
     s.add_argument("--check", action="store_true", help="read the volume and report; ingest nothing")
+    s = sub.add_parser("overlay-production", help="apply an overlay: a later .dat correcting received documents' fields",
+                       description="Apply an overlay load file to documents already received: each record is "
+                                   "matched by its begin Bates number (else its control number), and its non-blank "
+                                   "fields replace or add to the document's. Files, families and custodians aren't "
+                                   "changed. Run with --check first. See RECEIVED.md.")
+    s.add_argument("dat", help="the overlay load file (.dat, .csv or tab-separated)")
+    s.add_argument("--volume", help="the received volume it is for (needed only when two volumes have the same numbers)")
+    s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
+                   help="which column a field is, when it isn't recognized")
+    s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")
+    s.add_argument("--check", action="store_true", help="report what would change; change nothing")
     s = sub.add_parser("withdraw", help="remove a document from the matter (e.g. clawback)")
     s.add_argument("doc")
     s.add_argument("--reason", required=True)
@@ -330,7 +347,7 @@ def adhoc(argv=None):
             ingest_manifest(m, a.manifest, report)
         else:
             ingest_paths(m, a.paths, a.custodian, a.collection, report)
-    elif a.cmd == "ingest-production":
+    elif a.cmd in ("ingest-production", "overlay-production"):
         from . import received
         overrides = {}
         for x in a.map:
@@ -338,14 +355,18 @@ def adhoc(argv=None):
                 raise ValueError(f"--map {x}: give FIELD=COLUMN")
             k, v = x.split("=", 1)
             overrides[k.strip()] = v.strip()
+        if a.cmd == "overlay-production":
+            out(received.overlay(m, a.dat, a.volume, overrides, a.day_first, check=a.check))
+            return
         kw = {"dat": a.dat, "opt": a.opt, "overrides": overrides, "day_first": a.day_first}
         if a.check:
-            out(received.check(a.volume, **kw))
+            out(received.check(a.volume, m=m, name=a.name, replaces=a.replaces, **kw))
             return
         if not a.party:
             raise ValueError("--party: who produced this volume (or --check to look first)")
         gui.remember(m.root)
-        r = received.ingest(m, a.volume, a.party, a.name, **kw)
+        r = received.ingest(m, a.volume, a.party, a.name, replaces=a.replaces,
+                            person="user:" + a.user.removeprefix("user:"), **kw)
         r.pop("docs")
         out(r)
     elif a.cmd == "withdraw":
@@ -1278,6 +1299,13 @@ Call it that, never a privilege log: the lawyer decides.
 Tags must be defined (define-tag) before use. A tag in an exclusive --group
 replaces the group's other tag on the same target.
 
+Tags and notes on a document a replacement volume superseded are carried
+over to the replacement, marked ``carried`` (RECEIVED.md): they were about
+the old document, and the replacement may differ. List them with
+``ann carried``; once you've checked one still holds, and it was yours,
+``ann confirm-carried TAG LOCATOR`` (or ``--note ID``). The user's are the
+user's to confirm.
+
 Entities (the entity layer; ENTITIES.md): people, organizations, defined
 terms, contracts, events, numbers... that the user can hover over in the
 viewer to be reminded what they are.
@@ -1360,6 +1388,13 @@ def ann(argv=None):
                    "installations can sort before ones you've read; a cursor still catches them, an ID doesn't")
     s.add_argument("--cursor", action="store_true", help="print only the cursor for the log's end")
     s.add_argument("--author", help="user, claude, or user:<id>")
+    s = sub.add_parser("carried", help="tags and notes carried over from a superseded document, not yet confirmed")
+    s.add_argument("--target")
+    s = sub.add_parser("confirm-carried", help="a carried-over tag (TAG LOCATOR) or note (--note ID) stands: unmark it")
+    s.add_argument("tag", nargs="?")
+    s.add_argument("locator", nargs="?")
+    s.add_argument("--note")
+    s.add_argument("--requested-by")
     s = sub.add_parser("check", help="check a note's references and quotations (note ID, or - for a body on stdin)")
     s.add_argument("note")
     for name in ("tag", "untag"):
@@ -1465,6 +1500,26 @@ def ann(argv=None):
         for n in notes:
             if n["parent"] not in ids:
                 thread(n, 0)
+    elif a.cmd == "carried":
+        an = annotations.Annotations.load(m)
+        t = _targets(m, [a.target])[0] if a.target else None
+        on = lambda x: t is None or annotations.target_key(x) == annotations.target_key(t) or \
+            (set(t) == {"doc"} and x.get("doc") == t["doc"])
+        for app in an.applications():
+            if app.get("carried") and on(app["target"]):
+                out(app)
+        for n in an.notes.values():
+            if n.get("carried") and on(n["target"]):
+                out(n)
+    elif a.cmd == "confirm-carried":
+        req = {"op": a.cmd, "requested_by": a.requested_by}
+        if a.note:
+            req["note"] = a.note
+        elif a.tag and a.locator:
+            req.update(tag=a.tag, target=_targets(m, [a.locator])[0])
+        else:
+            raise ValueError("confirm-carried TAG LOCATOR, or --note ID")
+        out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
     elif a.cmd == "find":
         tags = annotations.current_tags(m)
         docs = [d for d in m.state.live_documents()

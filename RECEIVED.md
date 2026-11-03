@@ -1,7 +1,8 @@
 # Received productions
 
 *Status: built ([`received.py`](src/adhocdocs/received.py); `adhoc
-ingest-production --help`). See [Not built yet](#not-built-yet).*
+ingest-production --help`, `adhoc overlay-production --help`), with
+overlays and replacement volumes. See [Not built yet](#not-built-yet).*
 
 Documents produced to us by another party (opposing counsel, a third party
 answering a subpoena, a regulator) arrive as a **volume**: load files that
@@ -146,11 +147,81 @@ Reported by `--check` and by the ingest, which goes on past them:
 - attachments whose parent isn't in the volume (ingested without a
   parent, and said so).
 
+## Overlays
+
+```
+adhoc overlay-production ACME_VOL001_OVERLAY.dat [--volume ACME_VOL001] [--check]
+```
+
+An **overlay** is a later load file that corrects or adds fields on
+documents already received: a fixed date, a confidentiality designation
+added after the fact. It's read like a volume's `.dat` (the same dialects,
+encodings, column names and `--map`), with no images or files. Each record
+is matched to a received document by its begin Bates number, or by its
+control number if it has no begin column. `--volume` is needed only when
+two volumes have the same numbers. `--check` reports what would change and
+changes nothing; run it first.
+
+- **Merged, not replaced:** each non-blank value replaces the old one, a
+  column the volume didn't have is added, and a blank changes nothing.
+  Columns are matched to the volume's by field (`Date Sent` overlays
+  `DATESENT`), else by name.
+- **The metadata follows**, but only what the load file supplied in the
+  first place: subject, people, title, author, name and the date (with its
+  source) are worked out again from the merged record. What the extraction
+  found in the original stays, as on ingest: an email native's own subject
+  beats any load file's.
+- **Not changed:** the document's files, family and custodian
+  (`begattach`, `endattach`, `native`, `text`, `custodian`). They made the
+  document what it is (the custodian is part of its identity), so a change
+  to them is reported, not applied. A corrected family or file is a
+  replacement volume.
+- **Kept:** each change, under `produced.overlays` (`{"dat", "at",
+  "changed": {column: [old, new]}}`), with `produced.fields` the merged
+  record. Applying the same overlay again changes nothing.
+
+The new metadata is a `set-metadata` event like an ingest's, so it reaches
+the indexes and syncs ([SYNC.md](SYNC.md)).
+
+## Replacement volumes
+
+```
+adhoc ingest-production ACME_VOL001R --party "Acme Corp." --replaces ACME_VOL001 [--check]
+```
+
+The same Bates numbers produced again (after a clawback, say, with
+redactions added). With `--replaces`, each document in the new volume
+supersedes the one in the named volume that begins at the same number: the
+old is withdrawn as superseded, references to it follow to the new
+([LOCATORS.md](LOCATORS.md)), and `bates:` names the new. The result lists
+what was superseded and, under `not_replaced`, the old volume's documents
+the new one doesn't have, which stay; withdrawing those is the user's call
+(`adhoc withdraw`). `--check` with `--replaces` lists what would be
+superseded.
+
+Without `--replaces`, numbers another volume already has are reported, and
+both documents are kept.
+
+**Tags and notes come along, marked.** Each superseded document's tags and
+notes are copied to its replacement, marked *carried over*: they were
+judgments about the old version, and the replacement may differ (a
+redaction, a corrected page), so they might not hold for it. The viewer
+shows them apart (a `↪` chip, a flagged entry beside the document) until
+someone confirms them, which removes the mark. Editing a carried note
+confirms it too. `ann carried` lists the ones still marked, and `ann
+confirm-carried` confirms one ([ANNOTATIONS.md](ANNOTATIONS.md)).
+
+- A tag or note on a passage moves to where the passage's quote is found in
+  the replacement, as references do. A tagged passage the replacement
+  doesn't have (redacted, say) isn't carried; the result lists it under
+  `annotations_not_carried`. A note on one is carried to the whole
+  document, marked that its passage is gone.
+- Whose they are: a person's are carried as the person running the ingest
+  (`--user`, default `$USER`), since only an installation's own people
+  write from it, and the mark keeps whose it was. Claude's stay Claude's, so
+  a `check-privilege` flag stays a flag. The old document keeps its own.
+- Replies stay under the notes they answer.
+
 ## Not built yet
 
 - IPRO `.lfp` image load files, EDRM XML, and other formats than these.
-- **Overlays**: a later `.dat` that corrects or adds fields to documents
-  already in. For now the first ingest's fields stay.
-- Replacement volumes (the same Bates numbers produced again, say after a
-  clawback). They come in as new documents beside the old, and withdrawing
-  the old is the user's call (`adhoc withdraw`).

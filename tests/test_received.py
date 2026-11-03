@@ -232,3 +232,171 @@ def test_our_own_production_received_elsewhere(tmp_path):
             assert d in theirs.state.children[r["docs"][s["begattach"]]]
     last = sent[-1]
     assert resolve_bates(theirs, "bates:" + last["end"])[0]["loc"]["select"] == {"page": last["pages"]}
+
+
+# -- overlays and replacement volumes -------------------------------------------------------------
+
+
+def test_an_overlay_corrects_and_adds_fields(volume, m, tmp_path):
+    docs = received.ingest(m, volume, "Acme Corp.")["docs"]
+    m = Matter(m.root)
+    ov = tmp_path / "ACME_VOL001_OVERLAY.dat"
+    # other column names, a column the volume lacked, a blank that changes nothing, and a family it can't change
+    rows = [["BegDoc", "Email Subject", "Date Sent", "Confidentiality", "To", "BegAttach"],
+            ["ACME000001", "Re: the Dock 4 pallet", "03/05/2021", "Highly Confidential", "", ""],
+            ["ACME000006", "", "", "Confidential", "", "ACME000001"],
+            ["ACME009999", "", "", "Confidential", "", ""]]
+    ov.write_text("\r\n".join(dat_line(r) for r in rows), encoding="utf-8")
+    r = received.overlay(m, ov, check=True)
+    assert (r["matched_by"], r["changed"], r["applied"]) == ("begin", 2, False)
+    assert meta(m, docs["ACME000001"])["subject"] == "Re: pallet"               # --check changed nothing
+    problems = {p.get("bates"): p["problem"] for p in r["problems"]}
+    assert "no received document" in problems["ACME009999"] and "family" in problems["ACME000006"]
+
+    r = received.overlay(Matter(m.root), ov)
+    assert r["changed"] == 2
+    m = Matter(m.root)
+    e = meta(m, docs["ACME000001"])
+    assert e["subject"] == "Re: the Dock 4 pallet"
+    # the new date, with the old time column still joined to it
+    assert (e["date"], e["date_source"]) == ("2021-03-05T10:32:00", "sent")
+    assert e["to"] == ["Ann Lee <al@buyer.com>", "Bo Ng <bo@buyer.com>"]         # blank: left alone
+    p = e["produced"]
+    assert p["fields"]["SUBJECT"] == "Re: the Dock 4 pallet" and p["fields"]["Confidentiality"] == "Highly Confidential"
+    assert p["overlays"][0]["dat"] == ov.name and p["overlays"][0]["changed"]["DATESENT"] == ["03/04/2021", "03/05/2021"]
+    n = meta(m, docs["ACME000006"])
+    assert n["produced"]["fields"]["Confidentiality"] == "Confidential" and not n["produced"].get("begattach")
+    # the overlay's fields are searchable like the volume's: the document is still found by its numbers
+    assert resolve_bates(m, "bates:ACME000002")[0]["loc"]["doc"] == docs["ACME000001"]
+    # again: nothing to change
+    n_events = len(list(m.logs["store"].read()))
+    assert received.overlay(m, ov)["changed"] == 0 and len(list(Matter(m.root).logs["store"].read())) == n_events
+
+
+def test_an_overlay_leaves_what_the_extraction_found(tmp_path, m):
+    """A native's own metadata wins over the load file's, in an overlay as on ingest."""
+    v = tmp_path / "VOL"
+    (v / "NATIVES").mkdir(parents=True)
+    eml = "From: Real Sender <real@x.com>\nTo: a@b.com\nSubject: The real subject\nDate: Tue, 9 Mar 2021 10:00:00 +0000\n\nHi.\n"
+    (v / "NATIVES" / "X1.eml").write_text(eml)
+    (v / "load.csv").write_text("BEGBATES,ENDBATES,NATIVEPATH,SUBJECT,AUTHOR\nX1,X1,NATIVES\\X1.eml,Wrong subject,\n")
+    docs = received.ingest(m, v, "X")["docs"]
+    ov = tmp_path / "ov.csv"
+    ov.write_text("BEGBATES,SUBJECT,AUTHOR\nX1,Also wrong,Pat Doe\n")
+    r = received.overlay(Matter(m.root), ov)
+    e = meta(m, docs["X1"])
+    assert r["changed"] == 1 and e["subject"] == "The real subject" and e["author"] == "Pat Doe"
+    assert e["produced"]["fields"]["SUBJECT"] == "Also wrong"
+
+
+def test_an_overlay_by_control_number_and_volume(volume, m, tmp_path):
+    docs = received.ingest(m, volume, "Acme Corp.")["docs"]
+    ov = tmp_path / "ov.csv"
+    ov.write_text("DOCID,Privilege\nCTL-3,Redacted\n")
+    with pytest.raises(ValueError, match="--volume"):
+        received.overlay(Matter(m.root), ov, volume="NOPE")
+    r = received.overlay(Matter(m.root), ov, volume="ACME_VOL001")
+    assert r["matched_by"] == "control" and r["documents"][0]["doc"] == docs["ACME000006"]
+
+
+def test_a_replacement_volume_supersedes(volume, m, tmp_path):
+    import shutil
+    old = received.ingest(m, volume, "Acme Corp.")["docs"]
+    # the same numbers produced again, with one document redacted (other bytes) and one left out
+    new = tmp_path / "ACME_VOL001R"
+    shutil.copytree(volume, new)
+    (new / "natives" / "ACME000006.csv").write_text("month,amount\nMarch,[REDACTED]\n")
+    dat = new / "DATA" / "ACME_VOL001.dat"
+    lines = dat.read_bytes().split(b"\r\n")
+    dat.write_bytes(b"\r\n".join(l for l in lines if b"ACME000008" not in l and b"0" * 32 not in l))
+
+    m = Matter(m.root)
+    r = received.check(new, m=m)                                     # without --replaces: reported, both kept
+    assert any("--replaces ACME_VOL001" in p["problem"] for p in r["problems"])
+    r = received.check(new, m=m, replaces=["ACME_VOL001"])
+    assert {x["bates"] for x in r["would_supersede"]} == {"ACME000001", "ACME000004", "ACME000006"}
+    assert r["not_replaced"] == ["ACME000007", "ACME000008"]
+    with pytest.raises(ValueError, match="no received volume"):
+        received.ingest(m, new, "Acme Corp.", replaces=["ACME_VOL009"], person="user:ann")
+
+    r = received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"], person="user:ann")
+    assert {x["bates"] for x in r["superseded"]} == {"ACME000001", "ACME000004", "ACME000006"}
+    m = Matter(m.root)
+    assert m.state.follow(old["ACME000006"]) == r["docs"]["ACME000006"]
+    assert old["ACME000006"] in m.state.withdrawn and old["ACME000007"] not in m.state.withdrawn
+    # the numbers name the replacement now
+    (hit,) = resolve_bates(m, "bates:ACME000006")
+    assert hit["loc"]["doc"] == r["docs"]["ACME000006"] and hit["production"] == "ACME_VOL001R"
+
+
+def test_overlay_cli(volume, m, tmp_path):
+    received.ingest(m, volume, "Acme Corp.")
+    ov = tmp_path / "ov.csv"
+    ov.write_text("BEGBATES,SUBJECT\nACME000001,Corrected\n")
+    run = lambda *a: subprocess.run([sys.executable, "-m", "adhocdocs.cli", "adhoc", "--matter", str(m.root),
+                                     "overlay-production", str(ov), *a], capture_output=True, text=True)
+    r = run("--check")
+    assert r.returncode == 0 and json.loads(r.stdout)["changed"] == 1 and not json.loads(r.stdout)["applied"]
+    r = run()
+    assert r.returncode == 0 and json.loads(r.stdout)["applied"]
+    assert json.loads(run().stdout)["changed"] == 0
+
+
+def test_a_replacement_carries_tags_and_notes_over_marked(volume, m, tmp_path):
+    import shutil
+    from adhocdocs import annotations as A
+    old = received.ingest(m, volume, "Acme Corp.")["docs"]
+    m = Matter(m.root)
+    csv = old["ACME000006"]
+    layer = m.state.primary_layer(m.state.documents[csv])
+    text = m.objects.get_text(layer.text)
+    rng = lambda w: A.normalize_target(m, locators.char_locator(csv, layer.id, text, text.index(w), text.index(w) + len(w)))
+    for tag, by in (("hot", "user:ann"), ("check-privilege", "claude"), ("key", "user:ann")):
+        A.write(m, by, {"op": "define-tag", "tag": tag})
+    A.write(m, "user:ann", {"op": "tag", "tag": "hot", "target": {"doc": csv}})
+    A.write(m, "claude", {"op": "tag", "tag": "check-privilege", "target": {"doc": csv}})
+    A.write(m, "user:ann", {"op": "tag", "tag": "key", "target": rng("month")})
+    A.write(m, "user:ann", {"op": "tag", "tag": "key", "target": rng("1200")})          # to be redacted
+    (n1,) = A.write(m, "user:ann", {"op": "note", "target": {"doc": csv}, "body": "The March total."})
+    A.write(m, "claude", {"op": "reply", "parent": n1["note"], "body": "It matches the invoice."})
+    A.write(m, "user:ann", {"op": "note", "target": rng("1200"), "body": "Why 1200?"})
+
+    new = tmp_path / "ACME_VOL001R"
+    shutil.copytree(volume, new)
+    (new / "natives" / "ACME000006.csv").write_text("month,amount\nMarch,[REDACTED]\n")
+    dat = new / "DATA" / "ACME_VOL001.dat"
+    dat.write_bytes(b"\r\n".join(l for l in dat.read_bytes().split(b"\r\n") if b"0" * 32 not in l))
+    with pytest.raises(ValueError, match="--user"):
+        received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"])
+    r = received.ingest(Matter(m.root), new, "Acme Corp.", replaces=["ACME_VOL001"], person="user:bo")
+    rep = r["docs"]["ACME000006"]
+    assert [x["why"] for x in r["annotations_not_carried"]] == ["the tagged passage isn't in the replacement"]
+
+    an = A.Annotations.load(Matter(m.root))
+    tags = {(a["tag"], json.dumps(a["target"].get("select"))): a for a in an.applications() if a["target"]["doc"] == rep}
+    hot, flag = tags[("hot", "null")], tags[("check-privilege", "null")]
+    # a person's is carried as the person who carried it, keeping whose it was; Claude's stays Claude's
+    assert (hot["by"], hot["carried"]["by"]) == ("user:bo", "user:ann") and hot["carried"]["from"] == {"doc": csv}
+    assert flag["by"] == "claude" and "ACME_VOL001R" in flag["carried"]["reason"]
+    key = next(a for (t, _), a in tags.items() if t == "key")
+    assert key["target"]["quote"]["exact"] == "month" and key["carried"]
+    notes = [n for n in an.notes.values() if n["target"]["doc"] == rep]
+    by_body = {n["body"]: n for n in notes}
+    assert by_body["It matches the invoice."]["parent"] == by_body["The March total."]["note"]     # still a thread
+    assert by_body["Why 1200?"]["carried"]["unplaced"] and by_body["Why 1200?"]["target"] == {"doc": rep}
+    # the old document keeps its own
+    assert any(a["target"]["doc"] == csv and a["tag"] == "hot" and not a.get("carried") for a in an.applications())
+
+    # confirming: Claude can confirm its own, not the user's; the user can confirm anything
+    m = Matter(m.root)
+    with pytest.raises(A.Refused, match="Claude can't"):
+        A.write(m, "claude", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    A.write(m, "claude", {"op": "confirm-carried", "tag": "check-privilege", "target": {"doc": rep}})
+    A.write(m, "user:bo", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    with pytest.raises(A.Refused, match="nothing carried"):
+        A.write(m, "user:bo", {"op": "confirm-carried", "tag": "hot", "target": {"doc": rep}})
+    A.write(m, "user:bo", {"op": "edit-note", "note": by_body["Why 1200?"]["note"], "body": "Redacted now."})
+    an = A.Annotations.load(m)
+    left = [a for a in an.applications() if a.get("carried")] + [n for n in an.notes.values() if n.get("carried")]
+    assert sorted(x.get("tag") or x["body"] for x in left) == ["It matches the invoice.", "The March total.", "key"]
+    assert next(a for a in an.applications() if a["tag"] == "hot" and a["target"] == {"doc": rep})["confirmed_by"] == "user:bo"

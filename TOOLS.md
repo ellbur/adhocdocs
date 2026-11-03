@@ -19,7 +19,9 @@ design doc), or **proposed**.
   volume another party served (Concordance or CSV `.dat`, Opticon `.opt`,
   page images, natives, text) as one document per record, with families,
   the producer's text and metadata, and its Bates and control numbers as
-  names (`bates:`, `ctl:`): [RECEIVED.md](RECEIVED.md).
+  names (`bates:`, `ctl:`). `adhoc overlay-production` applies a later
+  `.dat` that corrects fields, and `--replaces` lets a replacement volume
+  supersede an earlier one: [RECEIVED.md](RECEIVED.md).
 - **Metadata extraction.** *Built* for email headers and file properties.
   *Proposed:* richer fields, cast of characters.
 

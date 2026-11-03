@@ -1836,12 +1836,19 @@ class DocumentPane {
     const doc = this.info.doc, A = adhoc.annotations;
     const color = (t) => A.definitions.find((d) => d.tag === t)?.color || "var(--muted)";
     const docTags = A.tags.filter((t) => t.target.doc === doc && !t.target.select);
-    $(".chips", this.head)?.replaceChildren(...docTags.map((t) =>
-      el("span", { class: "chip " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`, title: `${t.by}, ${t.at}` }, t.tag)));
+    $(".chips", this.head)?.replaceChildren(...docTags.map((t) => t.carried
+      ? el("span", { class: "chip carried " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`,
+          title: carriedNote(t.carried) + "\nClick to confirm it still holds.",
+          onclick: () => confirmCarried({ tag: t.tag, target: t.target }, `“${t.tag}”`) }, "↪ " + t.tag)
+      : el("span", { class: "chip " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`, title: `${t.by}, ${t.at}` }, t.tag)));
     const ranged = A.tags.filter((t) => t.target.doc === doc && t.target.select);
     const notes = A.notes.filter((n) => n.target?.doc === doc);
     const item = (cls, text, who, target, extra = []) => el("div", { class: "ann " + cls + (who === "claude" ? " by-claude" : ""),
       onclick: () => target?.select && this.highlight(target, "annotation") }, el("div", {}, text), el("div", { class: "who" }, who), ...extra);
+    // a carried-over tag or note: marked, with where it came from and a way to confirm it
+    const carriedBits = (c, what, req) => c ? [el("div", { class: "carried-note", title: carriedNote(c) },
+      "↪ carried over" + (c.unplaced ? " (its passage isn't in this version)" : "") + ": may not reflect what changed. ",
+      el("a", { onclick: (e) => { e.stopPropagation(); confirmCarried(req, what); } }, "confirm"))] : [];
     const kids = [];
     // the highlights, labelled, in document order: click one to go to it
     const hs = this.hlList();
@@ -1849,11 +1856,13 @@ class DocumentPane {
     hs.forEach((h, i) => kids.push(el("div", { class: "ann hl-item" + (h === this.hlCur ? " current" : ""), title: "Go to this highlight",
       onclick: () => this.goHighlight(h) }, el("div", {}, h.label || "(no label)"), el("div", { class: "who" }, `highlight ${i + 1} of ${hs.length}`))));
     if (ranged.length) kids.push(el("div", { class: "side-h" }, "Tags"));
-    for (const t of ranged) kids.push(item("", `▍${t.tag}: “${(t.target.quote?.exact || "").slice(0, 60)}”`, t.by, t.target));
+    for (const t of ranged) kids.push(item(t.carried ? "carried" : "", `▍${t.tag}: “${(t.target.quote?.exact || "").slice(0, 60)}”`, t.by, t.target,
+      carriedBits(t.carried, `“${t.tag}”`, { tag: t.tag, target: t.target })));
     const top = notes.filter((n) => !n.parent || !notes.some((p) => p.note === n.parent));
     const thread = (n, depth) => {
       const mine = n.by === adhoc.user;
-      kids.push(item(depth ? "reply" : "", n.body, n.by + (n.edited_at ? " (edited)" : ""), n.target, [
+      kids.push(item((depth ? "reply" : "") + (n.carried ? " carried" : ""), n.body, n.by + (n.edited_at ? " (edited)" : ""), n.target, [
+        ...carriedBits(n.carried, "this note", { note: n.note }),
         el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "reply", parent: n.note }, "Reply"); } }, "reply "),
         ...(mine || true ? [el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "edit-note", note: n.note }, "Edit note", n.body); } }, "edit "),
           el("a", { onclick: (e) => { e.stopPropagation(); if (confirm("Delete this note?")) annotate({ op: "delete-note", note: n.note }); } }, "delete")] : []),
@@ -2053,7 +2062,7 @@ class WebPane {
       const a = ev.target.closest("a[href]");
       if (a && a.getAttribute("href").startsWith("loc:")) {
         ev.preventDefault();
-        openFromPane(this, a.getAttribute("href").slice(4), true);
+        openFromPane(this, a.getAttribute("href").slice(4), true, false, a.dataset.mode);
         return;
       }
       if (a && /^[a-z]+:/i.test(a.getAttribute("href")) && !a.getAttribute("href").startsWith("adhoc:")) { ev.preventDefault(); return; }
@@ -2525,8 +2534,22 @@ $("#menu-btn").addEventListener("click", (ev) => showMenu(ev.currentTarget, [
 // Open a locator from a pane. A list's preview follows it (its linked pane);
 // anything else opens beside the pane, as a new tab among the documents it has
 // opened, or in the tab already showing that document.
-function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
-  if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, { source: "pane" });
+// Tags and notes copied from a document a replacement volume superseded (RECEIVED.md)
+function carriedNote(c) {
+  const whose = c.by && c.by !== adhoc.user ? ` (${c.by}'s)` : "";
+  return `Carried over${whose} from the version this document replaced` + (c.reason ? ` (${c.reason}). ` : ". ") +
+    "It was about that version, and may not reflect what changed in this one" +
+    (c.unplaced ? "; the passage it was on isn't in this version, so it is on the whole document." : ".");
+}
+async function confirmCarried(req, what) {
+  if (!confirm(`Keep ${what}? It was carried over from the version this document replaced. Confirm once you've checked it still holds here.`)) return;
+  await annotate({ op: "confirm-carried", ...req });
+}
+
+// mode: a link's data-mode (a page's "check against the page image" marker asks for "page")
+function openFromPane(p, loc, newIfUnlinked, forceNew = false, mode = undefined) {
+  const opts = { source: "pane", ...(mode ? { mode } : {}) };
+  if (!forceNew && paneExists(p.link) && !pane(p.link)) return callPane(p.link, "open", loc, opts);
   let target = !forceNew && p.link && pane(p.link);
   if (!target && !forceNew) {
     let doc = null; try { doc = parseLoc(loc).doc; } catch {}
@@ -2537,7 +2560,7 @@ function openFromPane(p, loc, newIfUnlinked, forceNew = false) {
   }
   if (!target) target = addPane(new DocumentPane(newPaneId()), true, { beside: p.id });
   reveal(target.id);
-  target.open(loc, { source: "pane" });
+  target.open(loc, opts);
 }
 
 // Declarative attributes in a pane's static HTML, carried out here.
