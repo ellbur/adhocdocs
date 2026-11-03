@@ -101,7 +101,7 @@ class _Handler(BaseHTTPRequestHandler):
             out = {"events": events}
             if req.get("op") in ("note", "reply", "edit-note"):
                 out["check"] = annotations.note_check(m, req.get("body", ""))
-            if req.get("op") in ("define-entity", "edit-entity"):
+            if req.get("op") in ("define-entity", "edit-entity", "define-link", "edit-link"):
                 out["check"] = annotations.entity_check(m, req)
             self._reply(200, out)
         except annotations.Refused as e:

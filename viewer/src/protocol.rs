@@ -241,6 +241,11 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
     let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
     let mut notes: Vec<(String, Value)> = vec![];
     let mut entities: Vec<(String, Value)> = vec![];
+    let mut links: Vec<(String, Value)> = vec![];
+    let mut facets: Vec<(String, Value)> = vec![];
+    let mut filed: Vec<(String, Value)> = vec![]; // (facet + " " + item key, filing)
+    let item_key = |i: &Value| i.as_object().and_then(|o| o.iter().next())
+        .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(""))).unwrap_or_default();
     let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
     for ev in events {
         let tag = ev["tag"].as_str().unwrap_or("").to_string();
@@ -296,7 +301,11 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     }
                 }
             }
-            "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
+            "delete-note" => {
+                notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str());
+                let k = format!("note:{}", ev["note"].as_str().unwrap_or(""));
+                filed.retain(|(_, f)| item_key(&f["item"]) != k);
+            }
             // the entity list (see entities.py and annotations.py, which this follows)
             "define-entity" => {
                 let mut aliases: Vec<Value> = vec![];
@@ -328,7 +337,59 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     e["edited_at"] = ev["at"].clone();
                 }
             }
-            "delete-entity" => entities.retain(|(id, _)| Some(id.as_str()) != ev["entity"].as_str()),
+            "delete-entity" => {
+                let id = ev["entity"].as_str().unwrap_or("").to_string();
+                entities.retain(|(x, _)| *x != id);
+                let gone: Vec<String> = links.iter().filter(|(_, l)| l["from"] == json!(id) || l["to"] == json!(id))
+                    .map(|(x, _)| x.clone()).collect();
+                links.retain(|(x, _)| !gone.contains(x));
+                let keys: Vec<String> = std::iter::once(format!("entity:{id}")).chain(gone.iter().map(|l| format!("link:{l}"))).collect();
+                filed.retain(|(_, f)| !keys.contains(&item_key(&f["item"])));
+            }
+            // links between entities, and facets (annotations.py, which this follows)
+            "define-link" => {
+                links.push((ev["link"].as_str().unwrap_or("").to_string(), json!({
+                    "link": ev["link"], "from": ev["from"], "to": ev["to"],
+                    "rel": ev["rel"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
+                    "summary": ev["summary"], "see": ev.get("see").cloned().unwrap_or(json!([])), "date": ev["date"],
+                    "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-link" => {
+                if let Some((_, l)) = links.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["link"].as_str()) {
+                    for k in ["rel", "summary", "see", "date"] {
+                        if ev.get(k).is_some() { l[k] = ev[k].clone(); }
+                    }
+                    l["edited_by"] = ev["author"].clone();
+                    l["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-link" => {
+                let id = ev["link"].as_str().unwrap_or("").to_string();
+                links.retain(|(x, _)| *x != id);
+                filed.retain(|(_, f)| item_key(&f["item"]) != format!("link:{id}"));
+            }
+            "define-facet" => {
+                let f = ev["facet"].as_str().unwrap_or("").to_string();
+                if !facets.iter().any(|(x, _)| *x == f) {
+                    facets.push((f, json!({"facet": ev["facet"], "description": ev["description"], "color": ev["color"], "by": ev["author"]})));
+                }
+            }
+            "edit-facet" => {
+                if let Some((_, d)) = facets.iter_mut().find(|(x, _)| Some(x.as_str()) == ev["facet"].as_str()) {
+                    for k in ["description", "color"] {
+                        if ev.get(k).is_some() { d[k] = ev[k].clone(); }
+                    }
+                }
+            }
+            "file" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+                filed.push((k, json!({"facet": ev["facet"], "item": ev["item"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "unfile" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+            }
             _ => {}
         }
     }
@@ -343,7 +404,10 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
         "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
     json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
            "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
-           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>()})
+           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
+           "links": links.into_iter().map(|(_, l)| l).collect::<Vec<_>>(),
+           "facets": facets.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "filed": filed.into_iter().map(|(_, f)| f).collect::<Vec<_>>()})
 }
 
 impl Handler {

@@ -483,3 +483,33 @@ ul.rows.files-rows .row .main { display: flex; flex-direction: column; gap: 1px;
 .pane-body.files .cards { grid-template-columns: 1fr; max-width: 62em; }
 ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .files-rows .row:hover { background: var(--hover); }
+
+/* the relationship diagram (view graph) */
+.adhoc-graph { overflow: auto; }
+.adhoc-graph svg { display: block; font: 12px system-ui, sans-serif; }
+.adhoc-graph-node rect { fill: var(--pane); stroke: var(--line); stroke-width: 1.2; }
+.adhoc-graph-node.type-entity rect { stroke: var(--ent); }
+.adhoc-graph-node.type-entity.kind-person rect { fill: var(--ent-bg); }
+.adhoc-graph-node.type-entity.kind-organization rect { stroke-width: 2; }
+.adhoc-graph-node.type-entity.kind-event rect, .adhoc-graph-node.type-entity.kind-contract rect { stroke: var(--date); }
+.adhoc-graph-node.type-link rect { stroke: var(--muted); stroke-dasharray: 2 2; }
+.adhoc-graph-node.type-doc rect { fill: var(--head); }
+.adhoc-graph-name { fill: var(--ink); font-weight: 600; }
+.adhoc-graph-sub { fill: var(--muted); font-size: 10.5px; }
+.adhoc-graph-edge { fill: none; stroke: var(--muted); stroke-width: 1.3; opacity: .8; }
+.adhoc-graph-edge.kind-link { stroke: var(--ent); stroke-width: 1.6; }
+.adhoc-graph-edge.unsupported { stroke: var(--bad); stroke-dasharray: 6 3; }
+.adhoc-graph-edge.derived { stroke-dasharray: 3 4; opacity: .55; }
+.adhoc-graph-edge.kind-see, .adhoc-graph-edge.kind-family { stroke: var(--line); }
+.adhoc-graph-arrow { fill: var(--muted); }
+.adhoc-graph-label rect { fill: var(--pane); stroke: var(--line); }
+.adhoc-graph-label text { fill: var(--ink); font-size: 11px; }
+.adhoc-graph-label.unsupported text { fill: var(--bad); }
+.adhoc-graph-label.derived text { fill: var(--muted); font-style: italic; }
+.adhoc-graph [data-locator] { cursor: pointer; }
+.adhoc-graph [data-locator]:hover rect { stroke: var(--accent); }
+.adhoc-graph [data-locator].adhoc-selected { background: none; outline: none; }
+.adhoc-graph [data-locator].adhoc-selected rect, .adhoc-graph [data-locator].adhoc-current rect { stroke: var(--accent); stroke-width: 2.5; }
+.adhoc-graph [data-locator].adhoc-current { box-shadow: none; }
+.adhoc-graph [data-locator].adhoc-visited .adhoc-graph-name { fill: var(--muted); }
+.adhoc-graph-node.unsupported rect { stroke: var(--bad); }
