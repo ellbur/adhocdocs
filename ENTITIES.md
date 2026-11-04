@@ -142,11 +142,19 @@ ann edit-entity REF --recap …           remember what you told the user
 view selection                          the selection, with "entity" when it is one
 ```
 
+## Links between entities
+
+Entities are joined by links (a relation, with its evidence), and filed
+under issues (facets): [GRAPH.md](GRAPH.md). A card lists the entity's
+connections, and names in its summary that are known entities can be
+clicked to go to theirs.
+
 ## Not built yet
 
 - Joining suggestions across spellings ("T. Kettering", "Mr. Kettering",
   "Thomas Kettering") uses a simple key per spelling. `analyze people` joins
-  them properly; Claude uses it when adding people.
+  them properly, and `ann add-people` adds a person with all of them (and
+  their addresses) as aliases ([GRAPH.md](GRAPH.md#people-from-the-headers)).
 - Spreadsheets in grid mode have no entity layer.
 - Entities with no name-like form (an event, a meeting) are only reachable
   by their aliases. Mentions like "the March 9 call" need an alias that

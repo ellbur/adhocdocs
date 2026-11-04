@@ -21,7 +21,25 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
                    ``date`` (an event's: ``YYYY-MM-DD``, ``YYYY-MM`` or ``YYYY``)
 ``edit-entity``    ``entity`` and the fields that change; ``add_aliases``,
                    ``remove_aliases``
-``delete-entity``  ``entity``
+``delete-entity``  ``entity``; links to and from it go with it
+``define-link``    ``link`` (new ID), ``from`` and ``to`` (entity IDs), ``rel`` (what
+                   ``from`` is or did to ``to``: "works for", "signed", "paid"),
+                   optional ``summary``, ``see`` (the evidence), ``date``
+``edit-link``      ``link`` and the fields that change (``rel``, ``summary``,
+                   ``see``, ``date``)
+``delete-link``    ``link``
+``define-facet``   ``facet`` (a name: an issue, a question, a line of work), optional
+                   ``description``, ``color``
+``edit-facet``     ``facet`` and the fields that change
+``file``/``unfile`` ``facet``, ``item``: one of ``{"entity": ID}``, ``{"link": ID}``,
+                   ``{"note": ID}``, ``{"bundle": ID}`` or ``{"tag": NAME}`` (a tag
+                   definition, so every application of it)
+``define-bundle``  ``bundle`` (new ID), ``name``, ``parts`` (targets: documents or
+                   ranges in them), optional ``summary``, ``from`` (the
+                   metadocument it was made from, e.g. ``thread:<doc>``)
+``edit-bundle``    ``bundle`` and what changes: ``name``, ``summary``,
+                   ``add_parts``, ``remove_parts``
+``delete-bundle``  ``bundle``; tags, notes and filings on it go with it
 ``reserve-numbers`` ``series`` (``bates:<prefix>`` or ``exhibit:<prefix>``), ``first``,
                    ``last``, optional ``name`` (the production or set): a range taken
                    before it's used, so two installations don't number the same
@@ -34,6 +52,22 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
 Entities are the entity layer's known entities (ENTITIES.md). Each field
 remembers who set it last: Claude can't change a field, remove an alias or
 delete an entity the user set, made or added.
+
+Links join two entities with a relation and its evidence, so the entity
+list is a graph (GRAPH.md, :mod:`adhocdocs.graph`). They follow the
+entities' rules, field by field. Facets are named issues; filing an entity,
+link, note or tag under one lets the viewer and the tools show only what
+bears on the issue at hand. Filings are like tags: Claude can't unfile what
+the user filed, and filing never changes the thing filed, so Claude can
+file the user's notes.
+
+A bundle is a recorded metadocument (METADOCS.md, :mod:`adhocdocs.metadocs`):
+documents, or parts of them, treated as one thing. A tag or note's
+``target`` can be ``{"bundle": ID}``: on the bundle as a whole, not on
+each part. For filters a document has the tags of the bundles it is in.
+Privilege calls can't be on a bundle (a production withholds and redacts
+documents): tag the parts. Claude can't edit or delete a bundle the user
+made or edited, or delete one with the user's tags or notes on it.
 
 Authorship comes from the write path, never from the request: the viewer
 writes as ``user:<id>``, and the annotation API (:mod:`adhocdocs.annapi`),
@@ -75,8 +109,13 @@ class Refused(Exception):
 
 
 def target_key(target: dict) -> str:
-    """Identity of a target: document, layer and selector (not the quote)."""
-    return json.dumps({k: target[k] for k in ("doc", "layer", "select") if k in target}, sort_keys=True)
+    """Identity of a target: document, layer and selector (not the quote), or bundle."""
+    return json.dumps({k: target[k] for k in ("doc", "layer", "select", "bundle") if k in target}, sort_keys=True)
+
+
+def bundle_of(target) -> str | None:
+    """The bundle a target is, if it is one."""
+    return target.get("bundle") if isinstance(target, dict) and isinstance(target.get("bundle"), str) else None
 
 
 def is_user(author: str) -> bool:
@@ -106,6 +145,12 @@ class Annotations:
         self.hotkeys: dict[str, str] = {}        # tag -> key, this installation's own (hotkeys())
         self.pool = None                          # who writes for whom (adhocdocs.pool), once there's a pool
         self.reservations: dict[str, dict] = {}  # reserve event ID -> number range (adhocdocs.numbers)
+        self.links: dict[str, dict] = {}         # link ID -> link between two entities
+        self.link_alias: dict[str, str] = {}     # merged link ID -> the link it joined
+        self.facets: dict[str, dict] = {}        # facet name -> definition
+        self.filed: dict[str, dict] = {}         # facet -> item key -> filing
+        self.bundles: dict[str, dict] = {}       # bundle ID -> a recorded metadocument
+        self.bundle_alias: dict[str, str] = {}   # merged bundle ID -> the bundle it joined
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
@@ -164,7 +209,7 @@ class Annotations:
     def _conflict(self, ev: dict, kind: str, reason: str):
         self.conflicts.append({"event": ev["id"], "origin": ev.get("origin"), "at": ev.get("at"),
                                "author": ev.get("author"), "op": ev["op"], "kind": kind, "reason": reason,
-                               **({k: ev[k] for k in ("tag", "note", "entity", "name") if k in ev})})
+                               **({k: ev[k] for k in ("tag", "note", "entity", "name", "link", "facet") if k in ev})})
 
     def _reconcile(self, ev: dict) -> list[dict]:
         """The events ``ev`` replays as, given the state so far: usually just
@@ -172,6 +217,21 @@ class Annotations:
         op = ev["op"]
         if ev.get("entity") in self.entity_alias:
             ev = {**ev, "entity": self.entity_alias[ev["entity"]]}
+        for k in ("from", "to"):
+            if op == "define-link" and ev.get(k) in self.entity_alias:
+                ev = {**ev, k: self.entity_alias[ev[k]]}
+        if ev.get("link") in self.link_alias:
+            ev = {**ev, "link": self.link_alias[ev["link"]]}
+        if ev.get("bundle") in self.bundle_alias and op != "define-bundle":
+            ev = {**ev, "bundle": self.bundle_alias[ev["bundle"]]}
+        if bundle_of(ev.get("target")) in self.bundle_alias:
+            ev = {**ev, "target": {"bundle": self.bundle_alias[ev["target"]["bundle"]]}}
+        if op in ("file", "unfile") and isinstance(ev.get("item"), dict):
+            item = ev["item"]
+            alias = {"entity": self.entity_alias, "link": self.link_alias, "bundle": self.bundle_alias}
+            for k, table in alias.items():
+                if item.get(k) in table:
+                    ev = {**ev, "item": {k: table[item[k]]}}
         if op in ("define-tag", "edit-tag") and "hotkey" in ev:
             # hotkeys are each installation's own (hotkeys()); in events from
             # before that they're ignored, and replay as if not there
@@ -226,6 +286,47 @@ class Annotations:
             gone = [a for a in ev["remove_aliases"] if a in have]
             if gone != ev["remove_aliases"]:
                 ev = {**ev, "remove_aliases": gone}
+        if op == "delete-link" and ev["link"] not in self.links:
+            return []
+        if op == "delete-bundle" and ev["bundle"] not in self.bundles:
+            return []
+        if op == "define-bundle":
+            same = self.bundle_named(ev.get("name", ""))
+            if same:
+                # the same name, on two installations: one bundle, with both's parts
+                self.bundle_alias[ev["bundle"]] = same["bundle"]
+                self._conflict(ev, "bundle-merged", f"bundle {ev['name']!r} was also made as {same['bundle']} by "
+                                                    f"{same['by']}; the two are now one, with the parts of both")
+                have = {target_key(p) for p in same["parts"]}
+                more = [p for p in ev.get("parts", []) if target_key(p) not in have]
+                edit = {"id": ev["id"], "at": ev["at"], "author": ev["author"], "op": "edit-bundle",
+                        "bundle": same["bundle"], **({"add_parts": more} if more else {}),
+                        **({"summary": ev["summary"]} if ev.get("summary") and not same.get("summary") else {}),
+                        **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                return [edit] if len(edit) > 5 + bool(ev.get("requested_by")) else []
+        if op == "define-facet":
+            d = self.facets.get(ev["facet"])
+            if d is not None:
+                if all(ev.get(k) == d.get(k) for k in ("description", "color")):
+                    return []
+                self._conflict(ev, "defined-twice", f"facet {ev['facet']!r} was already defined by {d['by']}; "
+                                                    "this definition wasn't used")
+                return []
+        if op == "file" and item_key(ev.get("item")) in self.filed.get(ev.get("facet"), {}):
+            return []                   # filed twice
+        if op == "unfile" and item_key(ev.get("item")) not in self.filed.get(ev.get("facet"), {}):
+            return []                   # unfiled twice, or the item is gone
+        if op == "define-link":
+            same = self.link_between(ev.get("from"), ev.get("rel", ""), ev.get("to"))
+            if same:
+                # the same link, made on two installations: they become one
+                self.link_alias[ev["link"]] = same["link"]
+                self._conflict(ev, "link-merged", f"{ev['rel']!r} was also added as {same['link']} by "
+                                                  f"{same['by']}; the two are now one link")
+                edit = {"id": ev["id"], "at": ev["at"], "author": ev["author"], "op": "edit-link", "link": same["link"],
+                        **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                added = {f: ev[f] for f in ("summary", "see", "date") if ev.get(f) and not same.get(f)}
+                return [{**edit, **added}] if added else []
         if op == "define-entity":
             same = self.entity_named(ev["name"], ev.get("kind"))
             if same:
@@ -278,6 +379,7 @@ class Annotations:
                 item["confirmed_by"], item["confirmed_at"] = ev["author"], ev["at"]
         elif op == "delete-note":
             self.notes.pop(ev["note"], None)
+            self._unfile_all(f"note:{ev['note']}")
         elif op == "define-entity":
             e = {"entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind") or "other", "aliases": [],
                  "alias_by": {}, "summary": None, "recap": None, "see": [], "date": None, "by": ev["author"], "at": ev["at"],
@@ -311,6 +413,67 @@ class Annotations:
                     e["requested_by"] = ev["requested_by"]
         elif op == "delete-entity":
             self.entities.pop(ev["entity"], None)
+            self._unfile_all(f"entity:{ev['entity']}")
+            for lid in [lid for lid, ln in self.links.items() if ev["entity"] in (ln["from"], ln["to"])]:
+                self.links.pop(lid)
+                self._unfile_all(f"link:{lid}")
+        elif op == "define-link":
+            ln = {"link": ev["link"], "from": ev["from"], "rel": " ".join(ev["rel"].split()), "to": ev["to"],
+                  "summary": None, "see": [], "date": None, "by": ev["author"], "at": ev["at"], "set_by": {}, "set_at": {},
+                  **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+            for f in LINK_FIELDS:
+                if f in ev:
+                    if f != "rel":
+                        ln[f] = ev[f]
+                    ln["set_by"][f], ln["set_at"][f] = ev["author"], ev["at"]
+            self.links[ev["link"]] = ln
+        elif op == "edit-link":
+            ln = self.links.get(ev["link"])
+            if ln:
+                for f in LINK_FIELDS:
+                    if f in ev:
+                        ln[f] = " ".join(ev[f].split()) if f == "rel" else ev[f]
+                        ln["set_by"][f], ln["set_at"][f] = ev["author"], ev["at"]
+                ln["edited_at"], ln["edited_by"] = ev["at"], ev["author"]
+        elif op == "delete-link":
+            self.links.pop(ev["link"], None)
+            self._unfile_all(f"link:{ev['link']}")
+        elif op == "define-bundle":
+            self.bundles[ev["bundle"]] = {
+                "bundle": ev["bundle"], "name": " ".join(ev["name"].split()), "parts": list(ev["parts"]),
+                "summary": ev.get("summary"), "from": ev.get("from"), "by": ev["author"], "at": ev["at"],
+                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+        elif op == "edit-bundle":
+            b = self.bundles.get(ev["bundle"])
+            if b:
+                if "name" in ev:
+                    b["name"] = " ".join(ev["name"].split())
+                if "summary" in ev:
+                    b["summary"] = ev["summary"]
+                gone = {target_key(p) for p in ev.get("remove_parts", [])}
+                b["parts"] = [p for p in b["parts"] if target_key(p) not in gone]
+                have = {target_key(p) for p in b["parts"]}
+                b["parts"] += [p for p in ev.get("add_parts", []) if target_key(p) not in have]
+                b["edited_at"], b["edited_by"] = ev["at"], ev["author"]
+        elif op == "delete-bundle":
+            self.bundles.pop(ev["bundle"], None)
+            self._unfile_all(f"bundle:{ev['bundle']}")
+            self.tags.pop(target_key({"bundle": ev["bundle"]}), None)
+            for nid in [nid for nid, n in self.notes.items() if bundle_of(n["target"]) == ev["bundle"]]:
+                self.notes.pop(nid)
+                self._unfile_all(f"note:{nid}")
+        elif op == "define-facet":
+            self.facets[ev["facet"]] = {k: ev[k] for k in ("facet", "description", "color") if k in ev} \
+                | {"by": ev["author"], "at": ev["at"]}
+        elif op == "edit-facet":
+            d = self.facets.setdefault(ev["facet"], {"facet": ev["facet"], "by": ev["author"]})
+            d.update({k: ev[k] for k in ("description", "color") if k in ev})
+        elif op == "file":
+            self.filed.setdefault(ev["facet"], {})[item_key(ev["item"])] = {
+                "facet": ev["facet"], "item": ev["item"], "by": ev["author"], "at": ev["at"],
+                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+        elif op == "unfile":
+            self.filed.get(ev["facet"], {}).pop(item_key(ev["item"]), None)
         elif op == "reserve-numbers":
             self.reservations[ev["id"]] = {"reservation": ev["id"], "series": ev["series"], "first": ev["first"],
                                            "last": ev["last"], "name": ev.get("name"), "by": ev["author"],
@@ -340,6 +503,64 @@ class Annotations:
                 return e
         return None
 
+    def link_between(self, frm, rel: str, to) -> dict | None:
+        """The link from ``frm`` to ``to`` with this relation (folded), if there is one."""
+        from .entities import fold_text
+        f = " ".join(fold_text(rel or "").split())
+        for ln in self.links.values():
+            if ln["from"] == frm and ln["to"] == to and " ".join(fold_text(ln["rel"]).split()) == f:
+                return ln
+        return None
+
+    def bundle_named(self, name: str) -> dict | None:
+        f = " ".join(str(name).casefold().split())
+        return next((b for b in self.bundles.values() if " ".join(b["name"].casefold().split()) == f), None)
+
+    def find_bundle(self, ref: str) -> str:
+        """A bundle's ID from its ID, an ID prefix or its name."""
+        ref = str(ref).strip()
+        ref = self.bundle_alias.get(ref, ref)
+        if ref in self.bundles:
+            return ref
+        hits = [b for b in self.bundles.values()
+                if " ".join(b["name"].casefold().split()) == " ".join(ref.casefold().split())] or \
+            [b for b in self.bundles.values() if len(ref) >= 4 and b["bundle"].startswith(ref)] or \
+            [b for b in self.bundles.values() if ref and b["name"].casefold().startswith(ref.casefold())] or \
+            [b for b in self.bundles.values() if len(ref) >= 3 and ref.casefold() in b["name"].casefold()]
+        if len(hits) == 1:
+            return hits[0]["bundle"]
+        raise Refused(f"no bundle {ref!r}" if not hits else f"bundle {ref!r} could be {', '.join(b['name'] for b in hits)}")
+
+    def bundles_of(self, doc: str) -> list[dict]:
+        """The bundles that hold a document, or part of it."""
+        return [b for b in self.bundles.values() if any(p.get("doc") == doc for p in b["parts"])]
+
+    def _unfile_all(self, key: str):
+        for per in self.filed.values():
+            per.pop(key, None)
+
+    def item_exists(self, item) -> bool:
+        k = item_key(item)
+        kind, _, ref = k.partition(":")
+        return bool(ref) and ref in {"entity": self.entities, "link": self.links, "note": self.notes,
+                                     "tag": self.definitions, "bundle": self.bundles}.get(kind, {})
+
+    def facets_of(self, item) -> list[str]:
+        """The facets an item is filed under. A reply is filed where its thread
+        is, and a tag application where its tag is."""
+        if isinstance(item, dict) and "note" in item:
+            n, seen = self.notes.get(item["note"]), set()
+            while n and n.get("parent") in self.notes and n["note"] not in seen:
+                seen.add(n["note"])
+                n = self.notes[n["parent"]]
+            keys = {f"note:{item['note']}"} | ({f"note:{n['note']}"} if n else set())
+        else:
+            keys = {item_key(item)}
+        return sorted(f for f, per in self.filed.items() if keys & set(per))
+
+    def in_facet(self, facet: str | None, item) -> bool:
+        return facet is None or facet in self.facets_of(item)
+
     # -- the rules --------------------------------------------------------------------
 
     def check(self, ev: dict, replaying=False):
@@ -350,6 +571,15 @@ class Annotations:
         privilege call by Claude is then kept, as a flag: productions act only
         on a person's (produce.py), and the replay reports it."""
         op, author = ev["op"], ev["author"]
+        if bundle_of(ev.get("target")) is not None:
+            b = self.bundles.get(ev["target"]["bundle"])
+            if b is None:
+                raise Refused(f"no bundle {ev['target']['bundle']}")
+            if op == "tag" and is_privilege_call(ev["tag"]):
+                raise Refused(f"a production withholds and redacts documents, not bundles: apply {ev['tag']!r} "
+                              f"to the parts of {b['name']!r} (ann tag … bundle:{b['bundle']} --parts)")
+        if op in ("define-bundle", "edit-bundle", "delete-bundle"):
+            self._check_bundle(ev, author)
         if op == "define-tag":
             if ev["tag"] in self.definitions:
                 raise Refused(f"tag {ev['tag']!r} is already defined; use edit-tag")
@@ -414,6 +644,41 @@ class Annotations:
                 raise Refused(f"that reservation is {r['by']}'s, made on another installation or by someone else")
             if op == "release-numbers" and r.get("used"):
                 raise Refused("those numbers are on documents already; they can't be given back")
+        if op in ("define-link", "edit-link"):
+            self._check_link(ev, author)
+        elif op == "delete-link":
+            ln = self.links.get(ev["link"])
+            if ln is None:
+                raise Refused(f"no link {ev['link']}")
+            if author == CLAUDE and (is_user(ln["by"]) or any(is_user(b) for b in ln["set_by"].values())):
+                raise Refused(f"link {ln['link']} has the user's work in it; Claude can't delete it")
+        elif op == "define-facet":
+            if not str(ev["facet"]).strip():
+                raise Refused("a facet needs a name")
+            if ev["facet"] in self.facets:
+                raise Refused(f"facet {ev['facet']!r} is already defined; use edit-facet")
+        elif op == "edit-facet":
+            d = self.facets.get(ev["facet"])
+            if d is None:
+                raise Refused(f"no facet {ev['facet']!r}")
+            if author == CLAUDE and is_user(d["by"]):
+                raise Refused(f"facet {ev['facet']!r} was defined by {d['by']}; Claude can't edit it")
+        elif op in ("file", "unfile"):
+            if ev["facet"] not in self.facets:
+                import difflib
+                near = difflib.get_close_matches(ev["facet"].lower(), list(self.facets), n=3, cutoff=0.7)
+                raise Refused(f"no facet {ev['facet']!r} is defined" + (f" (did you mean {', '.join(near)}?)" if near else "")
+                              + "; define it first with define-facet")
+            if item_key(ev.get("item")) == "?":
+                raise Refused('an item is {"entity": ID}, {"link": ID}, {"note": ID}, {"bundle": ID} or {"tag": NAME}')
+            if op == "file" and not self.item_exists(ev["item"]):
+                raise Refused(f"no {item_key(ev['item']).replace(':', ' ', 1)}")
+            if op == "unfile":
+                f = self.filed.get(ev["facet"], {}).get(item_key(ev["item"]))
+                if f is None:
+                    raise Refused(f"that isn't filed under {ev['facet']!r}")
+                if author == CLAUDE and is_user(f["by"]):
+                    raise Refused(f"it was filed under {ev['facet']!r} by {f['by']}; Claude can't unfile it")
         if op in ("define-entity", "edit-entity") and ev.get("date") is not None and not ENTITY_DATE.fullmatch(str(ev["date"])):
             raise Refused(f"an entity's date is YYYY-MM-DD, YYYY-MM or YYYY, not {ev['date']!r}")
         if op == "define-entity":
@@ -431,6 +696,9 @@ class Annotations:
                 if op == "delete-entity" and (is_user(e["by"]) or any(is_user(b) for b in e["set_by"].values())
                                               or any(is_user(b) for b in e["alias_by"].values())):
                     raise Refused(f"entity {e['entity']} ({e['name']}) has the user's work in it; Claude can't delete it")
+                if op == "delete-entity" and any(is_user(ln["by"]) or any(is_user(b) for b in ln["set_by"].values())
+                                                 for ln in self.links.values() if e["entity"] in (ln["from"], ln["to"])):
+                    raise Refused(f"entity {e['entity']} ({e['name']}) has the user's links; Claude can't delete it")
                 for f in ENTITY_FIELDS:
                     if f in ev and is_user(e["set_by"].get(f, "")) and ev[f] != e[f]:
                         raise Refused(f"the {f} of {e['name']} was set by {e['set_by'][f]}; Claude can't change it"
@@ -443,6 +711,71 @@ class Annotations:
                     raise Refused(f"{a!r} is not an alias of {e['name']}")
                 if a == ev.get("name", e["name"]):
                     raise Refused(f"{a!r} is the entity's name; rename it first")
+
+    def _check_bundle(self, ev: dict, author: str):
+        op = ev["op"]
+        if op == "define-bundle":
+            if not str(ev.get("name", "")).strip():
+                raise Refused("a bundle needs a name")
+            same = self.bundle_named(ev["name"])
+            if same:
+                raise Refused(f"there is already a bundle {same['name']!r} ({same['bundle']}); "
+                              "add to it with edit-bundle, or give this one another name")
+            if not ev.get("parts"):
+                raise Refused("a bundle needs parts: documents, or ranges in them")
+            return
+        b = self.bundles.get(ev["bundle"])
+        if b is None:
+            raise Refused(f"no bundle {ev['bundle']}")
+        if "name" in ev:
+            if not str(ev["name"]).strip():
+                raise Refused("a bundle needs a name")
+            same = self.bundle_named(ev["name"])
+            if same and same["bundle"] != b["bundle"]:
+                raise Refused(f"there is already a bundle {same['name']!r}")
+        users = is_user(b["by"]) or is_user(b.get("edited_by", ""))
+        if author == CLAUDE and users:
+            raise Refused(f"bundle {b['name']!r} is the user's ({b.get('edited_by') if is_user(b.get('edited_by', '')) else b['by']}); "
+                          f"Claude can't {'delete' if op == 'delete-bundle' else 'change'} it")
+        if op == "delete-bundle" and author == CLAUDE:
+            key = target_key({"bundle": b["bundle"]})
+            if any(is_user(a["by"]) for a in self.tags.get(key, {}).values()) or \
+                    any(is_user(n["by"]) for n in self.notes.values() if bundle_of(n["target"]) == b["bundle"]):
+                raise Refused(f"bundle {b['name']!r} has the user's tags or notes on it; Claude can't delete it")
+        if op == "edit-bundle":
+            have = {target_key(p) for p in b["parts"]}
+            for p in ev.get("remove_parts", []):
+                if target_key(p) not in have:
+                    raise Refused(f"that isn't a part of {b['name']!r}: {locators.format(p)}")
+            gone = {target_key(p) for p in ev.get("remove_parts", [])}
+            left = (have - gone) | {target_key(p) for p in ev.get("add_parts", [])}
+            if not left:
+                raise Refused(f"that would leave {b['name']!r} with no parts; delete it instead")
+
+    def _check_link(self, ev: dict, author: str):
+        if ev["op"] == "define-link":
+            for k in ("from", "to"):
+                if ev.get(k) not in self.entities:
+                    raise Refused(f"no entity {ev.get(k)!r} to link {k}")
+            if ev["from"] == ev["to"]:
+                raise Refused("a link joins two different entities")
+            same = self.link_between(ev["from"], ev["rel"], ev["to"])
+            if same:
+                raise Refused(f"{self.entities[ev['from']]['name']} {ev['rel']} {self.entities[ev['to']]['name']} "
+                              f"is already link {same['link']}; edit it with edit-link")
+            ln = None
+        else:
+            ln = self.links.get(ev["link"])
+            if ln is None:
+                raise Refused(f"no link {ev['link']}")
+        if "rel" in ev and not str(ev["rel"]).strip():
+            raise Refused("a link needs a relation (rel): what one entity is or did to the other")
+        if ev.get("date") is not None and not ENTITY_DATE.fullmatch(str(ev["date"])):
+            raise Refused(f"a link's date is YYYY-MM-DD, YYYY-MM or YYYY, not {ev['date']!r}")
+        if ln is not None and author == CLAUDE:
+            for f in LINK_FIELDS:
+                if f in ev and is_user(ln["set_by"].get(f, "")) and ev[f] != ln[f]:
+                    raise Refused(f"the {f} of link {ln['link']} was set by {ln['set_by'][f]}; Claude can't change it")
 
     def group_conflicts(self, ev: dict) -> list[dict]:
         """Other tags of the same exclusive group on the target, to remove first."""
@@ -465,18 +798,47 @@ class Annotations:
             return None
         return item if item and item.get("carried") else None
 
-    def applications(self) -> list[dict]:
-        return [a for per in self.tags.values() for a in per.values()]
+    def applications(self, parts=False) -> list[dict]:
+        """Every tag application. With ``parts``, one on a bundle is one on
+        each of its parts instead (with ``via``: the bundle), for code that
+        acts on documents."""
+        out = [a for per in self.tags.values() for a in per.values()]
+        if not parts:
+            return out
+        flat = []
+        for a in out:
+            b = bundle_of(a["target"])
+            if b is None:
+                flat.append(a)
+            elif b in self.bundles:
+                flat += [{**a, "target": p, "via": {"bundle": b}} for p in self.bundles[b]["parts"]]
+        return flat
 
     def doc_tags(self) -> dict[str, set[str]]:
-        """Document ID -> tags on the document or anywhere in it."""
+        """Document ID -> tags on the document, anywhere in it, or on a
+        bundle it (or part of it) is in."""
         out: dict[str, set[str]] = {}
         for a in self.applications():
-            out.setdefault(a["target"]["doc"], set()).add(a["tag"])
+            b = bundle_of(a["target"])
+            if b is None:
+                out.setdefault(a["target"]["doc"], set()).add(a["tag"])
+            elif b in self.bundles:
+                for p in self.bundles[b]["parts"]:
+                    out.setdefault(p["doc"], set()).add(a["tag"])
         return out
 
 
 ENTITY_FIELDS = ("name", "kind", "summary", "recap", "see", "date")
+LINK_FIELDS = ("rel", "summary", "see", "date")
+ITEM_KINDS = ("entity", "link", "note", "tag", "bundle")
+
+
+def item_key(item) -> str:
+    """``kind:ref`` for a filed item (``{"entity": ID}`` and so on), or ``?``."""
+    if not isinstance(item, dict) or len(item) != 1:
+        return "?"
+    (k, v), = item.items()
+    return f"{k}:{v}" if k in ITEM_KINDS and isinstance(v, str) and v else "?"
 
 
 # an event's date: a day, a month or a year (DATES.md)
@@ -495,7 +857,14 @@ def current_tags(m: Matter) -> dict[str, set[str]]:
 
 def normalize_target(m: Matter, loc) -> dict:
     """A checked, durable target: broken locators are refused, and text
-    ranges get their layer and quote fingerprint from the store."""
+    ranges get their layer and quote fingerprint from the store. A bundle
+    (``{"bundle": ID}`` or ``bundle:ID``) is checked when it's written."""
+    if isinstance(loc, str) and loc.startswith("bundle:"):
+        loc = {"bundle": loc[7:].strip()}
+    if isinstance(loc, dict) and "bundle" in loc:
+        if set(loc) != {"bundle"} or not isinstance(loc["bundle"], str) or not loc["bundle"]:
+            raise Refused('a bundle target is {"bundle": ID} and nothing else')
+        return {"bundle": loc["bundle"]}
     r = locators.resolve(m, loc)
     if r["status"] == "broken":
         raise Refused(f"locator is broken: {r.get('error')}")
@@ -523,6 +892,16 @@ OPS = {
     "define-entity": (("name",), ("kind", "aliases", "summary", "recap", "see", "date")),
     "edit-entity": (("entity",), ("name", "kind", "summary", "recap", "see", "date", "add_aliases", "remove_aliases")),
     "delete-entity": (("entity",), ()),
+    "define-link": (("from", "rel", "to"), ("summary", "see", "date")),
+    "edit-link": (("link",), ("rel", "summary", "see", "date")),
+    "delete-link": (("link",), ()),
+    "define-facet": (("facet",), ("description", "color")),
+    "edit-facet": (("facet",), ("description", "color")),
+    "file": (("facet", "item"), ()),
+    "unfile": (("facet", "item"), ()),
+    "define-bundle": (("name", "parts"), ("summary", "from")),
+    "edit-bundle": (("bundle",), ("name", "summary", "add_parts", "remove_parts")),
+    "delete-bundle": (("bundle",), ()),
     "reserve-numbers": (("series", "first", "last"), ("name",)),
     "release-numbers": (("reservation",), ()),
     "use-numbers": (("reservation",), ()),
@@ -552,7 +931,7 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
     ev = {"op": op, **{k: req[k] for k in required + optional if req.get(k) is not None}}
     if "target" in ev:
         ev["target"] = normalize_target(m, ev["target"])
-    for k in ("aliases", "add_aliases", "remove_aliases", "see"):
+    for k in ("aliases", "add_aliases", "remove_aliases", "see", "parts"):
         if k in ev and not isinstance(ev[k], list):
             raise Refused(f"{k} must be a list")
     for k in ("aliases", "add_aliases", "remove_aliases"):
@@ -560,10 +939,26 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
             ev[k] = [" ".join(str(a).split()) for a in ev[k] if str(a).strip()]
     if "see" in ev:
         ev["see"] = [normalize_target(m, t) for t in ev["see"]]
+    for k in ("parts", "add_parts", "remove_parts"):
+        if k in ev:
+            if not isinstance(ev[k], list):
+                raise Refused(f"{k} must be a list")
+            ts = [normalize_target(m, t) for t in ev[k]]
+            if any("bundle" in t for t in ts):
+                raise Refused("a bundle's parts are documents or ranges in them, not other bundles")
+            ev[k] = list({target_key(t): t for t in ts}.values())
+    if op == "define-bundle":
+        ev["bundle"] = "b_" + new_event_id()[3:]
+        ev["name"] = " ".join(str(ev["name"]).split())
     if op == "define-entity":
         ev["entity"] = "e_" + new_event_id()[3:]
     if op in ("note", "reply"):
         ev["note"] = "n_" + new_event_id()[3:]
+    if op == "define-link":
+        ev["link"] = "l_" + new_event_id()[3:]
+        ev["rel"] = " ".join(str(ev["rel"]).split())
+    if op in ("define-facet", "edit-facet", "file", "unfile"):
+        ev["facet"] = " ".join(str(ev["facet"]).split())
     ev["author"] = author
     if req.get("requested_by"):
         ev["requested_by"] = str(req["requested_by"])
@@ -577,6 +972,26 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
         ann = Annotations.load(m)
         if ev.get("entity") in ann.entity_alias:     # merged with one added on another installation
             ev["entity"] = ann.entity_alias[ev["entity"]]
+        for k in ("from", "to") if op == "define-link" else ():
+            ev[k] = ann.entity_alias.get(ev[k], ev[k])
+        if ev.get("link") in ann.link_alias:
+            ev["link"] = ann.link_alias[ev["link"]]
+        if op in ("edit-bundle", "delete-bundle") or bundle_of(ev.get("target")):
+            # a bundle by ID, ID prefix or name
+            ref = ev["bundle"] if op in ("edit-bundle", "delete-bundle") else ev["target"]["bundle"]
+            bid = ann.find_bundle(ref)
+            if op in ("edit-bundle", "delete-bundle"):
+                ev["bundle"] = bid
+            else:
+                ev["target"] = {"bundle": bid}
+        if op in ("file", "unfile") and isinstance(ev["item"], dict):
+            if "bundle" in ev["item"]:
+                ev["item"] = {"bundle": ann.find_bundle(ev["item"]["bundle"])}
+            for k, table in (("entity", ann.entity_alias), ("link", ann.link_alias)):
+                if ev["item"].get(k) in table:
+                    ev["item"] = {k: table[ev["item"][k]]}
+        if op == "file" and item_key(ev["item"]) in ann.filed.get(ev["facet"], {}):
+            return []    # already filed there
         pending = []
         if op == "tag":
             if ev["tag"] in ann.tags.get(target_key(ev["target"]), {}):
@@ -692,8 +1107,8 @@ def note_check(m: Matter, body: str) -> list[dict]:
 
 
 def entity_check(m: Matter, req: dict) -> list[dict]:
-    """Problems in an entity's summary or recap by Claude: no typed quotations
-    (point at the words with ``see`` instead)."""
+    """Problems in an entity's or link's summary or recap by Claude: no typed
+    quotations (point at the words with ``see`` instead)."""
     out = []
     for f in ("summary", "recap"):
         if req.get(f):
@@ -795,5 +1210,20 @@ def carry_over(m: Matter, pairs: list[tuple[str, str]], person: str, reason: str
                 new_id[n["note"]] = written_ev["note"]
                 carried.append({"note": written_ev["note"], "target": target, "from_note": n["note"],
                                 **({"unplaced": True} if more.get("unplaced") else {})})
+            # bundles: the replacement joins each bundle the old document is in
+            for b in ann.bundles_of(old):
+                adds = [t for t in (place(p) for p in b["parts"] if p.get("doc") == old) if t is not None]
+                have = {target_key(p) for p in b["parts"]}
+                adds = [t for t in {target_key(t): t for t in adds}.values() if target_key(t) not in have]
+                if not adds:
+                    continue
+                users = is_user(b["by"]) or is_user(b.get("edited_by", ""))
+                try:
+                    emit({"op": "edit-bundle", "bundle": b["bundle"], "add_parts": adds,
+                          "author": person if users else CLAUDE})
+                except Refused as e:
+                    skipped.append({"bundle": b["bundle"], "why": str(e)})
+                    continue
+                carried.append({"bundle": b["bundle"], "added": adds})
         save_replay(m, ann)
     return {"carried": carried, "not_carried": skipped}

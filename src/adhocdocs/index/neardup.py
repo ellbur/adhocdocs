@@ -4,12 +4,19 @@ about the same fraction of places as their shingle sets overlap (Jaccard
 similarity), so comparing signatures finds versions and near copies
 without comparing texts.
 
+It also keeps, as a plain file the viewer and the graph read,
+``links.json``: ``{"v": 1, "as_of": cursor, "links": {doc: [{"rel", "doc",
+…}]}}``, how documents relate (replies, quotations, versions, copies:
+:func:`adhocdocs.analysis.doc_links`). Rewritten when the store has changed
+since it was written.
+
 Schema::
 
     sigs(text_hash PRIMARY KEY, sig BLOB, shingles INTEGER)
         sig: PERMUTATIONS uint32 values
 """
 
+import json
 import zlib
 
 import numpy as np
@@ -67,3 +74,36 @@ class NearDupIndex(TextIndex):
 
     def signatures(self) -> dict[str, tuple[np.ndarray, int]]:
         return {h: (np.frombuffer(b, dtype=np.uint32), n) for h, b, n in self.db.execute("SELECT * FROM sigs")}
+
+    # -- how documents relate ----------------------------------------------------------------
+
+    def update(self, progress=None) -> int:
+        n = super().update(progress)
+        try:
+            self.write_links()
+        except Exception:           # a convenience for the viewer and the graph; search works without it
+            pass
+        return n
+
+    def links_path(self):
+        return self.dir / "links.json"
+
+    def write_links(self, force=False) -> dict:
+        """Write ``links.json`` if the store has changed since it was written."""
+        from ..analysis import doc_links
+        as_of = self.m.cursor()
+        try:
+            old = json.loads(self.links_path().read_text(encoding="utf-8"))
+            if old.get("as_of") == as_of and not force:
+                return old
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        data = {"v": 1, "as_of": as_of, "links": doc_links(self.m)}
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.dir / "links.tmp"
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self.links_path())
+        return data
+
+    def links(self) -> dict[str, list[dict]]:
+        return self.write_links()["links"]

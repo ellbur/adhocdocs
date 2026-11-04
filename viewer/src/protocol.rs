@@ -221,6 +221,23 @@ impl Handler {
     }
 }
 
+/// How a document relates to others, beyond its family: replies, quotations,
+/// versions and copies (analysis.doc_links), as the near-duplicate index
+/// keeps them in `links.json`. Exact duplicates are listed apart, so copies
+/// of the same content are left out here.
+pub fn related(m: &crate::matter::Matter, doc: &str) -> Vec<Value> {
+    let p = m.root.join("workspace/.adhoc/indexes/neardup/links.json");
+    let Some(v) = std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { return vec![] };
+    let dupes = m.duplicates(doc);
+    v["links"][doc].as_array().into_iter().flatten().filter_map(|x| {
+        let d = x["doc"].as_str()?;
+        if !m.live(d) || (x["rel"] == "copy" && dupes.iter().any(|y| y == d)) { return None; }
+        let meta = m.metadata(d);
+        Some(json!({"rel": x["rel"], "doc": d, "name": meta["subject"].as_str().or(meta["name"].as_str()),
+                    "date": meta["date"], "similarity": x["similarity"], "containment": x["containment"]}))
+    }).collect()
+}
+
 /// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
 ///
 /// The rules that resolve conflicts between installations are Python's
@@ -241,7 +258,13 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
     let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
     let mut notes: Vec<(String, Value)> = vec![];
     let mut entities: Vec<(String, Value)> = vec![];
-    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
+    let mut links: Vec<(String, Value)> = vec![];
+    let mut facets: Vec<(String, Value)> = vec![];
+    let mut filed: Vec<(String, Value)> = vec![]; // (facet + " " + item key, filing)
+    let mut bundles: Vec<(String, Value)> = vec![];
+    let item_key = |i: &Value| i.as_object().and_then(|o| o.iter().next())
+        .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(""))).unwrap_or_default();
+    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"], "bundle": t["bundle"]}).to_string();
     for ev in events {
         let tag = ev["tag"].as_str().unwrap_or("").to_string();
         match ev["op"].as_str().unwrap_or("") {
@@ -296,7 +319,11 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     }
                 }
             }
-            "delete-note" => notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str()),
+            "delete-note" => {
+                notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str());
+                let k = format!("note:{}", ev["note"].as_str().unwrap_or(""));
+                filed.retain(|(_, f)| item_key(&f["item"]) != k);
+            }
             // the entity list (see entities.py and annotations.py, which this follows)
             "define-entity" => {
                 let mut aliases: Vec<Value> = vec![];
@@ -328,7 +355,89 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                     e["edited_at"] = ev["at"].clone();
                 }
             }
-            "delete-entity" => entities.retain(|(id, _)| Some(id.as_str()) != ev["entity"].as_str()),
+            "delete-entity" => {
+                let id = ev["entity"].as_str().unwrap_or("").to_string();
+                entities.retain(|(x, _)| *x != id);
+                let gone: Vec<String> = links.iter().filter(|(_, l)| l["from"] == json!(id) || l["to"] == json!(id))
+                    .map(|(x, _)| x.clone()).collect();
+                links.retain(|(x, _)| !gone.contains(x));
+                let keys: Vec<String> = std::iter::once(format!("entity:{id}")).chain(gone.iter().map(|l| format!("link:{l}"))).collect();
+                filed.retain(|(_, f)| !keys.contains(&item_key(&f["item"])));
+            }
+            // links between entities, and facets (annotations.py, which this follows)
+            "define-link" => {
+                links.push((ev["link"].as_str().unwrap_or("").to_string(), json!({
+                    "link": ev["link"], "from": ev["from"], "to": ev["to"],
+                    "rel": ev["rel"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
+                    "summary": ev["summary"], "see": ev.get("see").cloned().unwrap_or(json!([])), "date": ev["date"],
+                    "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-link" => {
+                if let Some((_, l)) = links.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["link"].as_str()) {
+                    for k in ["rel", "summary", "see", "date"] {
+                        if ev.get(k).is_some() { l[k] = ev[k].clone(); }
+                    }
+                    l["edited_by"] = ev["author"].clone();
+                    l["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-link" => {
+                let id = ev["link"].as_str().unwrap_or("").to_string();
+                links.retain(|(x, _)| *x != id);
+                filed.retain(|(_, f)| item_key(&f["item"]) != format!("link:{id}"));
+            }
+            // bundles: recorded metadocuments (annotations.py, metadocs.py)
+            "define-bundle" => {
+                bundles.push((ev["bundle"].as_str().unwrap_or("").to_string(), json!({
+                    "bundle": ev["bundle"], "name": ev["name"], "parts": ev.get("parts").cloned().unwrap_or(json!([])),
+                    "summary": ev["summary"], "from": ev["from"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-bundle" => {
+                if let Some((_, b)) = bundles.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["bundle"].as_str()) {
+                    for k in ["name", "summary"] {
+                        if ev.get(k).is_some() { b[k] = ev[k].clone(); }
+                    }
+                    let gone: Vec<String> = ev["remove_parts"].as_array().into_iter().flatten().map(|p| key(p)).collect();
+                    let mut parts: Vec<Value> = b["parts"].as_array().cloned().unwrap_or_default();
+                    parts.retain(|p| !gone.contains(&key(p)));
+                    for p in ev["add_parts"].as_array().into_iter().flatten() {
+                        if !parts.iter().any(|q| key(q) == key(p)) { parts.push(p.clone()); }
+                    }
+                    b["parts"] = json!(parts);
+                    b["edited_by"] = ev["author"].clone();
+                }
+            }
+            "delete-bundle" => {
+                let id = ev["bundle"].as_str().unwrap_or("").to_string();
+                bundles.retain(|(x, _)| *x != id);
+                tags.retain(|(_, t)| t["target"]["bundle"] != json!(id));
+                let gone: Vec<String> = notes.iter().filter(|(_, n)| n["target"]["bundle"] == json!(id))
+                    .map(|(x, _)| format!("note:{x}")).collect();
+                notes.retain(|(_, n)| n["target"]["bundle"] != json!(id));
+                filed.retain(|(_, f)| { let k = item_key(&f["item"]); k != format!("bundle:{id}") && !gone.contains(&k) });
+            }
+            "define-facet" => {
+                let f = ev["facet"].as_str().unwrap_or("").to_string();
+                if !facets.iter().any(|(x, _)| *x == f) {
+                    facets.push((f, json!({"facet": ev["facet"], "description": ev["description"], "color": ev["color"], "by": ev["author"]})));
+                }
+            }
+            "edit-facet" => {
+                if let Some((_, d)) = facets.iter_mut().find(|(x, _)| Some(x.as_str()) == ev["facet"].as_str()) {
+                    for k in ["description", "color"] {
+                        if ev.get(k).is_some() { d[k] = ev[k].clone(); }
+                    }
+                }
+            }
+            "file" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+                filed.push((k, json!({"facet": ev["facet"], "item": ev["item"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "unfile" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+            }
             _ => {}
         }
     }
@@ -343,7 +452,11 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
         "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
     json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
            "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
-           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>()})
+           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
+           "links": links.into_iter().map(|(_, l)| l).collect::<Vec<_>>(),
+           "facets": facets.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "filed": filed.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "bundles": bundles.into_iter().map(|(_, b)| b).collect::<Vec<_>>()})
 }
 
 impl Handler {
@@ -424,7 +537,8 @@ impl Handler {
             let info = json!({"doc": doc, "content": content, "size": size, "meta": meta, "custodian": obj.get("custodian"),
                               "here": size.is_some(), "fetchable": size.is_none() && m.limited(),
                               "layers": layers, "children": children, "parent": parent,
-                              "duplicates": m.duplicates(&doc), "page_labels": labels, "bates": bates_for(&m.root, &doc),
+                              "duplicates": m.duplicates(&doc), "related": related(&m, &doc),
+                              "page_labels": labels, "bates": bates_for(&m.root, &doc),
                               "dated": crate::chrono::strip(&m, &doc),
                               "exhibits": exhibits_for(&m.root, &doc)});
             (doc, content, info, kind, name)
@@ -669,6 +783,15 @@ fn image_mime(b: &[u8]) -> Option<&'static str> {
 
 /// Remove scripts, event handlers, frames, objects and remote resources.
 /// Panes keep forms, data-* attributes and loc:/svc: links.
+const SVG_TAGS: [&str; 18] = ["svg", "g", "defs", "marker", "path", "rect", "circle", "ellipse", "line", "polyline",
+    "polygon", "text", "tspan", "desc", "pattern", "linearGradient", "stop", "symbol"];
+// presentation attributes (none of them takes a URL but marker-*, whose url(#id) points inside the drawing)
+const SVG_ATTRIBUTES: [&str; 42] = ["d", "x", "y", "dx", "dy", "cx", "cy", "r", "rx", "ry", "x1", "y1", "x2", "y2", "width", "height",
+    "points", "transform", "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-dasharray", "stroke-opacity",
+    "stroke-linecap", "stroke-linejoin", "opacity", "font-size", "font-weight", "font-family", "font-style", "text-anchor",
+    "dominant-baseline", "marker-end", "marker-start", "marker-mid", "visibility", "display", "vector-effect", "paint-order",
+    "text-decoration"];
+
 pub fn sanitize(html: &str) -> String {
     let html = remote_images(html);
     let mut b = ammonia::Builder::default();
@@ -686,6 +809,15 @@ pub fn sanitize(html: &str) -> String {
         .add_tag_attributes("label", &["for"])
         .add_tag_attributes("link", &["rel", "href"])
         .add_tag_attributes("meta", &["charset"])
+        // drawings: diagrams (`view graph`) and Claude's own SVG. Shapes, text and
+        // markers only: no script, links, <use>, images, foreignObject or animation
+        .add_tags(&SVG_TAGS)
+        .add_tag_attributes("svg", &["xmlns", "width", "height", "viewBox", "preserveAspectRatio"])
+        .add_tag_attributes("marker", &["viewBox", "refX", "refY", "markerWidth", "markerHeight", "orient", "markerUnits"])
+        .add_tag_attributes("pattern", &["width", "height", "patternUnits", "patternTransform"])
+        .add_tag_attributes("linearGradient", &["x1", "y1", "x2", "y2", "gradientUnits", "gradientTransform"])
+        .add_tag_attributes("stop", &["offset", "stop-color", "stop-opacity"])
+        .add_generic_attributes(&SVG_ATTRIBUTES)
         .url_schemes(["loc", "svc"].into_iter().collect())
         .url_relative(ammonia::UrlRelative::PassThrough)
         .link_rel(None)
@@ -784,6 +916,84 @@ mod tests {
         assert!(out.contains("remote image, not loaded: https://e.com/x.png"));
         assert!(out.contains(r#"href="loc:doc:sha256:ab@sha256:cd#char=1,2""#), "{}", out);
         assert!(out.contains(r#"data-text="doc:sha256:ab""#) && out.contains(r#"action="svc:triage""#) && out.contains("checkbox"));
+    }
+
+    #[test]
+    fn sanitize_keeps_drawings_but_not_their_scripts() {
+        let out = sanitize(r##"<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10">
+            <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 z"/></marker></defs>
+            <path class="e" d="M1,1 C2,2 3,3 4,4" marker-end="url(#arr)"><title>a</title></path>
+            <g class="n" data-locator="doc:sha256:ab" transform="translate(1,2)"><rect width="5" height="3" rx="2"/><text x="1" y="2">Voss</text></g>
+            <script>x()</script><a href="javascript:x()"><text>j</text></a><foreignObject><p>f</p></foreignObject>
+            <use href="#arr"/><image href="https://e.com/x.png"/><animate attributeName="href" to="javascript:x()"/>
+            <g onclick="x()"><rect/></g></svg></div>"##);
+        for kept in ["<svg", "viewBox=\"0 0 10 10\"", "refX=\"9\"", "marker-end=\"url(#arr)\"", "data-locator=\"doc:sha256:ab\"",
+                     "transform=\"translate(1,2)\"", "<text x=\"1\" y=\"2\">Voss</text>", "<title>a</title>", "rx=\"2\""] {
+            assert!(out.contains(kept), "{} not in {}", kept, out);
+        }
+        for gone in ["script", "javascript", "foreignObject", "<use", "<image", "animate", "onclick"] {
+            assert!(!out.contains(gone), "{} in {}", gone, out);
+        }
+    }
+
+    #[test]
+    fn links_and_facets_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-links-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-entity", "entity": "e_a", "name": "Rita Ames", "author": "claude"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-entity", "entity": "e_b", "name": "Dock 4 delivery", "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-entity", "entity": "e_c", "name": "Harrowgate", "author": "claude"}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "define-link", "link": "l_1", "from": "e_a", "rel": "signed  for", "to": "e_b",
+                               "see": [{"doc": "d"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "define-link", "link": "l_2", "from": "e_c", "rel": "shipped", "to": "e_b", "author": "claude"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "edit-link", "link": "l_1", "date": "2026-03-09", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "define-facet", "facet": "delivery", "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_1"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_9", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_2"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_10", "at": "t", "op": "file", "facet": "delivery", "item": {"entity": "e_c"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_11", "at": "t", "op": "delete-entity", "entity": "e_c", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // deleting Harrowgate took its link and its filings with it
+        assert_eq!(st["links"].as_array().unwrap().len(), 1);
+        assert_eq!(st["links"][0]["rel"], "signed for");
+        assert_eq!(st["links"][0]["date"], "2026-03-09");
+        assert_eq!(st["facets"][0]["facet"], "delivery");
+        let filed: Vec<&Value> = st["filed"].as_array().unwrap().iter().map(|f| &f["item"]).collect();
+        assert_eq!(filed, [&serde_json::json!({"link": "l_1"})]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn bundles_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-bundles-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-tag", "tag": "hot", "author": "user:a"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-bundle", "bundle": "b_1", "name": "Pack",
+                               "parts": [{"doc": "d1"}, {"doc": "d2"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-bundle", "bundle": "b_2", "name": "Other",
+                               "parts": [{"doc": "d3"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_1"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_2"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "note", "note": "n_1", "target": {"bundle": "b_2"}, "body": "x", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "edit-bundle", "bundle": "b_1", "add_parts": [{"doc": "d4"}],
+                               "remove_parts": [{"doc": "d1"}], "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "delete-bundle", "bundle": "b_2", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // two bundles' tags are two applications, not one target
+        assert_eq!(st["bundles"].as_array().unwrap().len(), 1);
+        assert_eq!(st["bundles"][0]["parts"], serde_json::json!([{"doc": "d2"}, {"doc": "d4"}]));
+        assert_eq!(st["tags"].as_array().unwrap().len(), 1);
+        assert_eq!(st["tags"][0]["target"]["bundle"], "b_1");
+        assert!(st["notes"].as_array().unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

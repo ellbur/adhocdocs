@@ -15,6 +15,11 @@ initial (Tom for Thomas). First names alone ("José") and initials ("TK")
 are not counted; search for those. ``people --person X --list F`` writes
 the documents that name someone, each mention a child row.
 
+Document relations (``related``): replies, quotations within a thread,
+versions (near-duplicates, or one text mostly inside another) and copies,
+for every document. The near-duplicate index keeps them in
+``links.json`` for the viewer and the graph (GRAPH.md).
+
 Dates (DATES.md): ``dates DOC`` gives a document's own date, where it came
 from (sent, attached, created, modified), and the dates written in it,
 resolved ("yesterday" in an email is the day before it was sent).
@@ -212,6 +217,116 @@ def groups(m: Matter, threshold=0.8) -> list[dict]:
              "docs": ["doc:" + d for d in by_text[h]]} for h in texts]})
     out.sort(key=lambda g: -g["size"])
     return out
+
+
+# -- how documents relate ----------------------------------------------------------------------
+
+DOC_REL = {"replies-to": "replied-by", "replied-by": "replies-to", "quotes": "quoted-by", "quoted-by": "quotes",
+           "version": "version", "copy": "copy"}
+MIN_SHINGLES = 20       # shorter texts are "contained" in anything that shares a phrase
+# finer bands than groups(): a revision that adds a page can share under half
+# its shingles with the original (similarity ~0.4) yet hold all of it. 42
+# bands of 3 make such a pair a candidate 94% of the time, one at 0.2 29%
+REL_BANDS, REL_ROWS = 42, 3
+
+
+def near_pairs(m: Matter, threshold=0.6, contained=0.7) -> list[tuple[str, str, float, float]]:
+    """Pairs of different primary texts that are near-duplicates (estimated
+    similarity at least ``threshold``) or where the shorter is mostly inside
+    the longer (containment at least ``contained``, both at least
+    MIN_SHINGLES long): ``(longer, shorter, similarity, containment)``.
+    Candidates come from LSH banding, so pairs with low similarity (a short
+    text inside a much longer one) can be missed."""
+    raw = {h: sn for h, sn in _ready(m, "neardup").signatures().items() if sn[1]}
+    by_text = _text_docs(m)
+    raw = {h: sn for h, sn in raw.items() if h in by_text}
+    buckets = defaultdict(list)
+    for h, (s, _) in raw.items():
+        for b in range(REL_BANDS):
+            buckets[(b, s[b * REL_ROWS:(b + 1) * REL_ROWS].tobytes())].append(h)
+    seen, out = set(), []
+    for members in buckets.values():
+        if len(members) > 200:          # boilerplate shared by hundreds of texts says nothing about any two
+            continue
+        for i, a in enumerate(members):
+            for b in members[i + 1:]:
+                pair = (min(a, b), max(a, b))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                (sa, na), (sb, nb) = raw[a], raw[b]
+                j = similarity(sa, sb)
+                c = containment(j, na, nb) if min(na, nb) >= MIN_SHINGLES else 0.0
+                if j >= threshold or c >= contained:
+                    big, small = (a, b) if na >= nb else (b, a)
+                    out.append((big, small, round(j, 3), round(c, 3)))
+    return out
+
+
+def doc_links(m: Matter, threshold=0.6, contained=0.7) -> dict[str, list[dict]]:
+    """How documents relate, beyond families: ``{doc: [{"rel", "doc", …}]}``,
+    both directions listed.
+
+    - ``replies-to`` / ``replied-by``: an email and the message it answers,
+      from its threading headers (a fact of the documents).
+    - ``quotes`` / ``quoted-by``: in one thread, a later message whose text
+      mostly contains an earlier one's (it quotes it below the reply).
+    - ``version``: texts that are near-duplicates, or one mostly inside the
+      other, outside a thread: drafts, revisions, re-sends. Estimated from
+      MinHash, so ``similarity`` and ``containment`` come with it.
+    - ``copy``: another document with the same text (an exact duplicate, or
+      the same text in another format or custodian's copy).
+    """
+    state = m.state
+    live = set(state.live_documents())
+    out: dict[str, list[dict]] = defaultdict(list)
+    added = set()
+
+    def add(a, rel, b, **more):
+        if a == b or a not in live or b not in live or (a, rel, b) in added:
+            return
+        added.add((a, rel, b))
+        added.add((b, DOC_REL[rel], a))
+        out[a].append({"rel": rel, "doc": b, **more})
+        out[b].append({"rel": DOC_REL[rel], "doc": a, **more})
+
+    thread_of = {}
+    try:
+        ts = threads(m)
+    except Exception:
+        ts = []
+    for k, t in enumerate(ts):
+        by_id = {msg["message_id"]: msg["loc"].removeprefix("doc:") for msg in t["messages"] if msg["message_id"]}
+        for msg in t["messages"]:
+            d = msg["loc"].removeprefix("doc:")
+            for c in [d, *(x.removeprefix("doc:") for x in msg["copies"])]:
+                thread_of[c] = k
+            parent = by_id.get(msg["in_reply_to"])
+            if parent:
+                add(d, "replies-to", parent)
+    by_text = _text_docs(m)
+    for docs in by_text.values():
+        for d in docs[1:]:
+            add(docs[0], "copy", d)
+    try:
+        pairs = near_pairs(m, threshold, contained)
+    except Exception:
+        pairs = []
+    rows = _ready(m, "fields").rows()
+    date = lambda d: (rows.get(d) or {}).get("date") or ""
+    for big, small, j, c in pairs:
+        for a in by_text.get(big, []):
+            for b in by_text.get(small, []):
+                if thread_of.get(a) is not None and thread_of.get(a) == thread_of.get(b):
+                    if any(x["rel"] == "replies-to" and x["doc"] == b for x in out.get(a, [])):
+                        continue        # a reply quoting its parent: the reply says it already
+                    later, earlier = (a, b) if date(a) >= date(b) else (b, a)
+                    add(later, "quotes", earlier, containment=c)
+                else:
+                    add(a, "version", b, similarity=j, containment=c)
+    for xs in out.values():
+        xs.sort(key=lambda x: (x["rel"], date(x["doc"])))
+    return dict(out)
 
 
 # -- redline -------------------------------------------------------------------------------------

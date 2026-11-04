@@ -40,7 +40,12 @@ An interpretation reference has ``interp`` (its name), ``output`` (the
 output's sha256, so a changed interpretation breaks the reference) and
 optionally ``ptr`` (a JSON pointer into the output); it can only be shown
 with ``:interp``/``::interp`` (``as=table|tree|value|text|image``), never
-quoted. ``alter`` lists
+quoted. A metadocument reference (METADOCS.md) has ``meta``
+(``thread:<doc>``, ``family:<doc>``, ``bundle:<id>``…) and ``docs``, the
+documents it held when cited; it can be cited (``:cite``) or linked, never
+quoted, and when its documents change (a reply arrives, a bundle is
+edited) it resolves re-anchored, with the new list, so the author looks
+before ``page refs update`` takes it. ``alter`` lists
 alterations, positioned by layer offsets inside the quoted parts:
 
 ``{"replace": [a, b], "with": "T"}``  ``{"insert": p, "text": "…"}``
@@ -156,6 +161,7 @@ class Resolved:
     data: bytes | None = None       # a byte reference: the bytes
     interp: dict | None = None      # an interpretation reference: its record
     ptr: str | None = None          # … and the pointer into its output
+    meta: dict | None = None        # a metadocument reference: what it names (metadocs.describe) and its docs
 
     @property
     def quoted(self) -> bool:
@@ -163,6 +169,8 @@ class Resolved:
 
     @property
     def kind(self) -> str:
+        if self.meta is not None:
+            return "meta"
         if self.interp is not None:
             return "interp"
         if self.data is not None:
@@ -248,9 +256,36 @@ def _resolve_bytes(m, ref: dict) -> Resolved:
     return res
 
 
+def _resolve_meta(m, ref: dict) -> Resolved:
+    """A metadocument reference: it must still name something, and if its
+    documents changed it is re-anchored with the new list."""
+    from . import metadocs
+    rid = ref.get("id", "?")
+    try:
+        u = metadocs.Units(m)
+        d = u.describe(ref["meta"])
+        docs = u.docs(d["ref"])
+    except (metadocs.MetaError, locators.LocatorError, KeyError, ValueError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    if not docs:
+        return Resolved(rid, "broken", error=f"{ref['meta']} names no documents now")
+    res = Resolved(rid, "exact", doc=docs[0], meta={**d, "docs": docs})
+    was = [locators.parse("doc:" + x.removeprefix("doc:"), m.objects)["doc"] for x in ref.get("docs") or []]
+    if was and set(map(m.state.follow, was)) != set(docs):
+        gone, added = len(set(was) - set(docs)), len(set(docs) - set(was))
+        res.status = "re-anchored"
+        res.error = (f"{d['ref']} has changed since it was cited: " + ", ".join(
+            x for x in ([f"{added} more document{'s' * (added > 1)}"] if added else [])
+            + ([f"{gone} gone"] if gone else [])) + "; look, then page refs update")
+        res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "meta": d["ref"], "docs": docs}
+    return res
+
+
 def resolve(m, ref: dict) -> Resolved:
     rid = ref.get("id", "?")
     sel = ref.get("select") or {}
+    if "meta" in ref:
+        return _resolve_meta(m, ref)
     if "interp" in ref:
         return _resolve_interp(m, ref)
     if "bytes" in sel:
@@ -476,6 +511,9 @@ def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
             return d.opts.get("as") or "", "not an interpretation: quote the document with :q, or make an interpretation (interp run)"
         from . import interp
         return interp.shown_as(r.interp, interp.value_of(m, r.interp, r.ptr), d.opts.get("as"), d.kind == "interp-block")
+    if r.kind == "meta":
+        return d.opts.get("as") or "", (f"{r.meta['ref']} is a metadocument: cite it (:cite) or link to it; "
+                                        "to quote, quote a passage in one of its documents")
     if r.kind == "interp":
         return d.opts.get("as") or "", ("an interpretation is Claude's reading, not the document's content, so it "
                                         "can't be quoted; show it with :interp or ::interp")

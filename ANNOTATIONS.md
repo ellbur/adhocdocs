@@ -14,7 +14,12 @@ the basis (`ann flag-privilege`; see [TOOLS.md](TOOLS.md)).
 
 The annotation log also holds the **entity list** (known people,
 organizations, terms… with a summary and a recap), under the same
-authorship rules, field by field: [ENTITIES.md](ENTITIES.md).
+authorship rules, field by field: [ENTITIES.md](ENTITIES.md); the **links**
+between entities; **facets**, issues that entities, links, notes and
+tags are filed under so the viewer can show one issue at a time
+([GRAPH.md](GRAPH.md)); and **bundles**, documents or parts of them treated
+as one, which a tag or note can be on as a whole
+([METADOCS.md](METADOCS.md)).
 
 ## Editing in the GUI: an exception to Principle 1
 
@@ -25,7 +30,8 @@ delete tags and notes directly. Everything else stays programmable.
 
 ## What an annotation is
 
-- **Target:** a document or a locator. Targets are checked when written
+- **Target:** a document, a locator, or a bundle (`{"bundle": ID}`: the
+  set as one thing; [METADOCS.md](METADOCS.md)). Targets are checked when written
   (a broken locator is refused), and text ranges get their quote
   fingerprint from the store.
 - **Tags are per copy.** Tagging one custodian's copy doesn't tag the

@@ -144,6 +144,8 @@ class Page:
         return info
 
     def cite(self, r: Resolved, signal=None) -> str:
+        if r.kind == "meta":
+            return self.cite_meta(r, signal)
         if r.kind == "interp":
             return "Claude’s reading of " + self.cite(_doc_only(r), signal) + f" ({html.escape(r.interp['title'])})"
         style = self.meta.get("cite-style", "default")
@@ -154,6 +156,32 @@ class Page:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return html.escape(mod.cite(info))
+
+
+    def cite_meta(self, r: Resolved, signal=None) -> str:
+        """A metadocument cited as a whole: what it is and how much (a cite
+        style gets ``metadocument``, with each document's own info in
+        ``documents``, and can cite them one by one)."""
+        md = r.meta
+        style = self.meta.get("cite-style", "default")
+        if style != "default":
+            info = {"metadocument": {k: md[k] for k in ("ref", "grain", "name", "first", "last") if k in md},
+                    "documents": [self.cite_info(Resolved(r.id, "exact", doc=d)) for d in md["docs"]], "signal": signal}
+            spec = importlib.util.spec_from_file_location("cite_style", (self.path.parent / style).resolve())
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "cite_meta"):
+                return html.escape(mod.cite_meta(info))
+            return "; ".join(html.escape(mod.cite(i)) for i in info["documents"])
+        n = md["documents"]
+        what = {"thread": ("thread", "message"), "family": ("family", "document"), "copies": ("item", "copy"),
+                "versions": ("text", "version"), "new": ("message, without the text it quotes", "copy"),
+                "bundle": ("bundle", "document")}.get(md["grain"], ("set", "document"))
+        when = _range(_date(md.get("first")), _date(md.get("last"))) if md.get("first") else None
+        out = (f"{html.escape(signal)} " if signal else "") + f"the {what[0]} “{html.escape(md['name'])}”"
+        unit = what[1] if n == 1 else what[1][:-1] + "ies" if what[1].endswith("y") else what[1] + "s"
+        out += f" ({n} {unit}"
+        return out + (f", {when})" if when else ")")
 
 
 def _date(d: str | None) -> str | None:
@@ -436,7 +464,8 @@ def render(page: Page, standalone=True, images="data", review=True) -> tuple[str
         i = token[len("ADHOCFILL"):-1]
         if kind == "link":
             href = f"loc:{_loc(r) if not r.quoted else _loc(r, r.parts[0].start, r.parts[-1].end)}" if r.status != "broken" else "#broken"
-            body = body.replace(f'href="ADHOCLINK{i}X"', f'href="{html.escape(href)}"')
+            title = f' title="{html.escape(re.sub("<[^>]+>", "", page.cite(r)))}: opens its first document"' if r.kind == "meta" else ""
+            body = body.replace(f'href="ADHOCLINK{i}X"', f'href="{html.escape(href)}"{title}')
             continue
         if r.status == "broken":
             frag = broken_html(d.id, r.error)
@@ -714,8 +743,21 @@ def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
     _, refs, _, _ = literate.split(source)
     if any(r["id"] == rid for r in refs) and not replace:
         raise PageError(f"reference {rid} exists; pass --replace")
+    from . import metadocs
+    if len(locs) == 1 and metadocs.is_ref(locs[0]):          # a metadocument, cited as a whole
+        try:
+            u = metadocs.Units(m)
+            d = u.describe(locs[0])
+            ref = {"id": rid, "meta": d["ref"], "docs": u.docs(d["ref"])}
+        except metadocs.MetaError as e:
+            raise PageError(str(e))
+        refs = [r for r in refs if r["id"] != rid] + [ref]
+        Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+        return ref
     parts = []
     for s in locs:
+        if metadocs.is_ref(s):
+            raise PageError("a metadocument is a reference of its own; it can't be part of an elided quotation")
         from .received import NAMES, resolve_name
         if isinstance(s, str) and s.startswith(NAMES):          # the document (and pages) they name
             s = resolve_name(m, s)[0]["loc"]
@@ -802,6 +844,9 @@ def cited_docs(page: Page) -> list[tuple[str, list[str]]]:
         if ref and ref.get("interp"):              # an interpretation: the documents it reads
             r = page.resolved(d.id)
             docs = [i["doc"] for i in r.interp["inputs"]] if r.interp else []
+        elif ref and ref.get("meta"):              # a metadocument: each of its documents
+            r = page.resolved(d.id)
+            docs = r.meta["docs"] if r.meta else []
         elif ref and ref.get("doc"):
             docs = [locators.parse({"doc": ref["doc"]}, page.m.objects)["doc"]]
         else:

@@ -483,3 +483,61 @@ ul.rows.files-rows .row .main { display: flex; flex-direction: column; gap: 1px;
 .pane-body.files .cards { grid-template-columns: 1fr; max-width: 62em; }
 ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .files-rows .row:hover { background: var(--hover); }
+
+/* the relationship diagram (view graph) */
+.adhoc-graph { overflow: auto; }
+.adhoc-graph svg { display: block; font: 12px system-ui, sans-serif; }
+.adhoc-graph-node rect { fill: var(--pane); stroke: var(--line); stroke-width: 1.2; }
+.adhoc-graph-node.type-entity rect { stroke: var(--ent); }
+.adhoc-graph-node.type-entity.kind-person rect { fill: var(--ent-bg); }
+.adhoc-graph-node.type-entity.kind-organization rect { stroke-width: 2; }
+.adhoc-graph-node.type-entity.kind-event rect, .adhoc-graph-node.type-entity.kind-contract rect { stroke: var(--date); }
+.adhoc-graph-node.type-link rect { stroke: var(--muted); stroke-dasharray: 2 2; }
+.adhoc-graph-node.type-doc rect { fill: var(--head); }
+.adhoc-graph-name { fill: var(--ink); font-weight: 600; }
+.adhoc-graph-sub { fill: var(--muted); font-size: 10.5px; }
+.adhoc-graph-edge { fill: none; stroke: var(--muted); stroke-width: 1.3; opacity: .8; }
+.adhoc-graph-edge.kind-link { stroke: var(--ent); stroke-width: 1.6; }
+.adhoc-graph-edge.unsupported { stroke: var(--bad); stroke-dasharray: 6 3; }
+.adhoc-graph-edge.derived { stroke-dasharray: 3 4; opacity: .55; }
+.adhoc-graph-edge.kind-see, .adhoc-graph-edge.kind-family { stroke: var(--line); }
+.adhoc-graph-arrow { fill: var(--muted); }
+.adhoc-graph-label rect { fill: var(--pane); stroke: var(--line); }
+.adhoc-graph-label text { fill: var(--ink); font-size: 11px; }
+.adhoc-graph-label.unsupported text { fill: var(--bad); }
+.adhoc-graph-label.derived text { fill: var(--muted); font-style: italic; }
+.adhoc-graph [data-locator] { cursor: pointer; }
+.adhoc-graph [data-locator]:hover rect { stroke: var(--accent); }
+.adhoc-graph [data-locator].adhoc-selected { background: none; outline: none; }
+.adhoc-graph [data-locator].adhoc-selected rect, .adhoc-graph [data-locator].adhoc-current rect { stroke: var(--accent); stroke-width: 2.5; }
+.adhoc-graph [data-locator].adhoc-current { box-shadow: none; }
+.adhoc-graph [data-locator].adhoc-visited .adhoc-graph-name { fill: var(--muted); }
+.adhoc-graph-node.unsupported rect { stroke: var(--bad); }
+
+/* links and facets on the entity card, the side panel and the marks */
+.page .box.ent.muted, .hlbox.ent.muted { border-bottom: 1px solid var(--line); background: none; }
+#entity-card .ec-nav { margin-bottom: 4px; font-size: 11.5px; }
+#entity-card a.ec-back { color: var(--accent); cursor: pointer; }
+#entity-card a.ec-ent { color: var(--ent); cursor: pointer; text-decoration: underline; text-decoration-color: var(--ent-sug); text-underline-offset: 2px; }
+#entity-card .ec-links { margin-top: 6px; }
+#entity-card .ec-link { padding: 1px 0 1px 8px; border-left: 2px solid var(--ent); margin-top: 2px; }
+#entity-card .ec-link.bare { border-left-color: var(--bad); }
+#entity-card .ec-link.muted { opacity: .55; }
+#entity-card .ec-rel { color: var(--muted); }
+#entity-card .ec-date { color: var(--muted); font-size: 11px; }
+#entity-card a.ec-ev { color: var(--accent); cursor: pointer; font-size: 11px; }
+#entity-card .ec-ev.none { color: var(--bad); font-size: 11px; }
+#entity-card .ec-facets { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+#entity-card .ec-facet { font-size: 10.5px; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; color: var(--muted); }
+#entity-card .ec-facet.on { border-color: var(--accent); color: var(--accent); }
+#facet-btn { width: auto; padding: 0 8px; white-space: nowrap; font-size: 12.5px; }
+#facet-btn.on { color: var(--accent); }
+.pane-side .ann.fact { border-left: 3px solid var(--ent); }
+.pane-side .side-more { color: var(--muted); font-size: 11.5px; padding: 6px 8px; }
+.pane-side .side-more a { color: var(--accent); cursor: pointer; }
+
+/* bundles: documents, or parts of them, treated as one (METADOCS.md) */
+.chip.via-bundle { border-style: dashed; }
+.ann.bundle { border-left: 3px solid #b79cff; }
+.ann.bundle-note { border-left: 3px solid #b79cff; margin-left: 10px; }
+.ann .bundle-parts a { margin-right: 4px; }

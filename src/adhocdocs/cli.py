@@ -686,6 +686,13 @@ def text(argv=None):
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
     from .received import NAMES, resolve_name
+    from . import metadocs
+    if metadocs.is_ref(a.locator):                 # a metadocument: each of its parts
+        for part in metadocs.members(m, a.locator):
+            r = locators.resolve(m, part)
+            out({"loc": locators.format(r["loc"]) if r.get("loc") else locators.format(part), "status": r["status"],
+                 **({"text": r["text"]} if a.json and "text" in r else {})})
+        return
     if a.locator.startswith(NAMES):
         for hit in resolve_name(m, a.locator):
             r = locators.resolve(m, hit["loc"])
@@ -1034,6 +1041,14 @@ search "<query>" [--index keyword|semantic|hybrid]   (keyword is the default)
 search grep <regex>                                  regex over layer text, no index
 search similar <locator>                             semantic neighbours
 search all [--where "custodian:smith-j"] [--tag …]   every document (no text matched), by date
+search "<query>" --grain new|thread|family|copies|versions|bundle
+                                                     results on metadocuments, not documents
+
+--grain re-reads the results at another scale (METADOCS.md): one line per
+thread, family, item however many copies, or text however many drafts, or
+bundle. --grain new is one line per thing someone wrote: copies count once,
+and a hit in quoted text counts for the message that wrote it (quoted_in
+lists where it was quoted), so an email quoted in 40 replies is one result.
 
 Output: a JSON header (query, index, as_of, exhaustive, coverage, matches),
 then one line per document (--by doc) or per hit (--by hit). Each hit has a
@@ -1059,6 +1074,8 @@ def search(argv=None):
     p.add_argument("--layers", default="primary", help="primary, all, or a view (native, ocr, …)")
     p.add_argument("--in", dest="in_kinds", action="append", default=[], help="segment kinds: body, quoted, header, …")
     p.add_argument("--by", choices=["doc", "hit"], default="doc")
+    p.add_argument("--grain", choices=["doc", "new", "thread", "family", "copies", "versions", "bundle"], default="doc",
+                   help="report metadocuments: what each message adds, threads, families, copies, versions, bundles")
     p.add_argument("--limit", type=int, help="ranked searches; keyword and grep return everything by default")
     p.add_argument("--list", dest="list_file", help="also write the results as a list file")
     p.add_argument("--explain", action="store_true", help="print the parsed query and stop")
@@ -1105,6 +1122,23 @@ def search(argv=None):
         header, items = s.hybrid(a.q)
     else:
         header, items = s.keyword(a.q)
+    if a.grain != "doc":
+        if a.by == "hit":
+            p.error("--grain reports metadocuments; it doesn't go with --by hit")
+        from . import metadocs
+        limit, s.opts.limit = s.opts.limit, None
+        header, items = s.finish(header, items)
+        items = metadocs.regroup(m, items, a.grain)
+        header["grain"] = a.grain
+        header["matches"]["units"] = len(items)
+        if limit is not None:
+            items = items[:limit]
+        out(header)
+        for it in items:
+            out(it)
+        if a.list_file:
+            lists.write(a.list_file, *(lambda rows: (rows[0], rows[1:]))(metadocs.to_list(header, items)))
+        return
     header, items = s.finish(header, items)
     out(header)
     for it in items:
@@ -1338,6 +1372,73 @@ write a chronology, or when the user asks what matters when.
 
 Claude can't change a field, remove an alias or delete an entity the user
 set, made or added; it can fill in what the user left blank.
+
+People who appear only in email headers, or in the text, aren't entities
+until someone adds them, so their names aren't marked and the graph can't
+say who emailed whom. `ann people` lists them from the cast (`analyze
+people`), each with its addresses, counts and roles, and whether it looks
+like a person, a group address or a bulk sender:
+
+  ann people [--all]                                  who isn't an entity yet
+  ann add-people "Lena Fairbanks" "Ivy Castellano"    add these, names and addresses as aliases
+  ann add-people --top 10                             the ten most active
+  ann add-people --known                              give known entities the addresses they lack
+
+Add the people who matter to the matter, not everyone in the To line; then
+`graph --email` and `view graph --email` show who corresponds with whom.
+The summary they get is the counts and roles; write a real one with
+edit-entity when you know who they are.
+
+Links (GRAPH.md): how two entities are connected, and on what evidence. They
+make the entity list a graph: the viewer's cards show them and move from
+one entity to the next, `graph` queries them, and `view graph` draws them.
+
+  ann link "Rita Ames" "signed for" "Dock 4 delivery" --see <locator> [--date 2026-03-09] [--summary …]
+  ann links [--entity E] [--rel R] [--facet F]       links, with both entities' names
+  ann edit-link <link-id> --see <locator> | --rel … | --summary …
+  ann delete-link <link-id>
+
+The rel reads from the first entity to the second ("works for", "signed",
+"sent", "paid", "party to", "approved"). Record a link when the documents
+show it, with --see pointing at the words; one with no evidence is listed by
+`graph unsupported`. Don't record co-mentions (two names in one document) as
+links: `graph --cooccur` derives those, marked as leads.
+
+Facets: named issues ("delivery", "damages", "notice") that entities, links,
+notes and tags are filed under, so the user (and you) can see only what bears
+on the issue at hand. The viewer's facet picker (the ◇ button, or F) dims
+the rest.
+
+  ann define-facet delivery --description "Were the goods delivered and accepted?"
+  ann file delivery --entity "Rita Ames" --link <id> --note <id> --tag pod
+  ann unfile delivery --note <id>
+  ann facets                                         each facet with what is filed under it
+  ann facet delivery                                 everything filed under one
+  ann notes --facet delivery / ann entities --facet delivery / ann links --facet delivery
+
+Filing doesn't change the thing filed, so you can file the user's notes;
+you can't unfile what the user filed. A reply is filed with its thread, and
+a tag's applications with the tag.
+
+Bundles (METADOCS.md): documents, or parts of them, treated as one thing:
+"the Q3 board pack", the pages of a merged PDF that were one letter, the
+reply above the quoted text, a thread. A tag or note on a bundle is on it as
+a whole, once; filters (search --tag, ann find) count it for every
+document in it. Anywhere a locator goes, a metadocument can too: thread:D,
+family:D, copies:D, versions:D, new:D (what message D adds, without what it
+quotes) are each of their parts, and bundle:B is the bundle (with --parts,
+each part).
+
+  ann bundle "Board pack Q3" doc:3fa2… doc:91bc… --summary "Sent to the board Oct 2"
+  ann bundle "Kettering letter" "doc:77aa…#page=4-9"         part of a merged PDF
+  ann bundle "Past-due thread" thread:3fa2…                   what's in the thread now
+  ann tag hot bundle:"Board pack Q3"     ann note bundle:b_19… --body …
+  ann tag responsive thread:3fa2…                             each message, not one bundle
+  ann edit-bundle "Board pack Q3" --add doc:… --remove doc:…
+  ann bundles [NAME] [--doc D]
+
+Privilege calls go on documents, not bundles: a production withholds
+documents (ann tag privileged bundle:B --parts is the user's to do).
 """
 
 
@@ -1354,10 +1455,26 @@ def _family(state, doc):
     return [d for d in out if d not in state.withdrawn]
 
 
-def _targets(m, locs, family=False, dupes=False):
+def _targets(m, locs, family=False, dupes=False, parts=False, units=None):
+    """Targets from locators. ``bundle:B`` is the bundle as one target (or,
+    with ``parts``, each of its parts); a metadocument (``thread:D``,
+    ``family:D``, ``new:D``…) is each of its parts."""
+    from . import metadocs
     state = m.state
     out = []
     for s in locs:
+        if isinstance(s, str) and s.startswith("bundle:") and not parts:
+            out.append({"bundle": s[7:].strip()})
+            continue
+        if metadocs.is_ref(s):
+            units = units or metadocs.Units(m)
+            if s.startswith("bundle:"):
+                s = "bundle:" + units.bundle(s[7:])["bundle"]
+            got = units.members(s)
+            if (family or dupes) and any(g.get("select") for g in got):
+                raise ValueError("--family and --dupes apply to whole documents")
+            out += _targets(m, [locators.format(g) if g.get("select") else g["doc"] for g in got], family, dupes)
+            continue
         loc = locators.parse(s if s.lstrip().startswith("{") else "doc:" + s.removeprefix("doc:"), m.objects)
         extra = []
         if family:
@@ -1380,6 +1497,7 @@ def ann(argv=None):
     s = sub.add_parser("notes", help="notes, with replies after their parent")
     s.add_argument("--target")
     s.add_argument("--by", help="user, claude, or user:<id>")
+    s.add_argument("--facet", help="only notes filed under this facet (with their threads)")
     s = sub.add_parser("find", help="documents by tags: --tag hot --tag -privileged")
     s.add_argument("--tag", action="append", required=True)
     s.add_argument("--list", dest="list_file", help="also write a list file")
@@ -1403,7 +1521,29 @@ def ann(argv=None):
         s.add_argument("locators", nargs="+")
         s.add_argument("--family", action="store_true", help="every document in each one's family")
         s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
+        s.add_argument("--parts", action="store_true", help="bundle:B: each of its parts, not the bundle as one")
         s.add_argument("--requested-by")
+    s = sub.add_parser("bundle", help="make a bundle: documents, or parts of them, treated as one (tag or note it as one)")
+    s.add_argument("name")
+    s.add_argument("parts", nargs="*", help="locators, or metadocuments: thread:D, family:D, versions:D, copies:D, new:D")
+    s.add_argument("--list", dest="list_file", help="also every item in this list file")
+    s.add_argument("--summary", help="what it is, in a line")
+    s.add_argument("--facet", action="append", help="file it under this facet too (repeatable)")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("edit-bundle")
+    s.add_argument("bundle", help="ID, ID prefix or name")
+    s.add_argument("--name")
+    s.add_argument("--summary")
+    s.add_argument("--add", action="append", default=[], help="parts to add (locators or metadocuments)")
+    s.add_argument("--remove", action="append", default=[], help="parts to remove")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("delete-bundle")
+    s.add_argument("bundle")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("bundles", help="the bundles, or one with its parts, tags and notes")
+    s.add_argument("ref", nargs="?")
+    s.add_argument("--doc", help="only bundles holding this document")
+    s.add_argument("--facet")
     s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
     s.add_argument("locators", nargs="+")
     s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
@@ -1424,6 +1564,7 @@ def ann(argv=None):
     s.add_argument("--requested-by")
     s = sub.add_parser("entities", help="the entity list, or with --doc a document's entity layer")
     s.add_argument("--kind")
+    s.add_argument("--facet", help="only entities filed under this facet")
     s.add_argument("--doc", help="a document: the known entities' mentions in it (and --suggested ones)")
     s.add_argument("--suggested", action="store_true", help="with --doc: also detected candidates")
     s = sub.add_parser("entity", help="one entity by ID, name or alias")
@@ -1452,6 +1593,59 @@ def ann(argv=None):
     s = sub.add_parser("delete-entity")
     s.add_argument("ref")
     s.add_argument("--requested-by")
+    s = sub.add_parser("people", help="people from email headers and names in the text, and whether each is an entity")
+    s.add_argument("--all", action="store_true", help="also those already entities, and groups and bulk senders")
+    s.add_argument("--min-docs", type=int, default=1, help="named in, or emailing, at least this many documents")
+    s.add_argument("--limit", type=int, default=50)
+    s = sub.add_parser("add-people", help="add people from `ann people` as entities, with their names and addresses as aliases")
+    s.add_argument("names", nargs="*", help="names or addresses from `ann people` (default: none; see --top)")
+    s.add_argument("--top", type=int, help="the N most active people who aren't entities")
+    s.add_argument("--known", action="store_true",
+                   help="also give entities already known the addresses and names they lack (for graph --email)")
+    s.add_argument("--kind", default="person", help="the kind for those added (default person)")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("link", help="record how two entities are connected: FROM REL TO, with --see evidence")
+    s.add_argument("frm", metavar="FROM", help="an entity (ID, name or alias)")
+    s.add_argument("rel", help='what FROM is or did to TO: "works for", "signed", "paid"')
+    s.add_argument("to", metavar="TO")
+    s.add_argument("--see", action="append", help="a locator to the evidence (repeatable)")
+    s.add_argument("--summary", help="a line on the link, in your own words")
+    s.add_argument("--date", help="when (YYYY-MM-DD, YYYY-MM or YYYY)")
+    s.add_argument("--facet", action="append", help="file it under this facet too (repeatable)")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("edit-link")
+    s.add_argument("link")
+    s.add_argument("--rel")
+    s.add_argument("--see", action="append", help="replaces the evidence (repeatable)")
+    s.add_argument("--add-see", action="append", help="adds to the evidence (repeatable)")
+    s.add_argument("--summary")
+    s.add_argument("--date")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("delete-link")
+    s.add_argument("link")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("links", help="links between entities, with their names")
+    s.add_argument("--entity", help="only links to or from this entity")
+    s.add_argument("--rel", help="only links whose relation contains this")
+    s.add_argument("--facet")
+    for name in ("define-facet", "edit-facet"):
+        s = sub.add_parser(name)
+        s.add_argument("facet")
+        s.add_argument("--description", help="the issue, in a line: what bears on it")
+        s.add_argument("--color")
+        s.add_argument("--requested-by")
+    s = sub.add_parser("facets", help="the facets, with how much is filed under each")
+    s = sub.add_parser("facet", help="everything filed under one facet")
+    s.add_argument("facet")
+    for name in ("file", "unfile"):
+        s = sub.add_parser(name, help=("file" if name == "file" else "unfile") + " entities, links, notes or tags under a facet")
+        s.add_argument("facet")
+        s.add_argument("--entity", action="append", default=[])
+        s.add_argument("--link", action="append", default=[])
+        s.add_argument("--note", action="append", default=[])
+        s.add_argument("--bundle", action="append", default=[])
+        s.add_argument("--tag", dest="tags", action="append", default=[])
+        s.add_argument("--requested-by")
     for name in ("define-tag", "edit-tag"):
         s = sub.add_parser(name)
         s.add_argument("tag")
@@ -1475,9 +1669,9 @@ def ann(argv=None):
         an = annotations.Annotations.load(m)
         if a.target:
             t = _targets(m, [a.target])[0]
-            for app in an.applications():
+            for app in an.applications(parts=set(t) == {"doc"}):     # a document: with its bundles' tags
                 if (annotations.target_key(app["target"]) == annotations.target_key(t)
-                        or (set(t) == {"doc"} and app["target"]["doc"] == t["doc"])):
+                        or (set(t) == {"doc"} and app["target"].get("doc") == t["doc"])):
                     out(app)
             return
         counts = {}
@@ -1488,9 +1682,9 @@ def ann(argv=None):
     elif a.cmd == "notes":
         an = annotations.Annotations.load(m)
         t = _targets(m, [a.target])[0] if a.target else None
-        notes = [n for n in an.notes.values() if who(a.by, n["by"])
+        notes = [n for n in an.notes.values() if who(a.by, n["by"]) and an.in_facet(a.facet, {"note": n["note"]})
                  and (t is None or annotations.target_key(n["target"]) == annotations.target_key(t)
-                      or (set(t) == {"doc"} and n["target"]["doc"] == t["doc"]))]
+                      or (set(t) == {"doc"} and n["target"].get("doc") == t["doc"]))]
         ids = {n["note"] for n in notes}
         def thread(n, depth):
             out({**n, "depth": depth})
@@ -1565,6 +1759,13 @@ def ann(argv=None):
             if a.see:
                 req["see"] = _targets(m, a.see)
         out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
+    elif a.cmd in ("people", "add-people"):
+        _people(m, a)
+    elif a.cmd in ("bundle", "edit-bundle", "delete-bundle", "bundles"):
+        _bundles(m, a)
+    elif a.cmd in ("link", "edit-link", "delete-link", "links", "define-facet", "edit-facet", "facets", "facet",
+                   "file", "unfile"):
+        _graph_writes(m, a)
     elif a.cmd == "flag-privilege":
         req = {"requested_by": a.requested_by}
         events = []
@@ -1579,7 +1780,7 @@ def ann(argv=None):
         req = {"op": a.cmd, "requested_by": getattr(a, "requested_by", None)}
         if a.cmd in ("tag", "untag"):
             results = []
-            for t in _targets(m, a.locators, a.family, a.dupes):
+            for t in _targets(m, a.locators, a.family, a.dupes, a.parts):
                 results.append(annapi.request(m, {**req, "tag": a.tag, "target": t}))
             out({"events": [e for r in results for e in r["events"]]})
             return
@@ -1597,6 +1798,225 @@ def ann(argv=None):
         elif a.cmd in ("define-tag", "edit-tag"):
             req.update(tag=a.tag, color=a.color, hotkey=a.hotkey, group=a.group, description=a.description)
         out(annapi.request(m, req))
+
+
+def _bundles(m, a):
+    """ann bundle / edit-bundle / delete-bundle / bundles."""
+    from . import metadocs
+    an = annotations.Annotations.load(m)
+    units = metadocs.Units(m, an)
+    req = {"requested_by": a.requested_by} if getattr(a, "requested_by", None) else {}
+
+    def parts_of(refs):
+        out = []
+        for r in refs:
+            out += _targets(m, [r], parts=True, units=units)
+        return out
+
+    if a.cmd == "bundles":
+        rows = list(an.bundles.values())
+        if a.ref:
+            b = an.bundles[an.find_bundle(a.ref)]
+            key = annotations.target_key({"bundle": b["bundle"]})
+            parts = []
+            for p_ in b["parts"]:
+                d = m.state.follow(p_["doc"])
+                parts.append({"loc": locators.format(p_), "name": units.name(d), "date": units.date(d),
+                              **({"text": p_["quote"]["exact"][:200]} if p_.get("quote") else {})})
+            out({**units.describe("bundle:" + b["bundle"]), "from": b.get("from"),
+                 "tags": [{"tag": t["tag"], "by": t["by"]} for t in an.tags.get(key, {}).values()],
+                 "notes": [n for n in an.notes.values() if annotations.bundle_of(n["target"]) == b["bundle"]],
+                 "facets": an.facets_of({"bundle": b["bundle"]}), "parts": parts})
+            return
+        if a.doc:
+            doc = m.state.follow(locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"])
+            rows = an.bundles_of(doc)
+        for b in rows:
+            if not an.in_facet(a.facet, {"bundle": b["bundle"]}):
+                continue
+            key = annotations.target_key({"bundle": b["bundle"]})
+            out({"bundle": b["bundle"], "name": b["name"], "parts": len(b["parts"]),
+                 "documents": len({p_["doc"] for p_ in b["parts"]}), "by": b["by"],
+                 **({k: b[k] for k in ("summary", "from") if b.get(k)}),
+                 "tags": sorted(an.tags.get(key, {}))})
+        return
+    if a.cmd == "bundle":
+        refs = list(a.parts)
+        if a.list_file:
+            _, items = lists.read(a.list_file)
+            refs += [it["loc"] if isinstance(it["loc"], str) else locators.format(it["loc"]) for it in items]
+        if not refs:
+            raise ValueError("a bundle needs parts: locators, metadocuments (thread:D…) or --list FILE")
+        r = {**req, "op": "define-bundle", "name": a.name, "parts": parts_of(refs), "summary": a.summary}
+        if len(a.parts) == 1 and metadocs.is_ref(a.parts[0]) and not a.list_file:
+            r["from"] = units.describe(a.parts[0])["ref"]
+        res = annapi.request(m, {k: v for k, v in r.items() if v is not None})
+        b = res["events"][0]["bundle"]
+        for f in a.facet or []:
+            res["events"] += annapi.request(m, {**req, "op": "file", "facet": f, "item": {"bundle": b}})["events"]
+        out({"bundle": b, "name": a.name, "parts": len(r["parts"]), "events": res["events"]})
+        return
+    r = {**req, "op": a.cmd, "bundle": a.bundle}
+    if a.cmd == "edit-bundle":
+        b = an.bundles[an.find_bundle(a.bundle)]
+        remove = []
+        for x in a.remove:
+            ts = parts_of([x])
+            keys = {annotations.target_key(t) for t in ts}
+            hit = [p_ for p_ in b["parts"] if annotations.target_key(p_) in keys
+                   or (set(ts[0]) == {"doc"} and len(ts) == 1 and p_["doc"] == ts[0]["doc"])]
+            if not hit:
+                raise ValueError(f"{x} isn't a part of {b['name']!r}")
+            remove += hit
+        r.update(name=a.name, summary=a.summary, add_parts=parts_of(a.add) or None, remove_parts=remove or None)
+    out(annapi.request(m, {k: v for k, v in r.items() if v is not None}))
+
+
+def _people(m, a):
+    """People from email headers and text who aren't entities (ann people, ann add-people)."""
+    rows = entities.people(m)
+    active = lambda p: p["sent"] + p["received"] + p.get("mentioned_in", 0)
+    if a.cmd == "people":
+        shown = [p for p in rows if a.all or (p["entity"] is None and p["looks_like"] == "person")]
+        shown = [p for p in shown if max(p.get("mentioned_in", 0), p["sent"] + p["received"]) >= a.min_docs]
+        for p in shown[:a.limit]:
+            out({k: p[k] for k in ("name", "looks_like", "entity", "source", "addresses", "sent", "received", "first",
+                                   "last", "roles", "mentioned_in", "missing_aliases") if p.get(k) not in (None, [], "")}
+                | {"entity": p["entity"]})
+        return
+    req = {"requested_by": a.requested_by} if a.requested_by else {}
+    wanted = []
+    for n in a.names:
+        f = " ".join(entities.fold_text(n).split())
+        hits = [p for p in rows if f in {" ".join(entities.fold_text(x).split()) for x in [p["name"], *p.get("names", [])]}
+                or n.lower() in {x.lower() for x in p.get("addresses", [])}]
+        if not hits:
+            raise KeyError(f"no one called {n!r} in `ann people --all`")
+        wanted.append(hits[0])
+    if a.top:
+        wanted += sorted((p for p in rows if p["entity"] is None and p["looks_like"] == "person" and p not in wanted),
+                         key=lambda p: -active(p))[:a.top]
+    if a.known:
+        wanted += [p for p in rows if p["entity"] and p["missing_aliases"] and p not in wanted]
+    if not wanted:
+        raise ValueError("name the people to add, or --top N, or --known (see `ann people`)")
+    done = []
+    for p in wanted:
+        if p["entity"]:
+            if p["missing_aliases"]:
+                annapi.request(m, {**req, "op": "edit-entity", "entity": p["entity"]["entity"], "add_aliases": p["missing_aliases"]})
+                done.append({"updated": p["entity"]["name"], "added_aliases": p["missing_aliases"]})
+            continue
+        kind = {"person": a.kind, "organization": "organization"}.get(p["looks_like"], "other")
+        r = {**req, "op": "define-entity", "name": p["name"], "kind": kind,
+             "aliases": p["missing_aliases"]}
+        if (s := entities.person_summary(p)):
+            r["summary"] = s
+        ev = annapi.request(m, r)["events"][0]
+        done.append({"added": p["name"], "entity": ev["entity"], "aliases": p["missing_aliases"],
+                     **({"looks_like": p["looks_like"]} if p["looks_like"] != "person" else {})})
+    for d in done:
+        out(d)
+
+
+def _link_row(an, ln: dict) -> dict:
+    name = lambda i: an.entities[i]["name"] if i in an.entities else i
+    row = {"link": ln["link"], "says": f"{name(ln['from'])} {ln['rel']} {name(ln['to'])}",
+           "from": {"entity": ln["from"], "name": name(ln["from"])}, "rel": ln["rel"],
+           "to": {"entity": ln["to"], "name": name(ln["to"])}}
+    row.update({k: ln[k] for k in ("summary", "date", "see") if ln.get(k) not in (None, [])})
+    if not ln.get("see"):
+        row["unsupported"] = True
+    facets = an.facets_of({"link": ln["link"]})
+    if facets:
+        row["facets"] = facets
+    row["by"] = ln["by"]
+    return row
+
+
+def _graph_writes(m, a):
+    """Links between entities, and facets (ann link, ann file, …)."""
+    an = annotations.Annotations.load(m)
+    req = {"requested_by": a.requested_by} if getattr(a, "requested_by", None) else {}
+    ent = lambda ref: entities.resolve(m, ref, list(an.entities.values()))["entity"]
+
+    def link_id(ref):
+        if ref in an.links:
+            return ref
+        hits = [i for i in an.links if i.startswith(ref)] if len(ref) >= 6 else []
+        if len(hits) == 1:
+            return hits[0]
+        raise KeyError(f"no link {ref!r}; ann links lists them")
+
+    if a.cmd == "link":
+        r = {**req, "op": "define-link", "from": ent(a.frm), "rel": a.rel, "to": ent(a.to),
+             "summary": a.summary, "date": a.date}
+        if a.see:
+            r["see"] = _targets(m, a.see)
+        res = annapi.request(m, {k: v for k, v in r.items() if v is not None})
+        for f in a.facet or []:
+            res["events"] += annapi.request(m, {**req, "op": "file", "facet": f,
+                                                "item": {"link": res["events"][0]["link"]}})["events"]
+        out(res)
+    elif a.cmd == "edit-link":
+        lid = link_id(a.link)
+        r = {**req, "op": "edit-link", "link": lid, "rel": a.rel, "summary": a.summary, "date": a.date}
+        if a.see:
+            r["see"] = _targets(m, a.see)
+        if a.add_see:
+            r["see"] = (r.get("see") or an.links[lid].get("see") or []) + _targets(m, a.add_see)
+        out(annapi.request(m, {k: v for k, v in r.items() if v is not None}))
+    elif a.cmd == "delete-link":
+        out(annapi.request(m, {**req, "op": "delete-link", "link": link_id(a.link)}))
+    elif a.cmd == "links":
+        e = ent(a.entity) if a.entity else None
+        for ln in an.links.values():
+            if e and e not in (ln["from"], ln["to"]):
+                continue
+            if a.rel and a.rel.lower() not in ln["rel"].lower():
+                continue
+            if not an.in_facet(a.facet, {"link": ln["link"]}):
+                continue
+            out(_link_row(an, ln))
+    elif a.cmd in ("define-facet", "edit-facet"):
+        r = {**req, "op": a.cmd, "facet": a.facet, "description": a.description, "color": a.color}
+        out(annapi.request(m, {k: v for k, v in r.items() if v is not None}))
+    elif a.cmd == "facets":
+        for name, d in an.facets.items():
+            counts = {}
+            for k in an.filed.get(name, {}):
+                kind = k.split(":", 1)[0]
+                counts[kind] = counts.get(kind, 0) + 1
+            out({**d, "filed": counts})
+    elif a.cmd == "facet":
+        if a.facet not in an.facets:
+            raise KeyError(f"no facet {a.facet!r}" + (f"; facets: {', '.join(an.facets)}" if an.facets else ""))
+        out(an.facets[a.facet])
+        for f in an.filed.get(a.facet, {}).values():
+            (kind, ref), = f["item"].items()
+            row = {"item": kind, "filed_by": f["by"]}
+            if kind == "entity":
+                row.update(_entity_row(an.entities[ref]))
+            elif kind == "link":
+                row.update(_link_row(an, an.links[ref]))
+            elif kind == "note":
+                n = an.notes[ref]
+                row.update({k: n[k] for k in ("note", "target", "body", "by", "at")})
+            elif kind == "bundle":
+                b = an.bundles[ref]
+                row.update({"bundle": ref, "name": b["name"], "parts": len(b["parts"]), "by": b["by"]})
+            else:
+                row.update({"tag": ref, "applications": sum(1 for x in an.applications() if x["tag"] == ref)})
+            out(row)
+    else:
+        items = [{"entity": ent(x)} for x in a.entity] + [{"link": link_id(x)} for x in a.link] \
+            + [{"note": x} for x in a.note] + [{"bundle": x} for x in a.bundle] + [{"tag": x.strip()} for x in a.tags]
+        if not items:
+            raise ValueError(f"{a.cmd} needs --entity, --link, --note, --bundle or --tag")
+        events = []
+        for it in items:
+            events += annapi.request(m, {**req, "op": a.cmd, "facet": a.facet, "item": it})["events"]
+        out({"events": events})
 
 
 def _entity_row(e: dict) -> dict:
@@ -1619,13 +2039,22 @@ def _entity_reads(m, a):
         ms = entities.mentions(m, [e])
         row["mentioned_in"] = len({x["loc"]["doc"] for x in ms})
         row["mentions"] = len(ms)
+        an = annotations.Annotations.load(m)
+        row["links"] = [_link_row(an, ln) for ln in an.links.values() if e["entity"] in (ln["from"], ln["to"])]
+        named = entities.find(" ".join(x for x in (e.get("summary"), e.get("recap")) if x), [x for x in ents if x is not e])
+        if named:       # the entities its summary and recap name: where to go next
+            row["names"] = [{"entity": i, "name": an.entities[i]["name"]} for i in dict.fromkeys(i for x in named for i in x["entities"])]
+        facets = an.facets_of({"entity": e["entity"]})
+        if facets:
+            row["facets"] = facets
         out(row)
         if a.mentions:
             for x in ms:
                 out({"loc": x["loc"]})
     elif a.cmd == "entities" and not a.doc:
+        an = annotations.Annotations.load(m) if a.facet else None
         for e in ents:
-            if not a.kind or e["kind"] == a.kind:
+            if (not a.kind or e["kind"] == a.kind) and (an is None or an.in_facet(a.facet, {"entity": e["entity"]})):
                 out(_entity_row(e))
     elif a.cmd == "entities":
         lay = entities.layer(m, _targets(m, [a.doc])[0]["doc"], suggestions=a.suggested)
@@ -1673,6 +2102,14 @@ regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
 (`ptr=/a/0/b`) or XML (`xpath=/a/b[2]`), which become text ranges, cells
 by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
+
+A reference can also be a metadocument (METADOCS.md): `page ref add page.md
+chase thread:<doc>` (or family:, copies:, versions:, new:, bundle:) cites
+the whole thread, so the reader knows the scope is the conversation, not
+one email. Use it with :cite{#chase} or [the thread](ref:chase); it can't
+be quoted (quote a passage of one of its documents). If the thread gains a
+reply or the bundle changes, `page check` reports it re-anchored, and
+`page refs update` takes the new list.
 
 Format:
 """ + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
@@ -1821,6 +2258,17 @@ lanes (--lanes group, custodian, from, kind). For a chronology, give items
 their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
 label), each with a locator to its evidence.
 
+Issues: the user picks a facet (an issue: `ann --help`) with F or the ◇
+button, and what isn't filed under it is dimmed; `view state` and `view
+selection` report it as "facet". Read it as the issue they're working on.
+`view facet NAME` (or `--clear`) switches it for them.
+
+Diagrams: `view graph` draws the entity list's links as boxes and arrows
+(`view graph "Rita Ames" --depth 2`, `--docs` for the documents they rest
+on, `--facts` to make each link a box documents point at, `--facet F` for
+one issue, `--cooccur` for names found together, dashed). A click on a
+box or an arrow's label previews its evidence. See `graph --help`.
+
 Layout: a new pane (`view pane --new`, `view list`, `view open --new-pane`)
 gets a tab of its own. What the user opens from a pane (a page's
 references, a list's preview) goes beside it, tabbed there, so only related
@@ -1905,6 +2353,22 @@ def view(argv=None):
     s.add_argument("--pane", help="replace this timeline pane's content")
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     where(s)
+    s = sub.add_parser("graph", help="draw entities, their links and their evidence as a diagram, with a linked preview pane")
+    s.add_argument("refs", nargs="*", help="center on these entities or documents (default: every entity with a link)")
+    s.add_argument("--depth", type=int, default=1, help="with refs: how many hops out")
+    s.add_argument("--layout", choices=["auto", "kind", "depth"], default="auto",
+                   help="kind: organizations, people, then events, contracts and the rest, then documents, in columns; "
+                        "depth: columns by hops from the refs (auto: depth with refs, else kind)")
+    s.add_argument("--docs", action="store_true", help="show the documents links and entities rest on")
+    s.add_argument("--all", action="store_true", help="also entities with no link")
+    s.add_argument("--title")
+    s.add_argument("--pane", help="replace this graph pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
+    _graph_opts(s)
+    where(s)
+    s = sub.add_parser("facet", help="show the user one issue (a facet: ann --help), dimming what isn't filed under it")
+    s.add_argument("facet", nargs="?", help="omit, or --clear, for every issue")
+    s.add_argument("--clear", action="store_true")
     s = sub.add_parser("close")
     s.add_argument("pane")
     s = sub.add_parser("home", help="show the overview: what the matter holds (the first window opens on it)")
@@ -1940,6 +2404,9 @@ def view(argv=None):
 
     def loc(x):
         from .received import NAMES, resolve_name
+        from . import metadocs
+        if metadocs.is_ref(x):                # a metadocument opens at its first part
+            return locators.format(locators.expand(m, metadocs.members(m, x)[0]))
         if x.startswith(NAMES):               # the first document a Bates range, exhibit or control number names
             return locators.format(resolve_name(m, x)[0]["loc"])
         parsed = locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects)
@@ -1979,6 +2446,24 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "timeline", "files": files, "sequence": sequence,
              "title": a.title or header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "graph":
+        from . import graph as graphmod
+        ann = annotations.Annotations.load(m)
+        g, ids = _load_graph(m, a, ann, a.refs)
+        if a.refs:
+            g = g.around(ids, a.depth)
+        if not (a.docs or a.doc_links):
+            g = g.subgraph([i for i, n in g.nodes.items() if n["type"] != "doc" or i in ids])
+        if not a.all and not a.refs:
+            joined = {x for e in g.edges for x in (e["from"], e["to"])}
+            g = g.subgraph([i for i in g.nodes if i in joined])
+        layout = a.layout if a.layout != "auto" else ("depth" if a.refs else "kind")
+        title = a.title or ("Around " + ", ".join(a.refs) if a.refs else "Relationships") + (f" · {a.facet}" if a.facet else "")
+        files, sequence, summary = graphmod.diagram_html(m, g, title, layout)
+        c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "facet":
+        c["facet"] = None if a.clear else a.facet
     elif a.cmd in ("close",):
         c["pane"] = a.pane
     elif a.cmd == "files":
@@ -2004,12 +2489,290 @@ def view(argv=None):
         c["limit"] = a.limit
     elif a.cmd in ("clear-highlights", "clear-marks"):
         c["pane"] = a.pane
-    if a.cmd in ("open", "sequence", "pane", "list", "timeline"):
+    if a.cmd in ("open", "sequence", "pane", "list", "timeline", "graph"):
         c.update(window=a.window, new_window=a.new_window)
     result = viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False})
     if a.cmd == "timeline":
         result["timeline"] = {k: summary[k] for k in ("items", "dated", "undated", "lanes", "segments", "truncated")}
+    if a.cmd == "graph":
+        result["graph"] = summary
     out(result)
+
+
+# -- graph ---------------------------------------------------------------------------------
+
+GRAPH_HELP = """\
+The matter as a graph: entities (people, organizations, contracts, events…),
+the links between them (`ann link`), and the documents they rest on.
+
+  graph show REF                     a node and everything joined to it, each with its evidence
+  graph around REF [--depth 2]       the neighborhood of an entity or document
+  graph path A B [--max 4]           how two things connect, hop by hop, with the evidence for each
+  graph evidence REF                 for a document: the links and entities that rest on it;
+                                     for an entity or link: the documents it rests on
+  graph page REF [-o FILE]           a literate page about one entity: its connections, each with its
+                                     evidence quoted by reference, in date order, and where it is named
+  graph unsupported [--facet F]      links and events with no evidence recorded (--all: any entity)
+  graph export [--format json|dot|mermaid] [-o FILE]
+                                     the whole graph (or --around REF), for your own code
+
+REF is an entity (ID, name or alias), a link ID (l_…), or a document.
+Documents relate too: --doc-links adds replies (from the headers),
+quotations within a thread, versions (near-duplicate texts, or one mostly
+inside another) and copies, for the documents in the graph (a document you
+name is in it), --doc-links 2 for two steps out. `graph show DOC
+--doc-links` lists a document's relations; `graph path DOC1 DOC2
+--doc-links 3` finds how two documents connect. Versions and quotations are
+estimates (marked derived, with their similarity); replies are facts of
+the headers.
+
+--email adds who emailed whom, from the headers: `emailed` between people
+(with the count and the emails) and `sent`/`received` to each email. It
+needs the people's addresses among their aliases: `ann people` lists people
+from the headers and the text who aren't entities, and `ann add-people`
+adds them with their addresses.
+
+--grain thread|family|copies|versions|bundle gathers documents into
+metadocuments (METADOCS.md): a thread is one node with the facts that rest
+on any of its messages, a bundle one node for its documents.
+
+Options shared by all: --mentions adds every document an entity is named in;
+--cooccur adds entities named together in --min-cooccur documents or more
+(default 2); --facts makes each link a node, so documents point at the facts
+they support; --facet F keeps only what is filed under the facet.
+
+Recorded edges (links and their evidence, entities' --see) are someone's
+judgment, with an author. `mentions` and `co-mention` edges are found by
+matching names in text, are marked "derived", and are leads: never present
+a co-mention as a relationship.
+
+From Python: `from adhocdocs import graph; g = graph.load(Matter.find(None),
+mentions=True)` gives `g.nodes` and `g.edges` as plain dicts, with
+`g.around`, `g.paths` and `g.subgraph`. `graph export` writes the same JSON.
+
+To show it: `view graph` draws a diagram in a viewer pane (see its --help).
+"""
+
+
+def _graph_opts(s):
+    s.add_argument("--mentions", action="store_true", help="add the documents each entity is named in")
+    s.add_argument("--cooccur", action="store_true", help="add entities named together (derived: a lead, not a link)")
+    s.add_argument("--min-cooccur", type=int, default=2)
+    s.add_argument("--facts", action="store_true", help="each link a node, joined to its evidence")
+    s.add_argument("--facet", help="only what is filed under this facet")
+    s.add_argument("--doc-links", type=int, nargs="?", const=1, default=0, metavar="HOPS",
+                   help="add how documents relate (replies, quotations, versions, copies, attachments), "
+                        "HOPS steps out from the documents already in the graph (default 1)")
+    s.add_argument("--email", action="store_true",
+                   help="add who emailed whom, from the headers, for people whose aliases hold their addresses")
+    s.add_argument("--grain", choices=["doc", "family", "thread", "copies", "versions", "bundle"], default="doc",
+                   help="gather documents into metadocuments: one node per family, thread, item, text or bundle")
+
+
+def _load_graph(m, a, ann=None, refs=()):
+    """The graph, and the node IDs ``refs`` name. Documents named are in it
+    before document relations are added, so theirs are."""
+    from . import graph as graphmod
+    g = graphmod.load(m, mentions=a.mentions, cooccur=a.cooccur, facts=a.facts, facet=a.facet,
+                      min_cooccur=a.min_cooccur, ann=ann)
+    if a.email:
+        graphmod.add_correspondence(m, g)
+    ids = [graphmod.resolve(m, g, r, ann) for r in refs]
+    if a.doc_links:
+        graphmod.add_doc_links(m, g, a.doc_links)
+    if getattr(a, "grain", "doc") != "doc":
+        g = graphmod.regrain(m, g, a.grain, ann)
+        ids = [i if i in g.nodes else next(u for u, n in g.nodes.items() if i in n.get("members", ())) for i in ids]
+    return g, ids
+
+
+@run
+def graph(argv=None):
+    from . import graph as graphmod
+    p = parser("graph", GRAPH_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("show", help="a node and its edges, each with its evidence")
+    s.add_argument("ref")
+    _graph_opts(s)
+    s = sub.add_parser("around", help="the nodes within --depth hops, and the edges among them")
+    s.add_argument("refs", nargs="+")
+    s.add_argument("--depth", type=int, default=1)
+    _graph_opts(s)
+    s = sub.add_parser("path", help="the shortest ways A and B connect")
+    s.add_argument("a")
+    s.add_argument("b")
+    s.add_argument("--max", type=int, default=4, help="at most this many hops")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--through-docs", action="store_true",
+                   help="allow hops through documents (two entities shown by the same document)")
+    _graph_opts(s)
+    s = sub.add_parser("evidence", help="what rests on a document, or what an entity or link rests on")
+    s.add_argument("ref")
+    s = sub.add_parser("unsupported", help="links and events with no evidence recorded")
+    s.add_argument("--facet")
+    s.add_argument("--all", action="store_true", help="every entity without --see, not only events")
+    s = sub.add_parser("page", help="a literate page about one entity: its links and their evidence, quoted by reference")
+    s.add_argument("ref")
+    s.add_argument("-o", "--out", help="default: entity-<name>.md")
+    s.add_argument("--mentions", type=int, default=15, help="list this many of the documents that name it")
+    s = sub.add_parser("export", help="the graph as JSON (nodes, edges), Graphviz dot, or Mermaid")
+    s.add_argument("--format", choices=["json", "dot", "mermaid"], default="json")
+    s.add_argument("--around", action="append", help="only around these (repeatable)")
+    s.add_argument("--depth", type=int, default=1)
+    s.add_argument("-o", "--out")
+    _graph_opts(s)
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    m = Matter.find(a.matter)
+    ann = annotations.Annotations.load(m)
+
+    if a.cmd == "unsupported":
+        for row in graphmod.unsupported(ann, a.facet, a.all):
+            out(row)
+        return
+    if a.cmd == "page":
+        import re as _re
+        text = graphmod.dossier(m, a.ref, a.mentions)
+        name = text.split("\n", 1)[0].removeprefix("# ")
+        path = Path(a.out or "entity-" + (_re.sub(r"[^a-z0-9]+", "-", entities.fold_text(name)).strip("-") or "page") + ".md")
+        path.write_text(text, encoding="utf-8")
+        from . import literate
+        problems = literate.problems(literate.check(m, text))
+        out({"written": str(path), "problems": problems, "next": f"page view {path}"})
+        return
+    if a.cmd == "evidence":
+        g = graphmod.load(m, facts=True, ann=ann)
+        nid = graphmod.resolve(m, g, a.ref, ann)
+        node = g.nodes[nid]
+        if node["type"] == "doc":
+            doc = node["doc"]
+            out({"doc": doc, "label": node["label"]})
+            for ln in ann.links.values():
+                hits = [t for t in ln.get("see") or [] if m.state.follow(t["doc"]) == doc]
+                if hits:
+                    out({**_link_row(ann, ln), "here": hits})
+            for e in ann.entities.values():
+                hits = [t for t in e.get("see") or [] if m.state.follow(t["doc"]) == doc]
+                if hits:
+                    out({"entity": e["entity"], "name": e["name"], "kind": e["kind"], "here": hits})
+            return
+        if node["type"] == "entity":
+            e = ann.entities[node["entity"]]
+            out({"entity": e["entity"], "name": e["name"], "see": e.get("see") or []})
+            for ln in ann.links.values():
+                if e["entity"] in (ln["from"], ln["to"]):
+                    out(_link_row(ann, ln))
+            return
+        out(_link_row(ann, ann.links[node["link"]]))
+        return
+
+    refs = {"show": lambda: [a.ref], "around": lambda: a.refs, "path": lambda: [a.a, a.b],
+            "export": lambda: a.around or []}[a.cmd]()
+    g, ids = _load_graph(m, a, ann, refs)
+    if a.cmd == "show":
+        nid = ids[0]
+        out(g.nodes[nid])
+        for e in g.incident(nid):
+            o = g.other(e, nid)
+            row = {"edge": e["kind"], "direction": "out" if e["from"] == nid else "in",
+                   "other": {k: g.nodes[o][k] for k in ("id", "label", "type") if k in g.nodes[o]},
+                   "says": graphmod.describe_step(g, {"from": nid, "edge": e, "to": o})["says"]}
+            row.update({k: e[k] for k in ("link", "rel", "date", "see", "loc", "count", "docs", "derived", "summary",
+                                          "similarity", "containment", "field") if e.get(k)})
+            out(row)
+    elif a.cmd == "around":
+        sub_g = g.around(ids, a.depth)
+        out(sub_g.to_json())
+    elif a.cmd == "path":
+        x, y = ids
+        through = a.through_docs or bool(a.doc_links) or x.startswith("doc:") or y.startswith("doc:")
+        paths = g.paths(x, y, a.max, limit=a.limit, avoid_docs=not through)
+        if not paths:
+            out({"paths": 0, "note": f"no connection within {a.max} hops"
+                 + ("" if through else "; --through-docs also walks through shared documents")
+                 + ("" if a.mentions or a.cooccur else "; --mentions or --cooccur add connections found in the text")})
+        for path in paths:
+            out({"hops": len(path), "steps": [graphmod.describe_step(g, st) for st in path]})
+    elif a.cmd == "export":
+        if a.around:
+            g = g.around(ids, a.depth)
+        text = {"json": lambda: json.dumps(g.to_json(), ensure_ascii=False, indent=1) + "\n",
+                "dot": g.to_dot, "mermaid": g.to_mermaid}[a.format]()
+        if a.out:
+            Path(a.out).write_text(text, encoding="utf-8")
+            out({"written": a.out, "nodes": len(g.nodes), "edges": len(g.edges)})
+        else:
+            sys.stdout.write(text)
+
+
+# -- meta ------------------------------------------------------------------------------------
+
+META_HELP = """\
+Metadocuments (METADOCS.md): content at another scale than the documents
+ingestion made. Documents are the atoms; a metadocument is any other
+boundary: a family, a thread, every copy of an item, every draft of a text,
+what one message adds without what it quotes, or a bundle someone recorded
+(ann bundle). They aren't listed or indexed; each is named from any
+document in it:
+
+  family:D     D with its parent and attachments
+  thread:D     the email thread D is in, with copies
+  copies:D     D however many copies: duplicates, same text, same message
+  versions:D   every draft, revision and copy of D's text (estimated)
+  new:D        what message D adds: its text without the quoted part
+  bundle:B     a recorded bundle, by ID, ID prefix or name
+
+  meta grains                       the grains and what each means
+  meta show REF [--list FILE]       what REF names: its documents and parts
+  meta of DOC                       every metadocument a document is in
+
+A metadocument goes anywhere a locator does: `text thread:D` prints each
+part, `ann tag responsive thread:D` tags each message, `view open new:D`
+opens its first part. `search … --grain G` and `graph … --grain G` report
+metadocuments instead of documents.
+"""
+
+
+@run
+def meta(argv=None):
+    from . import metadocs
+    p = parser("meta", META_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("grains")
+    s = sub.add_parser("show", help="the documents and parts a metadocument names")
+    s.add_argument("ref")
+    s.add_argument("--list", dest="list_file", help="also write its parts as a list file (view list FILE shows it)")
+    s = sub.add_parser("of", help="the metadocuments a document is in")
+    s.add_argument("doc")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    if a.cmd == "grains":
+        for g, what in metadocs.GRAINS.items():
+            out({"grain": g, "means": what})
+        out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
+        return
+    m = Matter.find(a.matter)
+    u = metadocs.Units(m)
+    if a.cmd == "of":
+        for row in u.units_of(a.doc):
+            out(row)
+        return
+    ref = a.ref if metadocs.is_ref(a.ref) else "doc:" + a.ref.removeprefix("doc:")
+    if ref.startswith("doc:"):
+        raise ValueError(f"{a.ref} is a document; name a metadocument ({', '.join(metadocs.PREFIXES)})")
+    d = u.describe(ref)
+    out(d)
+    parts = u.members(d["ref"])
+    rows = []
+    for part in parts:
+        doc = part["doc"]
+        row = {"loc": locators.format(part), "name": u.name(doc), "date": u.date(doc)}
+        if part.get("quote"):
+            row["text"] = part["quote"]["exact"][:200]
+        rows.append(row)
+        out(row)
+    if a.list_file:
+        lists.write(a.list_file, *lists.new(d["name"], [r["loc"] for r in rows], query=d["ref"]))
 
 
 # -- analyze ---------------------------------------------------------------------------------
@@ -2225,7 +2988,7 @@ def work(argv=None):
 
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work, "raw": raw, "interp": interp}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work, "raw": raw, "interp": interp, "graph": graph, "meta": meta}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)
