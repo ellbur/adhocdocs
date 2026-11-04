@@ -105,7 +105,10 @@ them.
   message adds without its quotes (`new:`), and bundles someone recorded
   (`ann bundle`), which tags and notes can be on as one thing. `search
   --grain` and `graph --grain` report them; pages can cite them; `meta`
-  shows them; any of them goes where a locator does.
+  shows them; any of them goes where a locator does. `meta split` proposes
+  where a merged PDF's pieces begin, with the evidence for each cut, and
+  keeps a split as bundles of page ranges
+  ([METADOCS.md](METADOCS.md#splitting-a-merged-pdf)).
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under

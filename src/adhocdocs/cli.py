@@ -2767,6 +2767,28 @@ document in it:
   meta grains                       the grains and what each means
   meta show REF [--list FILE]       what REF names: its documents and parts
   meta of DOC                       every metadocument a document is in
+  meta split DOC                    where a merged PDF's letters, memos and forms may begin
+  meta split --find                 the documents that look like several
+  meta splits DOC                   the splits recorded for a document
+
+Splitting (split.py). A scan of a stack of papers, or PDFs merged into
+one, is one document to the store and several to a reader. Where the
+pieces are is a judgment (a letter with its enclosures is one thing or
+three), so `meta split` proposes, and a split someone keeps is recorded as
+bundles, one per piece. Each page after the first is weighed: printed page
+numbers starting again or carrying on, openings (letterhead, Dear…, a
+memo's TO/FROM, an email's From/Sent/To, a caption, a form's title),
+closings on the page before, sentences running on, running headers and
+footers changing. Every candidate has a strength (0–1) and its reasons,
+for and against. Three levels give three splits, coarse to fine: --level
+sure, likely (the default) or possible. Adjust one with --cut PAGE and
+--join PAGE (repeatable), or give the pages pieces start at with --at
+3,6,9. --list FILE writes the pieces as a list of page ranges (`view list
+FILE` steps through them with a preview). --record NAME keeps the split as
+bundles named "DOC · NAME k/n · label" (tag or note a piece as one; `ann
+bundles`); a document can have several splits under different names
+("letters", "exhibits"), and --replace re-records one. Show the user the
+candidates and let them judge: the strength is a guess.
 
 A metadocument goes anywhere a locator does: `text thread:D` prints each
 part, `ann tag responsive thread:D` tags each message, `view open new:D`
@@ -2786,6 +2808,21 @@ def meta(argv=None):
     s.add_argument("--list", dest="list_file", help="also write its parts as a list file (view list FILE shows it)")
     s = sub.add_parser("of", help="the metadocuments a document is in")
     s.add_argument("doc")
+    s = sub.add_parser("split", help="where a merged PDF's pieces may begin: candidates, and a split to keep as bundles")
+    s.add_argument("doc", nargs="?")
+    s.add_argument("--find", action="store_true", help="instead: the documents that look like several, at --level")
+    s.add_argument("--level", choices=list(LEVELS_), default="likely",
+                   help="how sure a candidate must be to cut there: sure, likely (default) or possible")
+    s.add_argument("--at", help="cut exactly here: the pages pieces start at, e.g. 3,6,9 (page 1 is implied)")
+    s.add_argument("--cut", type=int, action="append", default=[], help="also start a piece at this page")
+    s.add_argument("--join", type=int, action="append", default=[], help="don't start a piece at this page")
+    s.add_argument("--list", dest="list_file", help="also write the pieces as a list file of page ranges")
+    s.add_argument("--record", metavar="NAME", nargs="?", const="split",
+                   help="keep the split as bundles, one per piece, under this name (default: split)")
+    s.add_argument("--replace", action="store_true", help="with --record: replace a split of that name")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("splits", help="the splits recorded for a document, each with its pieces")
+    s.add_argument("doc")
     matter_everywhere(sub)
     a = p.parse_args(argv)
     if a.cmd == "grains":
@@ -2794,6 +2831,9 @@ def meta(argv=None):
         out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
         return
     m = Matter.find(a.matter)
+    if a.cmd in ("split", "splits"):
+        _split(m, a)
+        return
     u = metadocs.Units(m)
     if a.cmd == "of":
         for row in u.units_of(a.doc):
@@ -2815,6 +2855,78 @@ def meta(argv=None):
         out(row)
     if a.list_file:
         lists.write(a.list_file, *lists.new(d["name"], [r["loc"] for r in rows], query=d["ref"]))
+
+
+LEVELS_ = ("sure", "likely", "possible")
+
+
+def _split(m, a):
+    """meta split / meta splits."""
+    from . import split
+    from .analysis import _ready
+    rows = _ready(m, "fields").rows()
+    if a.cmd == "split" and a.find:
+        for r in split.find(m, a.level):
+            out(r)
+        return
+    if not a.doc:
+        raise ValueError("meta split needs a document (or --find)")
+    doc = m.state.follow(locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"])
+    name = (rows.get(doc) or {}).get("name") or doc[7:19]
+    if a.cmd == "splits":
+        ann = annotations.Annotations.load(m)
+        for sname, bs in split.recorded(ann, doc).items():
+            out({"split": sname, "pieces": len(bs), "by": sorted({b["by"] for b in bs}),
+                 "bundles": [{"bundle": b["bundle"], "name": b["name"], "parts": [locators.format(p_) for p_ in b["parts"]],
+                              **({"summary": b["summary"]} if b.get("summary") else {})} for b in bs]})
+        return
+    ps = split.pages(m, doc)
+    if len(ps) < 2:
+        raise ValueError(f"{name} has one page: nothing to split")
+    bs = split.boundaries(ps)
+    at = None
+    if a.at is not None:
+        at = [int(x) for x in a.at.replace(" ", "").split(",") if x]
+        bad = [x for x in at if not 1 <= x <= len(ps)]
+        if bad:
+            raise ValueError(f"no page {bad[0]}: {name} has {len(ps)}")
+    starts = split.chosen(bs, a.level, at, a.cut, a.join)
+    pieces = split.describe(ps, bs, starts)
+    out({"doc": doc, "name": name, "pages": len(ps),
+         "split": "--at" if at is not None else a.level, "pieces": len(pieces),
+         "at_each_level": {lv: len(split.starts_at(bs, lv)) + 1 for lv in split.LEVELS},
+         "passed_over": split.passed_over(bs, starts)})
+    for r in pieces:
+        out({**r, "loc": f"doc:{doc}#page={r['pages'][0]}" + (f"-{r['pages'][1]}" if r["pages"][1] != r["pages"][0] else "")})
+    if a.list_file:
+        items = [{"loc": f"doc:{doc}#page={r['pages'][0]}" + (f"-{r['pages'][1]}" if r["pages"][1] != r["pages"][0] else ""),
+                  "fields": {"piece": r["piece"], "label": r["label"], "pages": f"{r['pages'][0]}–{r['pages'][1]}",
+                             **({"kind": r["kind"]} if r.get("kind") else {}),
+                             **({"strength": r["starts"]["strength"], "why": "; ".join(r["starts"]["for"])} if r.get("starts") else {})}}
+                 for r in pieces]
+        lists.write(a.list_file, {"type": "list", "v": 1, "title": f"{name}: {len(pieces)} pieces", "made_by": "meta split",
+                                  "columns": ["piece", "pages", "label", "kind", "strength", "why"],
+                                  "query": f"meta split {doc}"}, items)
+        out({"written": a.list_file, "next": f"view list {a.list_file}"})
+    if a.record:
+        ann = annotations.Annotations.load(m)
+        req = {"requested_by": a.requested_by} if a.requested_by else {}
+        old = split.recorded(ann, doc).get(a.record, [])
+        if old and not a.replace:
+            raise ValueError(f"{name} already has a split named {a.record!r} ({len(old)} pieces): "
+                             "--replace to re-record it, or another name to keep both")
+        theirs = [b for b in old if annotations.is_user(b["by"]) or annotations.is_user(b.get("edited_by", ""))]
+        if theirs:
+            raise ValueError(f"the split {a.record!r} of {name} is the user's: record yours under another name")
+        events = []
+        for b in old:
+            events += annapi.request(m, {**req, "op": "delete-bundle", "bundle": b["bundle"]})["events"]
+        made = []
+        for r in split.bundle_requests(doc, name, a.record, pieces):
+            ev = annapi.request(m, {**req, **r})["events"]
+            events += ev
+            made.append({"bundle": ev[0]["bundle"], "name": r["name"]})
+        out({"recorded": a.record, "replaced": len(old), "bundles": made})
 
 
 # -- analyze ---------------------------------------------------------------------------------

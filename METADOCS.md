@@ -1,7 +1,8 @@
 # Documents and Metadocuments
 
 *Status: built. Grains and units are in
-[`metadocs.py`](src/adhocdocs/metadocs.py), bundles in the annotation log
+[`metadocs.py`](src/adhocdocs/metadocs.py), splitting merged PDFs in
+[`split.py`](src/adhocdocs/split.py), bundles in the annotation log
 ([`annotations.py`](src/adhocdocs/annotations.py)), and they reach search
 (`--grain`), the graph (`--grain`), pages (metadocument references), tags
 and notes (bundle targets), the `meta` tool, and the viewer's side panel.*
@@ -114,6 +115,63 @@ opens the thread's first message, and `meta show REF --list FILE` makes a
 list of its parts for `view list`. `meta of DOC` lists every unit and
 bundle a document is in.
 
+## Splitting a merged PDF
+
+A scan of a stack of papers, or a PDF someone made by merging files, is one
+document to the store and several to a reader. Where the pieces are is a
+judgment, not a fact: a letter with its enclosures is one thing or three, a
+contract with its exhibits one or many, a fax cover sheet a piece of its
+own or part of what it covers. Different questions want different cuts.
+So a split is a metadocument: nothing about the document changes, and
+someone who wants to keep a split records it as bundles of page ranges,
+one per piece. A document can have several splits side by side ("letters",
+"exhibits"), each named.
+
+Finding the cuts by hand is slow, so `meta split DOC`
+([`split.py`](src/adhocdocs/split.py)) proposes one. Each page after the
+first is weighed for and against starting a new piece:
+
+| For | Against |
+|---|---|
+| printed page numbers starting again at 1, or the page before saying it was the last ("2 of 2") | page numbers carrying on (2 → 3), or "1 of 3" before |
+| an opening: letterhead, a date line, "Dear …", a memo's TO/FROM, a printed email's From/Sent/To/Subject, a caption, a form's title ("INVOICE", "PURCHASE ORDER") | a page numbered 2 after an unnumbered one: a letter's second page |
+| a closing on the page before: "Sincerely", a signature, "cc:", "Enclosure" | a sentence running on from the page before |
+| a running header or footer changing or stopping | the same running header or footer |
+| the same letterhead as an earlier first page; a page with no text before; scanned pages after native ones | "continued" |
+
+The signs add up to a strength from 0 to 1, and every candidate comes with
+its reasons, so a person can judge it rather than trust it. Three levels
+give three splits, coarse to fine: `sure`, `likely` (the default) and
+`possible`. The output says how many pieces each level would make, and
+which candidates the chosen split passes over. The user adjusts it in
+their own words ("keep 7 and 8 together"), which is `--join 8`, `--cut
+12`, or `--at 3,6,9` for exact cuts. Each piece gets a label (its Re: line,
+its title, or its first line) and a kind (letter, memo, email, form,
+filing, fax). Where its printed numbering disagrees with its length ("its
+pages say 2, it has 3") the piece says so, which usually means a cut is
+off by a page.
+
+- `--list FILE` writes the pieces as a list of page ranges: `view list
+  FILE` steps through them with a preview, so the user can look at each
+  cut.
+- `--record NAME` keeps the split as bundles named "DOC · NAME k/n ·
+  label", each with `split: {of, name, piece, pieces}`. A piece can then be
+  tagged, noted, cited or searched (`--grain bundle`) as one thing.
+  `--replace` re-records a split, and Claude can't replace the user's.
+  `meta splits DOC` lists a document's splits.
+- `meta split --find` lists the documents that look like several: paged
+  documents with a candidate at `--level` or stronger, most pieces first.
+
+In the viewer, a document's side panel lists the pieces it is split into
+("letters 3/7 · PURCHASE ORDER …"), with their pages. A click goes to the
+piece's first page.
+
+The detector reads text, so it works on native PDFs and on scans once
+they are OCRed. In the corpus it finds the seven documents of a PDF made by
+merging them, and leaves statutes, opinions and the Federal Register whole
+at the `likely` level. The federal rules get a few `possible` cuts (the
+cover, a blank page, the appendix), which is a fair split too.
+
 ## Rules
 
 - Bundles follow the annotation rules: Claude can't edit or delete a bundle
@@ -131,9 +189,9 @@ bundle a document is in.
 
 ## Not built yet
 
-- Splitting a merged PDF into its letters automatically. A bundle per
-  letter, made from page ranges, works now. Finding the boundaries (a new
-  letterhead, page numbering restarting) is a detector still to write.
+- Splitting by what the page images show: a change of paper, letterhead
+  artwork, handwriting or stamps. The detector reads only the text layer
+  and its word positions.
 - `new` for documents other than emails, such as what a revision adds over
   the draft before it (`analyze redline` shows it; it isn't a unit yet).
 - Units of units, such as a thread with its attachments' families.

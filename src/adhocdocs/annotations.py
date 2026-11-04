@@ -36,7 +36,11 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
                    definition, so every application of it)
 ``define-bundle``  ``bundle`` (new ID), ``name``, ``parts`` (targets: documents or
                    ranges in them), optional ``summary``, ``from`` (the
-                   metadocument it was made from, e.g. ``thread:<doc>``)
+                   metadocument it was made from, e.g. ``thread:<doc>``), and
+                   ``split``: ``{"of": DOC, "name", "piece", "pieces"}`` when
+                   it is one piece of a named split of a document
+                   (:mod:`adhocdocs.split`), so a document's splits can be
+                   told apart and listed
 ``edit-bundle``    ``bundle`` and what changes: ``name``, ``summary``,
                    ``add_parts``, ``remove_parts``
 ``delete-bundle``  ``bundle``; tags, notes and filings on it go with it
@@ -442,6 +446,7 @@ class Annotations:
             self.bundles[ev["bundle"]] = {
                 "bundle": ev["bundle"], "name": " ".join(ev["name"].split()), "parts": list(ev["parts"]),
                 "summary": ev.get("summary"), "from": ev.get("from"), "by": ev["author"], "at": ev["at"],
+                **({"split": ev["split"]} if ev.get("split") else {}),
                 **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
         elif op == "edit-bundle":
             b = self.bundles.get(ev["bundle"])
@@ -723,6 +728,11 @@ class Annotations:
                               "add to it with edit-bundle, or give this one another name")
             if not ev.get("parts"):
                 raise Refused("a bundle needs parts: documents, or ranges in them")
+            sp = ev.get("split")
+            if sp is not None and not (isinstance(sp, dict) and isinstance(sp.get("of"), str)
+                                       and str(sp.get("name", "")).strip()
+                                       and isinstance(sp.get("piece"), int) and isinstance(sp.get("pieces"), int)):
+                raise Refused('split is {"of": DOC, "name": NAME, "piece": K, "pieces": N}')
             return
         b = self.bundles.get(ev["bundle"])
         if b is None:
@@ -899,7 +909,7 @@ OPS = {
     "edit-facet": (("facet",), ("description", "color")),
     "file": (("facet", "item"), ()),
     "unfile": (("facet", "item"), ()),
-    "define-bundle": (("name", "parts"), ("summary", "from")),
+    "define-bundle": (("name", "parts"), ("summary", "from", "split")),
     "edit-bundle": (("bundle",), ("name", "summary", "add_parts", "remove_parts")),
     "delete-bundle": (("bundle",), ()),
     "reserve-numbers": (("series", "first", "last"), ("name",)),
