@@ -128,28 +128,83 @@ one per piece. A document can have several splits side by side ("letters",
 "exhibits"), each named.
 
 Finding the cuts by hand is slow, so `meta split DOC`
-([`split.py`](src/adhocdocs/split.py)) proposes one. Each page after the
-first is weighed for and against starting a new piece:
+([`split.py`](src/adhocdocs/split.py)) proposes one. But the detector
+advises; Claude decides, and the user's word beats both. Claude can
+take any split as it comes, adjust it, or make its own (see *Claude's
+judgment* below).
+
+**What the detector weighs.** Each page after the first is weighed for
+and against starting a new piece. Two kinds of evidence count. The first
+is whether the page *announces* a start:
 
 | For | Against |
 |---|---|
 | printed page numbers starting again at 1, or the page before saying it was the last ("2 of 2") | page numbers carrying on (2 → 3), or "1 of 3" before |
 | an opening: letterhead, a date line, "Dear …", a memo's TO/FROM, a printed email's From/Sent/To/Subject, a caption, a form's title ("INVOICE", "PURCHASE ORDER") | a page numbered 2 after an unnumbered one: a letter's second page |
 | a closing on the page before: "Sincerely", a signature, "cc:", "Enclosure" | a sentence running on from the page before |
-| a running header or footer changing or stopping | the same running header or footer |
-| the same letterhead as an earlier first page; a page with no text before; scanned pages after native ones | "continued" |
+| a running header or footer changing or stopping | the same running header or footer; "continued" |
+| the same letterhead as an earlier first page; a page with no text before; scanned pages after native ones | |
+
+The second is whether the page *looks like the pages before it*, which
+often decides it when nothing announces a start: the middle of one
+document followed by the middle of another, or a scan whose second letter
+has no letterhead.
+
+- **Words.** Each page's words are weighted by how rare they are in the
+  document, so what every page says (the parties' names, in a batch about
+  one dispute) counts for little. The two pages before a candidate are
+  compared with the two after it. Sharing the rarer words and reference
+  numbers ("PO-BMS-26-0112", "quarantine") is a sign against a cut; having
+  almost nothing in common is a sign for one.
+- **Layout.** The left margin, type size and line spacing, from the word
+  positions. Laid out alike is a sign against; set differently is a sign
+  for. The right margin isn't used, because ragged text and tables move it
+  too much within a document. A page laid out like the one two back is a
+  book's facing page, not a new document.
+- **Both together.** When neither the words nor the layout look like the
+  page before, that counts extra. A lowercase start after an unfinished
+  line then counts for little, because that is also what two documents'
+  middle pages look like.
 
 The signs add up to a strength from 0 to 1, and every candidate comes with
-its reasons, so a person can judge it rather than trust it. Three levels
-give three splits, coarse to fine: `sure`, `likely` (the default) and
-`possible`. The output says how many pieces each level would make, and
-which candidates the chosen split passes over. The user adjusts it in
-their own words ("keep 7 and 8 together"), which is `--join 8`, `--cut
-12`, or `--at 3,6,9` for exact cuts. Each piece gets a label (its Re: line,
-its title, or its first line) and a kind (letter, memo, email, form,
-filing, fax). Where its printed numbering disagrees with its length ("its
-pages say 2, it has 3") the piece says so, which usually means a cut is
-off by a page.
+its reasons and its similarity figures (`like_previous`: `text`, `around`,
+`shared`, `layout`). Three levels give three splits, coarse to fine:
+`sure`, `likely` (the default) and `possible`. The output says how many
+pieces each level would make, and which candidates the chosen split
+passes over. Each piece gets a label (its Re: line, its title, or its first
+line) and a kind (letter, memo, email, form, filing, fax). Where its
+printed numbering disagrees with its length ("its pages say 2, it has 3"),
+the piece says so, which usually means a cut is off by a page.
+
+**Claude's judgment.** A score is no substitute for reading, so Claude has
+what it needs to look for itself and decide:
+
+- `--pages 5-9` gives each page's edges: its printed number, header and
+  footer, first and last lines, how like the page before it is, and the
+  case for a cut there. Claude can read the cut points without reading the
+  whole document, and `text DOC#page=7` reads a page in full.
+- `--sheet FILE.png` draws pictures of the pages, small and numbered, in a
+  grid (16 to a file), for what text can't show: letterhead art, paper,
+  handwriting, stamps, a page upside down.
+- `--cut 12`, `--join 7` adjust a level's split, and `--at 3,6,9` cuts
+  exactly there.
+- `--plan FILE` (or `-` for stdin) is a split of Claude's own, one JSON
+  object a piece in order: `{"pages": "1-2,7", "label": "…", "kind": "…",
+  "summary": "…"}`. A piece can be several ranges (a misfiled page, an
+  enclosure scanned out of order). Pages in no piece (slip sheets, blank
+  backs) are reported, and two pieces of one split can't share a page:
+  another way of grouping is another split. Beside each piece, the output
+  gives what the detector made of its first page, so a disagreement is
+  visible.
+- In code, `adhocdocs.split` has `pages`, `boundaries`, `similarities`,
+  `pieces` and `from_plan`, for a judgment that needs a rule of its own
+  ("each claim form starts with its barcode sheet").
+
+Claude looks for itself where the evidence is mixed or thin, where the
+user has said what they want ("the letters, each with its enclosures"),
+and wherever a cut would change a review call.
+
+**Keeping a split.**
 
 - `--list FILE` writes the pieces as a list of page ranges: `view list
   FILE` steps through them with a preview, so the user can look at each
@@ -166,11 +221,14 @@ In the viewer, a document's side panel lists the pieces it is split into
 ("letters 3/7 · PURCHASE ORDER …"), with their pages. A click goes to the
 piece's first page.
 
-The detector reads text, so it works on native PDFs and on scans once
-they are OCRed. In the corpus it finds the seven documents of a PDF made by
-merging them, and leaves statutes, opinions and the Federal Register whole
-at the `likely` level. The federal rules get a few `possible` cuts (the
-cover, a blank page, the appendix), which is a fair split too.
+The detector reads text and word positions, so it works on native PDFs,
+and on scans once they are OCRed. Page images are for Claude to look at
+(`--sheet`). In the corpus, the detector finds the seven documents of a
+PDF made by merging them. It finds the seam between the middle pages of
+two court opinions, where nothing announces a start. It leaves statutes,
+opinions and the Federal Register whole at the `likely` level. In the
+federal rules it cuts at the table of contents and the appendix, which is
+a fair split too.
 
 ## Rules
 
@@ -189,9 +247,10 @@ cover, a blank page, the appendix), which is a fair split too.
 
 ## Not built yet
 
-- Splitting by what the page images show: a change of paper, letterhead
-  artwork, handwriting or stamps. The detector reads only the text layer
-  and its word positions.
+- The detector weighing what the page images show: a change of paper,
+  letterhead artwork, handwriting or stamps. It reads only the text layer
+  and its word positions; Claude can look at the pictures (`--sheet`) and
+  cut by them.
 - `new` for documents other than emails, such as what a revision adds over
   the draft before it (`analyze redline` shows it; it isn't a unit yet).
 - Units of units, such as a thread with its attachments' families.

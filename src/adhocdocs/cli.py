@@ -2774,21 +2774,43 @@ document in it:
 Splitting (split.py). A scan of a stack of papers, or PDFs merged into
 one, is one document to the store and several to a reader. Where the
 pieces are is a judgment (a letter with its enclosures is one thing or
-three), so `meta split` proposes, and a split someone keeps is recorded as
-bundles, one per piece. Each page after the first is weighed: printed page
-numbers starting again or carrying on, openings (letterhead, Dear…, a
-memo's TO/FROM, an email's From/Sent/To, a caption, a form's title),
-closings on the page before, sentences running on, running headers and
-footers changing. Every candidate has a strength (0–1) and its reasons,
-for and against. Three levels give three splits, coarse to fine: --level
-sure, likely (the default) or possible. Adjust one with --cut PAGE and
---join PAGE (repeatable), or give the pages pieces start at with --at
-3,6,9. --list FILE writes the pieces as a list of page ranges (`view list
-FILE` steps through them with a preview). --record NAME keeps the split as
-bundles named "DOC · NAME k/n · label" (tag or note a piece as one; `ann
-bundles`); a document can have several splits under different names
-("letters", "exhibits"), and --replace re-records one. Show the user the
-candidates and let them judge: the strength is a guess.
+three; a fax cover sheet goes with what it covers, or not), so the
+detector advises and you decide, and the user's word beats both. A split
+someone keeps is recorded as bundles, one per piece.
+
+The detector weighs each page after the first: printed page numbers
+starting again or carrying on; openings (letterhead, Dear…, a memo's
+TO/FROM, an email's From/Sent/To, a caption, a form's title) and closings
+on the page before; sentences running on; running headers and footers;
+and whether the page looks like the ones before it, in its words (the
+rarer words and reference numbers they share) and its layout (margins,
+type size, line spacing). A page that looks like neither can start a
+piece with nothing to announce it. Each candidate has a strength (0–1)
+and its reasons for and against. --level sure, likely (the default) or
+possible gives a split, coarse to fine.
+
+Judging it yourself:
+  meta split DOC                     the candidates and the likely split
+  meta split DOC --pages 5-9         each page's printed number, header and footer,
+                                     first and last lines, how like the page before it is,
+                                     and the case for a cut there; `text DOC#page=7` reads one
+  meta split DOC --sheet F.png       pictures of the pages, numbered, in a grid (--pages to
+                                     limit): letterhead art, paper, handwriting, stamps
+  meta split DOC --cut 12 --join 7   the likely split, adjusted; --at 3,6,9 cuts exactly there
+  meta split DOC --plan FILE|-       your own split: one JSON object a piece, in order,
+                                     {"pages": "1-2", "label": "…", "kind": "…", "summary": "…"};
+                                     "pages" can be several ranges ("1-2,7": a misfiled page),
+                                     pages in no piece (slip sheets) are reported, overlaps refused
+Look where the evidence is mixed or thin, where the user cares (they named
+the letters they want), or whenever a cut would change a review call.
+
+Keeping it: --list FILE writes the pieces as a list of page ranges (`view
+list FILE` steps through them with a preview, for the user to check).
+--record NAME keeps the split as bundles named "DOC · NAME k/n · label"
+(tag or note a piece as one; `ann bundles`); a document can have several
+splits under different names ("letters", "with-enclosures"), --replace
+re-records one, and the user's can't be replaced. In code: `from adhocdocs
+import split` (pages, boundaries, similarities, pieces, from_plan).
 
 A metadocument goes anywhere a locator does: `text thread:D` prints each
 part, `ann tag responsive thread:D` tags each message, `view open new:D`
@@ -2816,6 +2838,12 @@ def meta(argv=None):
     s.add_argument("--at", help="cut exactly here: the pages pieces start at, e.g. 3,6,9 (page 1 is implied)")
     s.add_argument("--cut", type=int, action="append", default=[], help="also start a piece at this page")
     s.add_argument("--join", type=int, action="append", default=[], help="don't start a piece at this page")
+    s.add_argument("--plan", help="your own split instead: a file (or - for stdin) of pieces, one JSON object each: "
+                                   '{"pages": "1-2,7", "label": …, "kind": …, "summary": …}')
+    s.add_argument("--pages", nargs="?", const="all", metavar="RANGE",
+                   help="instead: what each page shows at its edges and how it compares with the page before "
+                        "(all pages, or e.g. 5-9)")
+    s.add_argument("--sheet", metavar="FILE.png", help="instead: pictures of the pages in a numbered grid (with --pages: those)")
     s.add_argument("--list", dest="list_file", help="also write the pieces as a list file of page ranges")
     s.add_argument("--record", metavar="NAME", nargs="?", const="split",
                    help="keep the split as bundles, one per piece, under this name (default: split)")
@@ -2884,26 +2912,64 @@ def _split(m, a):
     if len(ps) < 2:
         raise ValueError(f"{name} has one page: nothing to split")
     bs = split.boundaries(ps)
+    which = None
+    if a.pages and a.pages != "all":
+        which = {n for r in split.parse_ranges(a.pages, len(ps)) for n in range(r[0], r[1] + 1)}
+    if a.sheet:
+        out({"written": split.contact_sheet(m, doc, a.sheet, which), "pages": len(ps),
+             "note": "read the image file(s) to look at the pages"})
+        return
+    if a.pages:
+        for row in split.page_rows(ps, bs, which):
+            out(row)
+        return
     at = None
     if a.at is not None:
         at = [int(x) for x in a.at.replace(" ", "").split(",") if x]
         bad = [x for x in at if not 1 <= x <= len(ps)]
         if bad:
             raise ValueError(f"no page {bad[0]}: {name} has {len(ps)}")
-    starts = split.chosen(bs, a.level, at, a.cut, a.join)
-    pieces = split.describe(ps, bs, starts)
+    uncovered = []
+    if a.plan:
+        if at is not None or a.cut or a.join:
+            raise ValueError("--plan is a whole split: not with --at, --cut or --join")
+        plan = split.read_plan(sys.stdin.read() if a.plan == "-" else Path(a.plan).read_text(encoding="utf-8"))
+        pieces, uncovered = split.from_plan(ps, plan)
+        by = {b["page"]: b for b in bs}
+        for r in pieces:                     # what the detector made of each cut, beside the decision
+            b = by.get(r["ranges"][0][0])
+            if b:
+                r["starts"] = {k: b[k] for k in ("strength", "level", "for", "against")}
+        starts = [r["ranges"][0][0] for r in pieces]
+    else:
+        starts = split.chosen(bs, a.level, at, a.cut, a.join)
+        pieces = split.describe(ps, bs, starts)
+        for r in pieces:
+            r.pop("ranges", None)
     out({"doc": doc, "name": name, "pages": len(ps),
-         "split": "--at" if at is not None else a.level, "pieces": len(pieces),
+         "split": "--plan" if a.plan else "--at" if at is not None else a.level, "pieces": len(pieces),
          "at_each_level": {lv: len(split.starts_at(bs, lv)) + 1 for lv in split.LEVELS},
-         "passed_over": split.passed_over(bs, starts)})
+         "passed_over": split.passed_over(bs, starts),
+         **({"in_no_piece": uncovered} if uncovered else {})})
+
+    def loc_of(r):
+        ranges = r.get("ranges") or [r["pages"]]
+        return [f"doc:{doc}#page={x}" + (f"-{y}" if y != x else "") for x, y in ranges]
+
     for r in pieces:
-        out({**r, "loc": f"doc:{doc}#page={r['pages'][0]}" + (f"-{r['pages'][1]}" if r["pages"][1] != r["pages"][0] else "")})
+        locs = loc_of(r)
+        out({**r, "loc": locs[0], **({"locs": locs} if len(locs) > 1 else {})})
     if a.list_file:
-        items = [{"loc": f"doc:{doc}#page={r['pages'][0]}" + (f"-{r['pages'][1]}" if r["pages"][1] != r["pages"][0] else ""),
-                  "fields": {"piece": r["piece"], "label": r["label"], "pages": f"{r['pages'][0]}–{r['pages'][1]}",
-                             **({"kind": r["kind"]} if r.get("kind") else {}),
-                             **({"strength": r["starts"]["strength"], "why": "; ".join(r["starts"]["for"])} if r.get("starts") else {})}}
-                 for r in pieces]
+        items = []
+        for r in pieces:
+            locs = loc_of(r)
+            items.append({"loc": locs[0],
+                          "fields": {"piece": r["piece"], "label": r["label"],
+                                     "pages": ", ".join(x.split("page=")[1] for x in locs),
+                                     **({"kind": r["kind"]} if r.get("kind") else {}),
+                                     **({"strength": r["starts"]["strength"], "why": "; ".join(r["starts"]["for"])}
+                                        if r.get("starts") else {})},
+                          **({"children": [{"loc": x} for x in locs[1:]]} if len(locs) > 1 else {})})
         lists.write(a.list_file, {"type": "list", "v": 1, "title": f"{name}: {len(pieces)} pieces", "made_by": "meta split",
                                   "columns": ["piece", "pages", "label", "kind", "strength", "why"],
                                   "query": f"meta split {doc}"}, items)

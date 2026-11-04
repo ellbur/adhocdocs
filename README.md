@@ -216,7 +216,7 @@ to try on the sample matter:
 - *"Show me Ames's part in this on a timeline."* Each of Ames's links sits at its date; click one to see the document it rests on.
 - *"Who in the emails isn't in the entities yet? Add the ones who matter, and draw who corresponds with Kettering."*
 - *"Show me this memo's earlier drafts, and the thread this email belongs to."* A document's link bar lists its replies, quotations and versions too.
-- *"Which PDFs are really several documents scanned together? Split scan-batch.pdf into its letters, and show me where you'd cut and why."* Then *"Keep pages 7 and 8 together, and save that as the letters split."*
+- *"Which PDFs are really several documents scanned together? Split scan-batch.pdf into its letters, and show me where you'd cut and why."* Then *"Keep pages 7 and 8 together, put the misfiled page 14 with the first letter, and save that as the letters split."*
 - *"Set up issues for delivery, damages and notice, and file the entities and notes under them."* Then press `F` in the viewer to see one issue at a time.
 - Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
 

@@ -166,15 +166,79 @@ def test_cli_records_several_splits(api, tmp_path, capsys):
     assert set(splits) == {"letters", "batches"} and splits["letters"]["pieces"] == 7
     assert splits["batches"]["pieces"] < 7
 
-    with pytest.raises(ValueError, match="already has a split named 'letters'"):
-        split_again(m)
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        cli.meta(["--matter", str(m.root), "split", m.merged, "--record", "letters"])
+    assert "already has a split named 'letters'" in capsys.readouterr().err
     rows = run("split", m.merged, "--at", "3,11", "--record", "letters", "--replace")
     assert rows[-1]["replaced"] == 7 and len(rows[-1]["bundles"]) == 3
     assert {r["split"]: r["pieces"] for r in run("splits", m.merged)}["letters"] == 3
 
 
-def split_again(m):
+# -- Claude's own judgment -------------------------------------------------------------------------
+
+def test_pages_look_alike_or_not(m):
+    """Within a document, pages share words and layout; across the seam
+    between two documents' middle pages, nothing announces a start, but
+    the pages look unlike."""
+    ps = split.pages(m, m.merged)
+    sims = split.similarities(ps)
+    assert sims[4]["around"] >= split.SAME_TEXT and "buyer" in sims[4]["shared"]       # PO page 2 after page 1
+    assert sims[6]["around"] <= split.OTHER_TEXT                                        # the notice after the invoice
+    assert sims[13]["layout"] <= split.SAME_LAYOUT                                      # a transcript's pages
+
+    out = pymupdf.open()
+    out.insert_pdf(pymupdf.open(CORPUS / "public/scotus-coinbase-v-suski-2024.pdf"), from_page=5, to_page=8)
+    out.insert_pdf(pymupdf.open(CORPUS / "public/txsd-lamex-foods-v-blakeman-transportation-2007.pdf"), from_page=2, to_page=5)
+    doc = ingest_bytes(m, out.tobytes(), "middles.pdf", {"custodian": "cust:a", "source": {"collection": "c", "path": "middles.pdf"}})
+    bs = split.boundaries(split.pages(Matter(m.root), doc))
+    assert split.starts_at(bs, "likely") == [5]
+    seam = bs[3]
+    assert any("neither its words nor its layout" in r for r in seam["for"])
+    assert any("though the pages look unalike" in r for r in seam["against"])           # a run-on sentence counts for less
+
+
+def test_plans(m):
+    ps = split.pages(m, m.merged)
+    plan = split.read_plan('''{"pages": "1-2,6", "label": "Demand letter with the invoice", "kind": "letter", "summary": "Stroud's demand"}
+{"pages": "3"}
+{"pages": [4, 5], "label": "PO"}
+{"pages": "7-18"}''')
+    rows, uncovered = split.from_plan(ps, plan)
+    assert rows[0]["ranges"] == [[1, 2], [6, 6]] and "pages" not in rows[0] and rows[0]["label"] == "Demand letter with the invoice"
+    assert rows[1]["label"].startswith("Email:") and rows[2]["pages"] == [4, 5]
+    assert uncovered == [] and rows[0]["numbering"] == "its pages say 2, it has 3"     # the letter, plus the invoice
+    _, uncovered = split.from_plan(ps, [{"pages": "1-5"}, {"pages": "8-18"}])
+    assert uncovered == [6, 7]
+    with pytest.raises(ValueError, match="page 2 is in pieces 1 and 2"):
+        split.from_plan(ps, [{"pages": "1-2"}, {"pages": "2-3"}])
+    with pytest.raises(ValueError, match="aren't in 1-18"):
+        split.from_plan(ps, [{"pages": "17-19"}])
+    reqs = split.bundle_requests(m.merged, "scan-batch.pdf", "mine", rows)
+    assert [p["select"] for p in reqs[0]["parts"]] == [{"page": [1, 2]}, {"page": 6}]
+    assert reqs[0]["summary"] == "Stroud's demand (pp. 1–2, p. 6 of scan-batch.pdf)"
+
+
+def test_reading_and_looking(m, tmp_path):
+    ps = split.pages(m, m.merged)
+    rows = split.page_rows(ps, split.boundaries(ps), {2, 3})
+    assert [r["page"] for r in rows] == [2, 3]
+    assert rows[0]["printed"] == "2 of 2" and rows[1]["starts_piece"]["level"] == "sure"
+    assert rows[1]["top"] and "like_previous" in rows[1]
+    files = split.contact_sheet(m, m.merged, tmp_path / "sheet.png", per_sheet=12)
+    assert len(files) == 2 and all(Path(f).read_bytes()[:4] == b"\x89PNG" for f in files)
+
+
+def test_cli_plan(api, tmp_path, capsys, monkeypatch):
+    import io
     from adhocdocs import cli
-    cli._split(m, type("A", (), {"cmd": "split", "find": False, "doc": m.merged, "level": "likely", "at": None,
-                                 "cut": [], "join": [], "list_file": None, "record": "letters", "replace": False,
-                                 "requested_by": None})())
+    m = api
+    monkeypatch.setattr("sys.stdin", io.StringIO('[{"pages": "1-2"}, {"pages": "3-5", "label": "Memo and PO"}, {"pages": "7-18"}]'))
+    capsys.readouterr()
+    cli.meta(["--matter", str(m.root), "split", m.merged, "--plan", "-", "--record", "mine"])
+    rows = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert rows[0]["split"] == "--plan" and rows[0]["in_no_piece"] == [6] and rows[2]["label"] == "Memo and PO"
+    assert rows[-1]["recorded"] == "mine" and len(rows[-1]["bundles"]) == 3
+    cli.meta(["--matter", str(m.root), "split", m.merged, "--pages", "6-7"])
+    rows = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert [r["page"] for r in rows] == [6, 7]

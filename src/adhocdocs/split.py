@@ -90,6 +90,7 @@ class Page:
     number: int | None = None                # the printed page number
     total: int | None = None                 # "of N"
     ocr: bool | None = None                  # read by OCR (None: unknown)
+    boxes: list = field(default_factory=list)  # per line: (x0, top, x1, word height), or None without word positions
 
     @property
     def body(self) -> list[str]:
@@ -153,15 +154,23 @@ def pages(m: Matter, doc: str) -> list[Page]:
     starts = [g["start"] for g in geo]
     out, offset = [], 0
     for n, chunk in enumerate(text.split("\f"), 1):
-        lines, tops, pos = [], [], offset
+        lines, tops, boxes, pos = [], [], [], offset
         for line in chunk.split("\n"):
             if line.strip():
                 i = bisect_right(starts, pos + len(line) - len(line.lstrip())) - 1
                 g = geo[i] if i >= 0 and geo[i]["start"] < pos + len(line) else None
                 lines.append(line.strip())
                 tops.append(g["box"][1] if g and g.get("page") == n and g.get("box") else None)
+                # the line's extent: its words' boxes
+                k, ws = max(i, 0), []
+                while k < len(geo) and geo[k]["start"] < pos + len(line):
+                    if geo[k]["start"] >= pos and geo[k].get("box") and geo[k].get("page") == n:
+                        ws.append(geo[k]["box"])
+                    k += 1
+                boxes.append((min(b[0] for b in ws), min(b[1] for b in ws), max(b[2] for b in ws),
+                              sorted(b[3] - b[1] for b in ws)[len(ws) // 2]) if ws else None)
             pos += len(line) + 1
-        p = Page(n, lines)
+        p = Page(n, lines, boxes=boxes)
         if lines and all(t is not None for t in tops):
             k = 0
             while k < min(len(lines), EDGE_LINES) and tops[k] < HEAD:
@@ -181,6 +190,142 @@ def pages(m: Matter, doc: str) -> list[Page]:
         out.append(p)
         offset += len(chunk) + 1
     return out
+
+
+# -- do two pages look like the same document? ----------------------------------------------------
+
+_STOP = set("""the and for that with this from have has are was were will would shall which their there been not but
+any all its our your you they them his her who what when where into upon such than then also may can should each
+other more most only same some these those under over about after before between per please thank dear very""".split())
+_TOKEN = re.compile(r"[a-z0-9][a-z0-9/._-]*[a-z0-9]")
+
+
+def tokens(p: Page) -> list[str]:
+    """The page's words for comparing it with others: its body (running
+    headers and footers are compared on their own), lower-cased, without
+    short words, common words and bare numbers; reference numbers kept."""
+    body = [x for x in p.plain if x not in p.head and x not in p.foot]
+    out = []
+    text = re.sub(r"([a-z])-\n([a-z])", r"\1\2", "\n".join(body).casefold())     # words hyphenated across lines
+    for w in _TOKEN.findall(text):
+        if w.isdigit() or w in _STOP or (len(w) < 4 and not any(c.isdigit() for c in w)):
+            continue
+        out.append(w)
+    return out
+
+
+def layout(p: Page) -> dict | None:
+    """Where the text sits and how big it is: the body's left and right
+    edges, its type size and its line spacing, as fractions of the page.
+    None without word positions, or with too few lines to say."""
+    bx = [b for x, b in zip(p.lines, p.boxes) if b and x not in p.head and x not in p.foot] if p.boxes else []
+    if len(bx) < 8:
+        return None
+    lefts = sorted(b[0] for b in bx)
+    rights = sorted(b[2] for b in bx)
+    tops = sorted(b[1] for b in bx)
+    gaps = sorted(b - a for a, b in zip(tops, tops[1:]) if 0.003 < b - a < 0.08)
+    return {"left": lefts[len(lefts) // 5], "right": rights[len(rights) * 4 // 5],
+            "size": sorted(b[3] for b in bx)[len(bx) // 2], "pitch": gaps[len(gaps) // 2] if gaps else None}
+
+
+LAYOUT_SCALE = {"left": ("the left margin", 0.03), "size": ("the type size", 0.12), "pitch": ("the line spacing", 0.15)}
+# (not the right margin: ragged text and tables move it too much within a document)
+
+
+def layout_distance(a: dict | None, b: dict | None) -> tuple[float, str] | None:
+    """How far apart two pages' layouts are (about 1: the variation within a
+    document; 3 or more: set differently), and what differs most."""
+    if not a or not b:
+        return None
+    parts = []
+    for k, (what, scale) in LAYOUT_SCALE.items():
+        if a.get(k) and b.get(k):
+            d = abs(math.log(a[k] / b[k])) if k in ("size", "pitch") else abs(a[k] - b[k])
+            parts.append((d / scale, what))
+    return max(parts) if parts else None
+
+
+def similarities(ps: list[Page]) -> list[dict | None]:
+    """For each page after the first, how much it looks like the page before:
+    ``text`` (cosine of the pages' words, each weighted by how rare it is in
+    the document, so what every page says counts for little), ``shared``
+    (the rarest words and reference numbers the two have in common), and
+    ``layout`` (:func:`layout_distance`)."""
+    toks = [tokens(p) for p in ps]
+    n = len(ps)
+    df: dict[str, int] = {}
+    for t in toks:
+        for w in set(t):
+            df[w] = df.get(w, 0) + 1
+    idf = {w: math.log((n + 1) / (c + 0.5)) for w, c in df.items()}
+    vecs = []
+    for t in toks:
+        v: dict[str, float] = {}
+        for w in t:
+            v[w] = v.get(w, 0) + idf[w]
+        norm = math.sqrt(sum(x * x for x in v.values())) or 1
+        vecs.append({w: x / norm for w, x in v.items()})
+    lays = [layout(p) for p in ps]
+    def window(lo, hi):
+        """The pages lo..hi-1 as one vector."""
+        v: dict[str, float] = {}
+        for k in range(max(lo, 0), min(hi, n)):
+            for w, x in vecs[k].items():
+                v[w] = v.get(w, 0) + x
+        norm = math.sqrt(sum(x * x for x in v.values())) or 1
+        return {w: x / norm for w, x in v.items()}
+
+    out: list[dict | None] = [None]
+    for i in range(1, n):
+        a, b = vecs[i - 1], vecs[i]
+        wa, wb = window(i - WINDOW, i), window(i, i + WINDOW)
+        common = set(a) & set(b)
+        rare = sorted((w for w in common if df[w] <= max(2, n // 3)), key=lambda w: (-idf[w], w))
+        lay = layout_distance(lays[i - 1], lays[i])
+        if lay and i >= 2 and lay[0] > SAME_LAYOUT:
+            # a book's facing pages: margins mirrored, so like the page two back, not the one before
+            two = layout_distance(lays[i - 2], lays[i])
+            if two and two[0] <= SAME_LAYOUT * 2:
+                lay = (two[0], two[1] + ", like page " + str(ps[i - 2].n))
+        out.append({"text": round(sum(a[w] * b[w] for w in common), 2),
+                    "around": round(sum(wa[w] * wb[w] for w in set(wa) & set(wb)), 2), "shared": rare[:5],
+                    "words": (sum(len(toks[k]) for k in range(max(i - WINDOW, 0), i)),
+                              sum(len(toks[k]) for k in range(i, min(i + WINDOW, n)))),
+                    "layout": round(lay[0], 1) if lay else None, "differs": lay[1] if lay else None})
+    return out
+
+
+def _sameness(sim: dict | None) -> list[tuple[float, str]]:
+    """Signs from how alike a page and the page before it look."""
+    if not sim:
+        return []
+    sig = []
+    enough = min(sim["words"]) >= 60
+    if max(sim["text"], sim["around"]) >= SAME_TEXT:
+        sig.append((-1.5, f"the same subject as the pages before (text similarity {max(sim['text'], sim['around']):.2f}"
+                          + (f"; both mention {', '.join(sim['shared'][:3])})" if sim["shared"] else ")")))
+    elif enough and sim["around"] <= OTHER_TEXT:
+        sig.append((1.0, f"little in common with the pages before (text similarity {sim['around']:.2f})"))
+    if sim["layout"] is not None:
+        if sim["layout"] <= SAME_LAYOUT:
+            sig.append((-0.5, "laid out like the page before"))
+        elif sim["layout"] >= OTHER_LAYOUT:
+            sig.append((1.0, f"laid out differently from the page before ({sim['differs']})"))
+    if unlike(sim):
+        sig.append((0.75, "neither its words nor its layout look like the page before"))
+    return sig
+
+
+def unlike(sim: dict | None) -> bool:
+    """The pages look like different documents, in their words and their layout both."""
+    return bool(sim) and min(sim["words"]) >= 60 and sim["around"] <= OTHER_TEXT * 2 / 3 \
+        and sim["layout"] is not None and sim["layout"] >= OTHER_LAYOUT * 1.5
+
+
+SAME_TEXT, OTHER_TEXT = 0.3, 0.06
+WINDOW = 2          # pages either side compared as a whole ("around")
+SAME_LAYOUT, OTHER_LAYOUT = 0.5, 2.0
 
 
 def _opening(p: Page) -> list[tuple[float, str]]:
@@ -233,10 +378,11 @@ def _runs_on(prev: Page, cur: Page) -> bool:
     return bool(re.search(r"[a-z,]$|[a-z]-$", last)) and not _TERMINAL.search(last) and first[:1].islower()
 
 
-def score(ps: list[Page], i: int) -> dict:
-    """The evidence that a new piece starts at page ``ps[i]`` (0-based ``i`` ≥ 1)."""
+def score(ps: list[Page], i: int, sim: dict | None = None) -> dict:
+    """The evidence that a new piece starts at page ``ps[i]`` (0-based ``i`` ≥ 1).
+    ``sim``: how alike it and the page before look (:func:`similarities`)."""
     prev, cur = ps[i - 1], ps[i]
-    sig: list[tuple[float, str]] = []
+    sig: list[tuple[float, str]] = list(_sameness(sim))
 
     # printed page numbers
     if cur.number is not None and prev.number is not None:
@@ -268,7 +414,9 @@ def score(ps: list[Page], i: int) -> dict:
     if cur.chars < 10:
         sig.append((-1.0, "a page with no text"))
     if _runs_on(prev, cur):
-        sig.append((-3.0, "a sentence runs on from the page before"))
+        # a lowercase start after an unfinished line is also what two documents' middle pages look like
+        sig.append((-0.75, "a sentence seems to run on from the page before, though the pages look unalike")
+                   if unlike(sim) else (-3.0, "a sentence runs on from the page before"))
     if any(_CONTINUED.search(x) for x in cur.lines[:3]):
         sig.append((-2.0, "marked continued"))
 
@@ -302,8 +450,11 @@ def score(ps: list[Page], i: int) -> dict:
 
     total = sum(w for w, _ in sig)
     strength = 1 / (1 + math.exp(-(total - BIAS)))
-    return {"page": cur.n, "strength": round(strength, 2), "level": level_of(strength),
-            "for": [r for w, r in sig if w > 0], "against": [r for w, r in sig if w < 0], "score": round(total, 2)}
+    row = {"page": cur.n, "strength": round(strength, 2), "level": level_of(strength),
+           "for": [r for w, r in sig if w > 0], "against": [r for w, r in sig if w < 0], "score": round(total, 2)}
+    if sim:
+        row["like_previous"] = {k: sim[k] for k in ("text", "around", "shared", "layout") if sim[k] not in (None, [])}
+    return row
 
 
 def level_of(strength: float) -> str | None:
@@ -312,7 +463,8 @@ def level_of(strength: float) -> str | None:
 
 def boundaries(ps: list[Page]) -> list[dict]:
     """Every page after the first, with the evidence that a piece starts there."""
-    return [score(ps, i) for i in range(1, len(ps))]
+    sims = similarities(ps)
+    return [score(ps, i, sims[i]) for i in range(1, len(ps))]
 
 
 def _title(p: Page) -> tuple[str, str | None]:
@@ -345,26 +497,151 @@ def pieces(ps: list[Page], starts) -> list[dict]:
     each with its pages, a label, a kind, its date if a date line says, and
     whether its printed numbering agrees with its length."""
     starts = sorted({1, *(s for s in starts if 1 < s <= len(ps))})
+    return [piece(ps, k + 1, [[a, (starts[k + 1] - 1) if k + 1 < len(starts) else len(ps)]])
+            for k, a in enumerate(starts)]
+
+
+def piece(ps: list[Page], k: int, ranges: list[list[int]], label=None, kind=None, summary=None) -> dict:
+    """Piece ``k`` of a split: its page ranges, a label and kind (given, or
+    read from its first page), its date if a date line says, and whether
+    its printed numbering agrees with its length."""
+    first = ps[ranges[0][0] - 1]
+    found_label, found_kind = _title(first)
+    row = {"piece": k, "ranges": ranges, "label": label or found_label}
+    if len(ranges) == 1:
+        row["pages"] = list(ranges[0])
+    if kind or found_kind:
+        row["kind"] = kind or found_kind
+    if summary:
+        row["summary"] = summary
+    date = next((x.strip() for x in first.lines[:12] if _DATE_LINE.match(x)), None)
+    if date:
+        row["date_line"] = date
+    nos = [n for a, b in ranges for n in range(a, b + 1)]
+    totals = {ps[n - 1].total for n in nos if ps[n - 1].total}
+    if len(totals) == 1:
+        t = totals.pop()
+        if t != len(nos):
+            row["numbering"] = f"its pages say {t}, it has {len(nos)}"
+    elif len(totals) > 1:
+        row["numbering"] = "its pages give different page counts: " + ", ".join(str(t) for t in sorted(totals))
+    return row
+
+
+def parse_ranges(spec, n: int) -> list[list[int]]:
+    """``"1-2,7"``, ``[1, 2]`` (one range), ``[[1, 2], [7, 7]]`` or ``5`` as
+    sorted, merged ranges of pages 1..n."""
+    if isinstance(spec, int):
+        spec = [[spec, spec]]
+    elif isinstance(spec, str):
+        spec = [[int(x) for x in (part.split("-", 1) if "-" in part else (part, part))]
+                for part in spec.replace(" ", "").split(",") if part]
+    elif spec and all(isinstance(x, int) for x in spec):
+        spec = [list(spec)] if len(spec) == 2 else [[x, x] for x in spec]
     out = []
-    for k, a in enumerate(starts):
-        b = (starts[k + 1] - 1) if k + 1 < len(starts) else len(ps)
-        first = ps[a - 1]
-        label, kind = _title(first)
-        date = next((x.strip() for x in first.lines[:12] if _DATE_LINE.match(x)), None)
-        row = {"piece": k + 1, "pages": [a, b], "label": label}
-        if kind:
-            row["kind"] = kind
-        if date:
-            row["date_line"] = date
-        totals = {p.total for p in ps[a - 1:b] if p.total}
-        if len(totals) == 1:
-            t = totals.pop()
-            if t != b - a + 1:
-                row["numbering"] = f"its pages say {t}, it has {b - a + 1}"
-        elif len(totals) > 1:
-            row["numbering"] = "its pages give different page counts: " + ", ".join(str(t) for t in sorted(totals))
+    for a, b in sorted([list(r) for r in spec]):
+        if not (1 <= a <= b <= n):
+            raise ValueError(f"pages {a}-{b} aren't in 1-{n}")
+        if out and a <= out[-1][1] + 1:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    if not out:
+        raise ValueError("a piece needs pages")
+    return out
+
+
+def from_plan(ps: list[Page], plan: list[dict]) -> tuple[list[dict], list[int]]:
+    """Pieces as someone decided them: each ``{"pages": "1-2,7", "label"?,
+    "kind"?, "summary"?}``, in the order given. A piece may be in several
+    ranges (a misfiled page, an enclosure scanned out of order). Pieces of
+    one split can't share a page; pages in no piece (slip sheets, blank
+    backs) are returned so the caller can say so."""
+    rows, seen = [], {}
+    for k, item in enumerate(plan, 1):
+        if not isinstance(item, dict) or "pages" not in item:
+            raise ValueError(f"piece {k} of the plan needs \"pages\"")
+        ranges = parse_ranges(item["pages"], len(ps))
+        for a, b in ranges:
+            for n in range(a, b + 1):
+                if n in seen:
+                    raise ValueError(f"page {n} is in pieces {seen[n]} and {k}: pieces of one split don't overlap "
+                                     "(record another split for another way of grouping)")
+                seen[n] = k
+        rows.append(piece(ps, k, ranges, item.get("label"), item.get("kind"), item.get("summary")))
+    return rows, [n for n in range(1, len(ps) + 1) if n not in seen]
+
+
+def read_plan(text: str) -> list[dict]:
+    """A plan: a JSON array, or one JSON object per line."""
+    import json
+    text = text.strip()
+    if text.startswith("["):
+        return json.loads(text)
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def page_rows(ps: list[Page], bs: list[dict], which=None) -> list[dict]:
+    """What each page shows at its edges, for reading a document's cut points
+    without reading it all: its printed number, header and footer, first and
+    last lines, how it is laid out, how much it is like the page before, and
+    the evidence for starting a piece there."""
+    by = {b["page"]: b for b in bs}
+    out = []
+    for p in ps:
+        if which and p.n not in which:
+            continue
+        body = [x for x in p.plain if x not in p.head and x not in p.foot]
+        row = {"page": p.n}
+        if p.number is not None:
+            row["printed"] = f"{p.number}" + (f" of {p.total}" if p.total else "")
+        if p.ocr is not None:
+            row["ocr"] = p.ocr
+        if p.head:
+            row["header"] = p.head
+        row["top"] = body[:4]
+        row["bottom"] = body[-3:] if len(body) > 4 else []
+        if p.foot:
+            row["footer"] = p.foot
+        if not p.lines:
+            row["blank"] = True
+        b = by.get(p.n)
+        if b:
+            row["starts_piece"] = {k: b[k] for k in ("strength", "level", "for", "against")}
+            if b.get("like_previous"):
+                row["like_previous"] = b["like_previous"]
         out.append(row)
     return out
+
+
+def contact_sheet(m: Matter, doc: str, path, which=None, cols: int = 4, per_sheet: int = 16) -> list[str]:
+    """Pictures of the pages, small and numbered, in a grid: to see what the
+    text can't say (letterhead art, paper, handwriting, stamps, a page
+    upside down). Several files (``-2``, ``-3``…) past ``per_sheet`` pages.
+    Returns the files written."""
+    import pymupdf
+    from pathlib import Path
+    from .produce import pages_for
+    src = pages_for(m, doc)[0]
+    nos = [n for n in range(1, len(src) + 1) if not which or n in which]
+    path = Path(path)
+    written = []
+    cell_w, cell_h, pad = 200, 260, 18
+    for s, at in enumerate(range(0, len(nos), per_sheet)):
+        chunk = nos[at:at + per_sheet]
+        rows = (len(chunk) + cols - 1) // cols
+        out = pymupdf.open()
+        page = out.new_page(width=cols * cell_w, height=rows * (cell_h + pad))
+        for j, n in enumerate(chunk):
+            x, y = (j % cols) * cell_w, (j // cols) * (cell_h + pad)
+            box = pymupdf.Rect(x + 6, y + pad, x + cell_w - 6, y + pad + cell_h - 6)
+            page.draw_rect(box, color=(0.75, 0.75, 0.75), width=0.5)
+            page.show_pdf_page(box, src, n - 1, keep_proportion=True)
+            page.insert_text((x + 8, y + 13), f"p. {n}", fontsize=11, color=(0.8, 0.1, 0.1))
+        f = path if s == 0 else path.with_name(f"{path.stem}-{s + 1}{path.suffix}")
+        f.write_bytes(page.get_pixmap(dpi=110).tobytes("png"))
+        written.append(str(f))
+    return written
 
 
 def starts_at(bs: list[dict], level: str) -> list[int]:
@@ -450,11 +727,12 @@ def bundle_requests(doc: str, doc_name: str, split_name: str, rows: list[dict]) 
     n = len(rows)
     out = []
     for r in rows:
-        a, b = r["pages"]
-        sel = {"page": a if a == b else [a, b]}
-        pages = f"p. {a}" if a == b else f"pp. {a}–{b}"
-        summary = f"{pages} of {doc_name}" + "".join(f"; {x}" for x in (r.get("kind"), r.get("date_line")) if x)
+        ranges = r.get("ranges") or [r["pages"]]
+        parts = [{"doc": doc, "select": {"page": a if a == b else [a, b]}} for a, b in ranges]
+        pages = ", ".join(f"p. {a}" if a == b else f"pp. {a}–{b}" for a, b in ranges)
+        summary = (f"{r['summary']} ({pages} of {doc_name})" if r.get("summary") else
+                   f"{pages} of {doc_name}" + "".join(f"; {x}" for x in (r.get("kind"), r.get("date_line")) if x))
         out.append({"op": "define-bundle", "name": f"{doc_name} · {split_name} {r['piece']}/{n} · {r['label']}",
-                    "parts": [{"doc": doc, "select": sel}], "summary": summary, "from": f"split:{doc}",
+                    "parts": parts, "summary": summary, "from": f"split:{doc}",
                     "split": {"of": doc, "name": split_name, "piece": r["piece"], "pieces": n}})
     return out
