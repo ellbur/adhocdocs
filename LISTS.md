@@ -125,6 +125,11 @@ list display: a linked preview pane, selecting, tagging, and `j`/`k` or
   shown instead of the document's name. The locator points at the evidence
   for the entry, so a chronology is checked like any other quotation.
   Its entries also appear on the viewer's date cards ([DATES.md](DATES.md)).
+  `undated: true` keeps an item off the axis (and off the date cards) even
+  though its document has a date; `date_from: "document"` places it at the
+  document's date, drawn dashed.
+- **An entity's links** make a timeline too: `view timeline --entity REF`
+  ([GRAPH.md](GRAPH.md#an-entitys-timeline)).
 - **Breaks:** long empty stretches are cut out of the axis and shown as a
   hatched break labeled with their length, so documents years apart don't
   spread over a mile of screen. The automatic scale is the finest that fits

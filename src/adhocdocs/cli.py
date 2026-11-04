@@ -2256,7 +2256,12 @@ See `ann --help` for the entity list.
 Timelines: `view timeline FILE` shows a list file's items by date, in
 lanes (--lanes group, custodian, from, kind). For a chronology, give items
 their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
-label), each with a locator to its evidence.
+label), each with a locator to its evidence. `view timeline --entity
+"Rita Ames"` shows an entity's dated links, each at its evidence, in a
+lane per entity at the other end (--by rel for one per relation);
+undated links are listed after (--doc-dates places them at their
+evidence's date, marked approximate), and links with no evidence are
+left out and reported. `graph timeline` writes the same as a list file.
 
 Issues: the user picks a facet (an issue: `ann --help`) with F or the ◇
 button, and what isn't filed under it is dimmed; `view state` and `view
@@ -2345,9 +2350,13 @@ def view(argv=None):
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     where(s)
     s = sub.add_parser("timeline", help="show a list file's items by date, in lanes, with a linked preview pane")
-    s.add_argument("file", help="a list file; items' fields date and event make it a chronology")
+    s.add_argument("file", nargs="?", help="a list file; items' fields date and event make it a chronology")
+    s.add_argument("--entity", action="append", metavar="REF",
+                   help="instead of a file: these entities' dated links, each at its evidence (repeatable; "
+                        "graph timeline writes the same as a list file)")
     s.add_argument("--lanes", choices=["auto", "group", "custodian", "from", "kind", "none"], default="auto",
                    help="auto: the list's groups if it has them, else custodian")
+    _timeline_opts(s)
     s.add_argument("--scale", choices=["auto", "day", "week", "month", "year"], default="auto")
     s.add_argument("--title")
     s.add_argument("--pane", help="replace this timeline pane's content")
@@ -2441,8 +2450,16 @@ def view(argv=None):
              "link": a.preview, "preview_new": not a.preview and not a.pane}
     elif a.cmd == "timeline":
         from .timeline import timeline_html
-        files, sequence, summary = timeline_html(m, Path(a.file), a.lanes, a.scale, a.title)
-        header, _ = lists.read(a.file)
+        if bool(a.file) == bool(a.entity):
+            raise ValueError("view timeline takes a list file or --entity, not both")
+        if a.entity:
+            from . import graph as graphmod
+            header, items, links_summary = graphmod.timeline_list(m, a.entity, a.facet, a.by, a.doc_dates)
+            source = (header, items)
+        else:
+            source = Path(a.file)
+            header, _ = lists.read(a.file)
+        files, sequence, summary = timeline_html(m, source, a.lanes, a.scale, a.title)
         c = {"cmd": "pane", "kind": "timeline", "files": files, "sequence": sequence,
              "title": a.title or header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
@@ -2494,6 +2511,8 @@ def view(argv=None):
     result = viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False})
     if a.cmd == "timeline":
         result["timeline"] = {k: summary[k] for k in ("items", "dated", "undated", "lanes", "segments", "truncated")}
+        if a.entity and links_summary["no_evidence"]:
+            result["timeline"]["no_evidence"] = links_summary["no_evidence"]     # not shown: nothing to point at
     if a.cmd == "graph":
         result["graph"] = summary
     out(result)
@@ -2512,6 +2531,8 @@ the links between them (`ann link`), and the documents they rest on.
                                      for an entity or link: the documents it rests on
   graph page REF [-o FILE]           a literate page about one entity: its connections, each with its
                                      evidence quoted by reference, in date order, and where it is named
+  graph timeline REF… [-o FILE]      a list file of an entity's dated links, each at its evidence,
+                                     for `view timeline FILE` (or `view timeline --entity REF`)
   graph unsupported [--facet F]      links and events with no evidence recorded (--all: any entity)
   graph export [--format json|dot|mermaid] [-o FILE]
                                      the whole graph (or --around REF), for your own code
@@ -2569,6 +2590,14 @@ def _graph_opts(s):
                    help="gather documents into metadocuments: one node per family, thread, item, text or bundle")
 
 
+def _timeline_opts(s):
+    s.add_argument("--facet", help="only links filed under this facet (or between entities filed under it)")
+    s.add_argument("--by", choices=["other", "rel", "none"], default="other",
+                   help="lanes: the entity at the other end of each link (default), the relation, or none")
+    s.add_argument("--doc-dates", action="store_true",
+                   help="place undated links at their evidence's date, marked approximate (default: listed as undated)")
+
+
 def _load_graph(m, a, ann=None, refs=()):
     """The graph, and the node IDs ``refs`` name. Documents named are in it
     before document relations are added, so theirs are."""
@@ -2608,6 +2637,10 @@ def graph(argv=None):
     _graph_opts(s)
     s = sub.add_parser("evidence", help="what rests on a document, or what an entity or link rests on")
     s.add_argument("ref")
+    s = sub.add_parser("timeline", help="a list file of entities' dated links, each at its evidence, for view timeline")
+    s.add_argument("refs", nargs="+", help="entities (ID, name or alias)")
+    _timeline_opts(s)
+    s.add_argument("-o", "--out", help="default: timeline-<name>.list.jsonl")
     s = sub.add_parser("unsupported", help="links and events with no evidence recorded")
     s.add_argument("--facet")
     s.add_argument("--all", action="store_true", help="every entity without --see, not only events")
@@ -2629,6 +2662,15 @@ def graph(argv=None):
     if a.cmd == "unsupported":
         for row in graphmod.unsupported(ann, a.facet, a.all):
             out(row)
+        return
+    if a.cmd == "timeline":
+        import re as _re
+        header, items, summary = graphmod.timeline_list(m, a.refs, a.facet, a.by, a.doc_dates, ann)
+        name = summary["entities"][0]["name"]
+        path = Path(a.out or "timeline-" + (_re.sub(r"[^a-z0-9]+", "-", entities.fold_text(name)).strip("-") or "entity")
+                    + ".list.jsonl")
+        lists.write(path, header, items)
+        out({"written": str(path), **summary, "next": f"view timeline {path}"})
         return
     if a.cmd == "page":
         import re as _re
