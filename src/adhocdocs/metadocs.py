@@ -540,3 +540,95 @@ def to_list(header: dict, units: list[dict]) -> list[dict]:
         row["children"] = [{"loc": d["loc"], "fields": {"hits": d["hits"]}} for d in x["docs"] if d["loc"] != loc]
         rows.append(row)
     return rows
+
+
+# -- as list files, for a list pane (view meta) -----------------------------------------------------
+
+def _pages(sel: dict) -> str | None:
+    p = sel.get("page")
+    if p is None:
+        return None
+    return f"p. {p}" if isinstance(p, int) else f"pp. {p[0]}–{p[1]}"
+
+
+def part_items(u: Units, ref: str, group: str | None = None) -> list[dict]:
+    """A metadocument's parts as list items, in the order that reads best at
+    its grain: a thread's messages in reply order, indented by depth, with
+    their copies under them; a family from its top item down; copies and
+    versions oldest first; what a message adds, passage by passage; a
+    bundle's parts as recorded."""
+    grain = ref.partition(":")[0]
+    items: list[dict] = []
+
+    def item(loc, **fields):
+        it = {"loc": loc if isinstance(loc, str) else locators.format(loc),
+              "fields": {k: v for k, v in fields.items() if v is not None}}
+        if group:
+            it["group"] = group
+        return it
+
+    if grain == "thread":
+        t = u.threads.get(ref.partition(":")[2])
+        if t:
+            for msg in t[1]["messages"]:
+                if msg["loc"][4:] not in u.live:
+                    continue
+                it = item(msg["loc"], part="\u00a0\u00a0" * msg["depth"] + ("↳ " if msg["depth"] else "") + u.name(msg["loc"][4:]))
+                kids = [{"loc": c, "fields": {"part": "copy"}} for c in msg["copies"] if c[4:] in u.live]
+                if kids:
+                    it["children"] = kids
+                items.append(it)
+            return items
+    if grain == "family":
+        root = u.family_root(u._doc(ref.partition(":")[2]))
+
+        def walk(d, depth):
+            if d not in u.live:
+                return
+            items.append(item("doc:" + d, part="\u00a0\u00a0" * depth + ("↳ " if depth else "") + u.name(d)))
+            for c in u.state.children.get(d, []):
+                walk(c, depth + 1)
+        walk(root, 0)
+        return items
+    if grain == "new":
+        for k, loc in enumerate(u.members(ref), 1):
+            items.append(item(loc, part=f"passage {k}" if loc.get("select") else "all of it"))
+        return items
+    if grain == "bundle":
+        b = u.bundle(ref.partition(":")[2])
+        for k, p in enumerate(b["parts"], 1):
+            d = u.state.follow(p["doc"])
+            sel = p.get("select") or {}
+            what = _pages(sel) or ("passage" if sel else "whole document")
+            items.append(item({**p, "doc": d}, part=f"{k}. {what} of {u.name(d)}" if sel else f"{k}. {u.name(d)}"))
+        return items
+    docs = sorted(u.docs(ref), key=u._order)                 # copies, versions: oldest first
+    for d in docs:
+        items.append(item("doc:" + d, part=u.name(d)))
+    return items
+
+
+def list_of(m: Matter, ref: str, ann=None) -> tuple[dict, list[dict]]:
+    """(header, items): a list file of a metadocument's parts (view list)."""
+    u = Units(m, ann)
+    d = u.describe(ref)
+    title = f"{d['name']} ({d['grain']})"
+    header = {"type": "list", "v": 1, "title": title, "made_by": "view meta", "query": d["ref"],
+              "columns": ["part", "date", "from", "custodian", "kind", "tags"]}
+    if d["grain"] in ("new", "bundle"):
+        header["columns"] = ["part", "snippet", "date", "custodian", "tags"]
+    return header, part_items(u, d["ref"])
+
+
+def around_list(m: Matter, doc: str, ann=None) -> tuple[dict, list[dict]]:
+    """(header, items): every metadocument a document is in, a group each,
+    with its parts: its thread, family, copies, versions, and the bundles
+    (and splits) that hold it."""
+    u = Units(m, ann)
+    doc = u._doc(doc)
+    items = []
+    for d in u.units_of(doc):
+        items += part_items(u, d["ref"], group=f"{d['grain']}: {d['name']}")    # the pane adds how many rows
+    header = {"type": "list", "v": 1, "title": f"Around {u.name(doc)}", "made_by": "view meta --of",
+              "query": f"what {u.name(doc)} is part of", "columns": ["part", "date", "from", "custodian", "kind", "tags"]}
+    return header, items

@@ -159,11 +159,12 @@ def _cell(col: str, item: dict, row: dict, loc: str) -> str:
     return html.escape("" if v is None else str(v))
 
 
-def list_html(m: Matter, path: Path) -> tuple[dict, list[str]]:
+def list_html(m: Matter, path) -> tuple[dict, list[str]]:
     """(files, sequence): an HTML bundle for a list pane, split into pages of
-    ROWS_PER_PAGE rows, and every row's locator in order."""
+    ROWS_PER_PAGE rows, and every row's locator in order. ``path`` is a list
+    file, or its ``(header, items)``."""
     from .index import open_index
-    header, items = lists.read(path)
+    header, items = path if isinstance(path, tuple) else lists.read(path)
     fx = open_index(m, "fields")
     fx.update()
     rows = fx.rows()
@@ -178,7 +179,7 @@ def list_html(m: Matter, path: Path) -> tuple[dict, list[str]]:
         sequence.append(loc)
     pages = [flat[i:i + ROWS_PER_PAGE] for i in range(0, len(flat), ROWS_PER_PAGE)] or [[]]
     files = {}
-    title = html.escape(header.get("title") or Path(path).stem)
+    title = html.escape(header.get("title") or (Path(path).stem if not isinstance(path, tuple) else "List"))
     note = header.get("query") or ""
     for n, page in enumerate(pages):
         out = [f"<h2>{title}</h2>"]

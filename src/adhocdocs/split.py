@@ -736,3 +736,37 @@ def bundle_requests(doc: str, doc_name: str, split_name: str, rows: list[dict]) 
                     "parts": parts, "summary": summary, "from": f"split:{doc}",
                     "split": {"of": doc, "name": split_name, "piece": r["piece"], "pieces": n}})
     return out
+
+
+def splits_list(ann, doc: str, doc_name: str, name: str | None = None) -> tuple[dict, list[dict]]:
+    """(header, items): a document's recorded splits as a list file, a group
+    per split, a row per piece (its first range; any others under it), so
+    the user can step through the pieces with a preview."""
+    from . import locators
+    splits = recorded(ann, doc)
+    if name is not None:
+        if name not in splits:
+            raise ValueError(f"{doc_name} has no split named {name!r}" +
+                             (f"; its splits: {', '.join(splits)}" if splits else "; it has none (meta split --record)"))
+        splits = {name: splits[name]}
+    if not splits:
+        raise ValueError(f"{doc_name} has no recorded splits: meta split {doc[:16]} proposes one, --record keeps it")
+    items = []
+    for sname, bs in splits.items():
+        for b in bs:
+            parts = [{**p, "doc": p["doc"]} for p in b["parts"]]
+            label = b["name"].split(" · ", 2)[-1] if b["name"].count(" · ") >= 2 else b["name"]
+            pages = ", ".join(x for x in ((("p. " + str(p["select"]["page"])) if isinstance(p.get("select", {}).get("page"), int)
+                                          else f"pp. {p['select']['page'][0]}–{p['select']['page'][1]}")
+                                         if (p.get("select") or {}).get("page") is not None else "whole"
+                                         for p in parts))
+            it = {"loc": locators.format(parts[0]), "group": sname,
+                  "fields": {"piece": f"{b['split']['piece']}/{b['split']['pieces']}", "part": label, "pages": pages,
+                             **({"summary": b["summary"]} if b.get("summary") else {}), "by": b["by"]}}
+            if len(parts) > 1:
+                it["children"] = [{"loc": locators.format(p), "fields": {"part": "(continued)"}} for p in parts[1:]]
+            items.append(it)
+    header = {"type": "list", "v": 1, "title": f"{doc_name}: " + ", ".join(splits) + (" splits" if len(splits) > 1 else " split"),
+              "made_by": "view meta --splits", "query": f"recorded splits of {doc_name}",
+              "columns": ["piece", "part", "pages", "summary", "tags"]}
+    return header, items

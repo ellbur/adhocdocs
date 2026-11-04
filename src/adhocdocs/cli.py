@@ -2274,6 +2274,14 @@ on, `--facts` to make each link a box documents point at, `--facet F` for
 one issue, `--cooccur` for names found together, dashed). A click on a
 box or an arrow's label previews its evidence. See `graph --help`.
 
+Metadocuments: `view meta thread:D` (or family:, copies:, versions:,
+new:, bundle:) shows its parts in a list pane with a linked preview: a
+thread in reply order with copies under each message, a family from the
+top down, a bundle's parts as recorded. `view meta D --of` shows every
+metadocument a document is in, a group each; `view meta D --splits`
+shows its recorded splits (meta split --record), a row per piece, to step
+through with the preview. --list FILE keeps it as a list file.
+
 Layout: a new pane (`view pane --new`, `view list`, `view open --new-pane`)
 gets a tab of its own. What the user opens from a pane (a page's
 references, a list's preview) goes beside it, tabbed there, so only related
@@ -2346,6 +2354,17 @@ def view(argv=None):
     where(s)
     s = sub.add_parser("list", help="show a list file, with a linked preview pane")
     s.add_argument("file")
+    s.add_argument("--pane", help="replace this list pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
+    where(s)
+    s = sub.add_parser("meta", help="show a metadocument's parts (thread, family, copies, versions, new, bundle) "
+                                    "in a list pane, with a linked preview pane")
+    s.add_argument("ref", help="thread:D, family:D, copies:D, versions:D, new:D, bundle:B; or a document with --of or --splits")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--of", action="store_true", help="REF is a document: every metadocument it is in, a group each")
+    g.add_argument("--splits", nargs="?", const="", metavar="NAME",
+                   help="REF is a document: its recorded splits, a group each, a row per piece (or only split NAME)")
+    s.add_argument("--list", dest="list_file", help="also write it as a list file")
     s.add_argument("--pane", help="replace this list pane's content")
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     where(s)
@@ -2448,6 +2467,31 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence,
              "title": header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "meta":
+        from . import metadocs
+        ann = annotations.Annotations.load(m)
+        if a.of or a.splits is not None:
+            if metadocs.is_ref(a.ref):
+                raise ValueError("--of and --splits take a document, not a metadocument")
+            doc = m.state.follow(locators.parse("doc:" + a.ref.removeprefix("doc:"), m.objects)["doc"])
+            if a.of:
+                header, items = metadocs.around_list(m, doc, ann)
+            else:
+                from . import split
+                u = metadocs.Units(m, ann)
+                header, items = split.splits_list(ann, doc, u.name(doc), a.splits or None)
+        else:
+            if not metadocs.is_ref(a.ref):
+                raise ValueError(f"{a.ref} is a document: name a metadocument ({', '.join(metadocs.PREFIXES)}), "
+                                 "or use --of (everything it is in) or --splits")
+            header, items = metadocs.list_of(m, a.ref, ann)
+        if a.list_file:
+            lists.write(a.list_file, header, items)
+        files, sequence = viewmod.list_html(m, (header, items))
+        c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence, "title": header["title"],
+             "update": a.pane, "link": a.preview, "preview_new": not a.preview and not a.pane}
+        shown = {"title": header["title"], "items": len(items), "rows": len(sequence),
+                 **({"list": a.list_file} if a.list_file else {})}
     elif a.cmd == "timeline":
         from .timeline import timeline_html
         if bool(a.file) == bool(a.entity):
@@ -2506,7 +2550,7 @@ def view(argv=None):
         c["limit"] = a.limit
     elif a.cmd in ("clear-highlights", "clear-marks"):
         c["pane"] = a.pane
-    if a.cmd in ("open", "sequence", "pane", "list", "timeline", "graph"):
+    if a.cmd in ("open", "sequence", "pane", "list", "timeline", "graph", "meta"):
         c.update(window=a.window, new_window=a.new_window)
     result = viewmod.command(m, {k: v for k, v in c.items() if v is not None and v is not False})
     if a.cmd == "timeline":
@@ -2515,6 +2559,8 @@ def view(argv=None):
             result["timeline"]["no_evidence"] = links_summary["no_evidence"]     # not shown: nothing to point at
     if a.cmd == "graph":
         result["graph"] = summary
+    if a.cmd == "meta":
+        result["meta"] = shown
     out(result)
 
 
@@ -2770,6 +2816,10 @@ document in it:
   meta split DOC                    where a merged PDF's letters, memos and forms may begin
   meta split --find                 the documents that look like several
   meta splits DOC                   the splits recorded for a document
+
+`view meta REF` shows any of these in the viewer, parts in a list pane
+with a preview; `view meta DOC --of` everything a document is in, and
+`view meta DOC --splits` its recorded splits, a row per piece.
 
 Splitting (split.py). A scan of a stack of papers, or PDFs merged into
 one, is one document to the store and several to a reader. Where the
