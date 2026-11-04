@@ -2767,6 +2767,50 @@ document in it:
   meta grains                       the grains and what each means
   meta show REF [--list FILE]       what REF names: its documents and parts
   meta of DOC                       every metadocument a document is in
+  meta split DOC                    where a merged PDF's letters, memos and forms may begin
+  meta split --find                 the documents that look like several
+  meta splits DOC                   the splits recorded for a document
+
+Splitting (split.py). A scan of a stack of papers, or PDFs merged into
+one, is one document to the store and several to a reader. Where the
+pieces are is a judgment (a letter with its enclosures is one thing or
+three; a fax cover sheet goes with what it covers, or not), so the
+detector advises and you decide, and the user's word beats both. A split
+someone keeps is recorded as bundles, one per piece.
+
+The detector weighs each page after the first: printed page numbers
+starting again or carrying on; openings (letterhead, Dear…, a memo's
+TO/FROM, an email's From/Sent/To, a caption, a form's title) and closings
+on the page before; sentences running on; running headers and footers;
+and whether the page looks like the ones before it, in its words (the
+rarer words and reference numbers they share) and its layout (margins,
+type size, line spacing). A page that looks like neither can start a
+piece with nothing to announce it. Each candidate has a strength (0–1)
+and its reasons for and against. --level sure, likely (the default) or
+possible gives a split, coarse to fine.
+
+Judging it yourself:
+  meta split DOC                     the candidates and the likely split
+  meta split DOC --pages 5-9         each page's printed number, header and footer,
+                                     first and last lines, how like the page before it is,
+                                     and the case for a cut there; `text DOC#page=7` reads one
+  meta split DOC --sheet F.png       pictures of the pages, numbered, in a grid (--pages to
+                                     limit): letterhead art, paper, handwriting, stamps
+  meta split DOC --cut 12 --join 7   the likely split, adjusted; --at 3,6,9 cuts exactly there
+  meta split DOC --plan FILE|-       your own split: one JSON object a piece, in order,
+                                     {"pages": "1-2", "label": "…", "kind": "…", "summary": "…"};
+                                     "pages" can be several ranges ("1-2,7": a misfiled page),
+                                     pages in no piece (slip sheets) are reported, overlaps refused
+Look where the evidence is mixed or thin, where the user cares (they named
+the letters they want), or whenever a cut would change a review call.
+
+Keeping it: --list FILE writes the pieces as a list of page ranges (`view
+list FILE` steps through them with a preview, for the user to check).
+--record NAME keeps the split as bundles named "DOC · NAME k/n · label"
+(tag or note a piece as one; `ann bundles`); a document can have several
+splits under different names ("letters", "with-enclosures"), --replace
+re-records one, and the user's can't be replaced. In code: `from adhocdocs
+import split` (pages, boundaries, similarities, pieces, from_plan).
 
 A metadocument goes anywhere a locator does: `text thread:D` prints each
 part, `ann tag responsive thread:D` tags each message, `view open new:D`
@@ -2786,6 +2830,27 @@ def meta(argv=None):
     s.add_argument("--list", dest="list_file", help="also write its parts as a list file (view list FILE shows it)")
     s = sub.add_parser("of", help="the metadocuments a document is in")
     s.add_argument("doc")
+    s = sub.add_parser("split", help="where a merged PDF's pieces may begin: candidates, and a split to keep as bundles")
+    s.add_argument("doc", nargs="?")
+    s.add_argument("--find", action="store_true", help="instead: the documents that look like several, at --level")
+    s.add_argument("--level", choices=list(LEVELS_), default="likely",
+                   help="how sure a candidate must be to cut there: sure, likely (default) or possible")
+    s.add_argument("--at", help="cut exactly here: the pages pieces start at, e.g. 3,6,9 (page 1 is implied)")
+    s.add_argument("--cut", type=int, action="append", default=[], help="also start a piece at this page")
+    s.add_argument("--join", type=int, action="append", default=[], help="don't start a piece at this page")
+    s.add_argument("--plan", help="your own split instead: a file (or - for stdin) of pieces, one JSON object each: "
+                                   '{"pages": "1-2,7", "label": …, "kind": …, "summary": …}')
+    s.add_argument("--pages", nargs="?", const="all", metavar="RANGE",
+                   help="instead: what each page shows at its edges and how it compares with the page before "
+                        "(all pages, or e.g. 5-9)")
+    s.add_argument("--sheet", metavar="FILE.png", help="instead: pictures of the pages in a numbered grid (with --pages: those)")
+    s.add_argument("--list", dest="list_file", help="also write the pieces as a list file of page ranges")
+    s.add_argument("--record", metavar="NAME", nargs="?", const="split",
+                   help="keep the split as bundles, one per piece, under this name (default: split)")
+    s.add_argument("--replace", action="store_true", help="with --record: replace a split of that name")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("splits", help="the splits recorded for a document, each with its pieces")
+    s.add_argument("doc")
     matter_everywhere(sub)
     a = p.parse_args(argv)
     if a.cmd == "grains":
@@ -2794,6 +2859,9 @@ def meta(argv=None):
         out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
         return
     m = Matter.find(a.matter)
+    if a.cmd in ("split", "splits"):
+        _split(m, a)
+        return
     u = metadocs.Units(m)
     if a.cmd == "of":
         for row in u.units_of(a.doc):
@@ -2815,6 +2883,116 @@ def meta(argv=None):
         out(row)
     if a.list_file:
         lists.write(a.list_file, *lists.new(d["name"], [r["loc"] for r in rows], query=d["ref"]))
+
+
+LEVELS_ = ("sure", "likely", "possible")
+
+
+def _split(m, a):
+    """meta split / meta splits."""
+    from . import split
+    from .analysis import _ready
+    rows = _ready(m, "fields").rows()
+    if a.cmd == "split" and a.find:
+        for r in split.find(m, a.level):
+            out(r)
+        return
+    if not a.doc:
+        raise ValueError("meta split needs a document (or --find)")
+    doc = m.state.follow(locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"])
+    name = (rows.get(doc) or {}).get("name") or doc[7:19]
+    if a.cmd == "splits":
+        ann = annotations.Annotations.load(m)
+        for sname, bs in split.recorded(ann, doc).items():
+            out({"split": sname, "pieces": len(bs), "by": sorted({b["by"] for b in bs}),
+                 "bundles": [{"bundle": b["bundle"], "name": b["name"], "parts": [locators.format(p_) for p_ in b["parts"]],
+                              **({"summary": b["summary"]} if b.get("summary") else {})} for b in bs]})
+        return
+    ps = split.pages(m, doc)
+    if len(ps) < 2:
+        raise ValueError(f"{name} has one page: nothing to split")
+    bs = split.boundaries(ps)
+    which = None
+    if a.pages and a.pages != "all":
+        which = {n for r in split.parse_ranges(a.pages, len(ps)) for n in range(r[0], r[1] + 1)}
+    if a.sheet:
+        out({"written": split.contact_sheet(m, doc, a.sheet, which), "pages": len(ps),
+             "note": "read the image file(s) to look at the pages"})
+        return
+    if a.pages:
+        for row in split.page_rows(ps, bs, which):
+            out(row)
+        return
+    at = None
+    if a.at is not None:
+        at = [int(x) for x in a.at.replace(" ", "").split(",") if x]
+        bad = [x for x in at if not 1 <= x <= len(ps)]
+        if bad:
+            raise ValueError(f"no page {bad[0]}: {name} has {len(ps)}")
+    uncovered = []
+    if a.plan:
+        if at is not None or a.cut or a.join:
+            raise ValueError("--plan is a whole split: not with --at, --cut or --join")
+        plan = split.read_plan(sys.stdin.read() if a.plan == "-" else Path(a.plan).read_text(encoding="utf-8"))
+        pieces, uncovered = split.from_plan(ps, plan)
+        by = {b["page"]: b for b in bs}
+        for r in pieces:                     # what the detector made of each cut, beside the decision
+            b = by.get(r["ranges"][0][0])
+            if b:
+                r["starts"] = {k: b[k] for k in ("strength", "level", "for", "against")}
+        starts = [r["ranges"][0][0] for r in pieces]
+    else:
+        starts = split.chosen(bs, a.level, at, a.cut, a.join)
+        pieces = split.describe(ps, bs, starts)
+        for r in pieces:
+            r.pop("ranges", None)
+    out({"doc": doc, "name": name, "pages": len(ps),
+         "split": "--plan" if a.plan else "--at" if at is not None else a.level, "pieces": len(pieces),
+         "at_each_level": {lv: len(split.starts_at(bs, lv)) + 1 for lv in split.LEVELS},
+         "passed_over": split.passed_over(bs, starts),
+         **({"in_no_piece": uncovered} if uncovered else {})})
+
+    def loc_of(r):
+        ranges = r.get("ranges") or [r["pages"]]
+        return [f"doc:{doc}#page={x}" + (f"-{y}" if y != x else "") for x, y in ranges]
+
+    for r in pieces:
+        locs = loc_of(r)
+        out({**r, "loc": locs[0], **({"locs": locs} if len(locs) > 1 else {})})
+    if a.list_file:
+        items = []
+        for r in pieces:
+            locs = loc_of(r)
+            items.append({"loc": locs[0],
+                          "fields": {"piece": r["piece"], "label": r["label"],
+                                     "pages": ", ".join(x.split("page=")[1] for x in locs),
+                                     **({"kind": r["kind"]} if r.get("kind") else {}),
+                                     **({"strength": r["starts"]["strength"], "why": "; ".join(r["starts"]["for"])}
+                                        if r.get("starts") else {})},
+                          **({"children": [{"loc": x} for x in locs[1:]]} if len(locs) > 1 else {})})
+        lists.write(a.list_file, {"type": "list", "v": 1, "title": f"{name}: {len(pieces)} pieces", "made_by": "meta split",
+                                  "columns": ["piece", "pages", "label", "kind", "strength", "why"],
+                                  "query": f"meta split {doc}"}, items)
+        out({"written": a.list_file, "next": f"view list {a.list_file}"})
+    if a.record:
+        ann = annotations.Annotations.load(m)
+        req = {"requested_by": a.requested_by} if a.requested_by else {}
+        old = split.recorded(ann, doc).get(a.record, [])
+        if old and not a.replace:
+            raise ValueError(f"{name} already has a split named {a.record!r} ({len(old)} pieces): "
+                             "--replace to re-record it, or another name to keep both")
+        theirs = [b for b in old if annotations.is_user(b["by"]) or annotations.is_user(b.get("edited_by", ""))]
+        if theirs:
+            raise ValueError(f"the split {a.record!r} of {name} is the user's: record yours under another name")
+        events = []
+        for b in old:
+            events += annapi.request(m, {**req, "op": "delete-bundle", "bundle": b["bundle"]})["events"]
+        made = []
+        for r in split.bundle_requests(doc, name, a.record, pieces):
+            ev = annapi.request(m, {**req, **r})["events"]
+            events += ev
+            made.append({"bundle": ev[0]["bundle"], "name": r["name"]})
+        out({"recorded": a.record, "replaced": len(old), "bundles": made})
 
 
 # -- analyze ---------------------------------------------------------------------------------
