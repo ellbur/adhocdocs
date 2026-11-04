@@ -456,13 +456,29 @@ desktop, but what it shows is the same.
 
 - The 100 ms target is met most of the time, not always. `view state`
   reports each document pane's `open_ms`: keypress to first page shown.
-  Stepping through 15 corpus PDFs (release build, Xvfb with software
-  rendering) gave a median of 51 ms and a worst case of 204 ms, with 4 of
-  15 over 100 ms. The slow ones are the first document of a sequence and
-  very long documents. Page images come before the text layer over them, a
-  cache holds the last 64 rendered pages, and each document's first page is
-  prefetched before the user moves to it. `ADHOC_VIEWER_DEBUG=1` logs each
-  request's time.
+  Stepping through the corpus's 33 text PDFs with `]` (release build,
+  Xvfb with software rendering, a short pause on each) gives a median of
+  about 40 ms and a worst case of about 165 ms, with 5 of 33 over 100 ms.
+  Those are the densest pages (the Federal Register, a Supreme Court
+  opinion, a statute); their image is already cached by then, so what is
+  left is mostly the web view decoding and painting it, which is slower
+  here than on a desktop. Before the fixes below, the worst case was
+  764 ms (the 142-page Federal Rules) and the first document took 280 ms.
+
+  The viewer answers requests one at a time (one worker owns MuPDF), so
+  what matters most is what is asked for first:
+  - a page's image before its words: the page view asks for word boxes
+    only once the first page is showing (or after 1.5 s);
+  - word boxes are sent as stored (one JSON object a line, joined into an
+    array) rather than parsed and written out again: 688 ms to a few for
+    the Federal Rules;
+  - each document's first page is prefetched before the user moves to it,
+    and then its words and text too, unless it is long (over 40 pages),
+    whose words would hold up a page the user asks for meanwhile.
+
+  A cache holds the last 64 rendered pages. `ADHOC_VIEWER_DEBUG=1` logs
+  each request's time, and [`tools/viewer_bench.py`](tools/viewer_bench.py)
+  repeats the measurement on any matter.
 - Builds and tests have been on Linux (WebKitGTK) only. The terminal and
   the launcher use portable-pty (ConPTY on Windows) and, for file dialogs
   outside Linux, rfd; neither has been tried on Windows or macOS yet, and

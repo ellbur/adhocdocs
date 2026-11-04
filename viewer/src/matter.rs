@@ -506,6 +506,25 @@ impl Matter {
         out
     }
 
+    /// A layer's word boxes as a JSON array, for the page view. Stored boxes
+    /// are one JSON object a line, so they are joined as they are, not parsed
+    /// and written out again: a long document has tens of thousands, and
+    /// they are asked for as it opens. A derived layer's are mapped (`geometry`).
+    pub fn geometry_json(&self, layer_id: &str) -> String {
+        let stored = self.object(layer_id).and_then(|o| o.get("geometry").and_then(|v| v.as_str()).map(String::from));
+        if let Some(t) = stored.and_then(|g| self.text(&g)) {
+            let mut out = String::with_capacity(t.len() + 2);
+            out.push('[');
+            for (i, line) in t.lines().map(str::trim).filter(|l| l.starts_with('{')).enumerate() {
+                if i > 0 { out.push(','); }
+                out.push_str(line);
+            }
+            out.push(']');
+            return out;
+        }
+        Value::from(self.geometry(layer_id)).to_string()
+    }
+
     pub fn segments(&self, layer_id: &str) -> Vec<Value> {
         let obj = self.object(layer_id).unwrap_or(Value::Null);
         self.jsonl(obj.get("segments").and_then(|v| v.as_str()))
@@ -679,6 +698,29 @@ mod tests {
 
     fn ev(id: &str, op: &str, doc: &str) -> String {
         format!("{{\"id\": \"{}\", \"op\": \"{}\", \"doc\": \"{}\", \"content\": \"c-{}\"}}\n", id, op, doc, doc)
+    }
+
+    #[test]
+    fn geometry_is_served_as_stored() {
+        // the fast path (lines joined, not parsed) gives what parsing would
+        let dir = std::env::temp_dir().join(format!("adhoc-geo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("store/logs")).unwrap();
+        let put = |h: &str, body: &str| {
+            let d = dir.join("store/objects").join(&h[7..9]);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join(&h[9..]), body).unwrap();
+        };
+        let (layer, geo) = (format!("sha256:{}", "11".repeat(32)), format!("sha256:{}", "22".repeat(32)));
+        put(&geo, "{\"start\": 0, \"end\": 3, \"page\": 1, \"box\": [0.1, 0.1, 0.2, 0.12]}\n\
+                   {\"start\": 4, \"end\": 9, \"page\": 2, \"box\": [0.1, 0.2, 0.3, 0.22], \"conf\": 0.9}\n");
+        put(&layer, &serde_json::json!({"geometry": geo}).to_string());
+        let m = Matter::open(&dir).unwrap();
+        let fast: Value = serde_json::from_str(&m.geometry_json(&layer)).unwrap();
+        assert_eq!(fast, Value::from(m.geometry(&layer)));
+        assert_eq!(fast.as_array().unwrap().len(), 2);
+        assert_eq!(m.geometry_json(&format!("sha256:{}", "33".repeat(32))), "[]");      // no such layer
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

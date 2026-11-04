@@ -694,6 +694,7 @@ class DocumentPane {
 
   async open(locIn, opts = {}) {
     this.openedAt = performance.now();        // for open_ms: until the first page (or text) is showing
+    this.firstPage = new Promise((r) => { this.firstPageShown = r; });
     const loc = parseLoc(locIn);
     const info = await docInfo(loc.doc);
     const fresh = !this.info || this.info.doc !== info.doc;
@@ -1046,7 +1047,12 @@ class DocumentPane {
     this.setupRegionSelect(wrap);
     const layer = this.currentLayer();
     if (layer?.geometry) {
+      // The viewer answers one request at a time: ask for the words only once the first
+      // page is showing, or they would be answered first and the page would wait (VIEWER.md)
+      if (!cache.geometry[layer.id]) await Promise.race([this.firstPage, new Promise((r) => setTimeout(r, 1500))]);
+      if (gen !== this.pagesGen) return;
       const [geo, t] = await Promise.all([geometry(layer.id), layerText(layer.id)]);
+      if (gen !== this.pagesGen) return;
       this.words = { geo, cps: t.cps };
       for (const p of this.pageEls) if (p.dataset.filled) this.fillWords(p);
     }
@@ -1120,6 +1126,7 @@ class DocumentPane {
     this.drawBoxes();
   }
   shown() {
+    this.firstPageShown?.();
     if (this.openedAt === null) return;
     this.timings = [...(this.timings || []).slice(-49), Math.round(performance.now() - this.openedAt)];
     this.openedAt = null;
@@ -1131,7 +1138,12 @@ class DocumentPane {
     if (!s || s.position + 1 >= s.items.length || !this.pageWidth) return;
     try {
       const info = await docInfo(parseLoc(s.items[s.position + 1]).doc);
-      if (info.pages) fetch(this.pageURL(info.doc, 1));
+      if (!info.pages) return;
+      await fetch(this.pageURL(info.doc, 1));
+      // then its words, so the text layer is there as soon as it opens: but not a long
+      // document's, which would hold up a page the user asks for meanwhile
+      const layer = info.layers.find((l) => l.primary) || info.layers[0];
+      if (layer?.geometry && info.pages.length <= 40) await Promise.all([geometry(layer.id), layerText(layer.id)]);
     } catch {}
   }
   boxesFor(s, e) {
