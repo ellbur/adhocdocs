@@ -427,6 +427,25 @@ position, the **selection as a JSON locator with its quote fingerprint**
 a list pane's selected rows. `view history` lists where the user went and
 whether the user, Claude or a pane went there.
 
+## Checking it without a screen
+
+The viewer can be built and driven where there is no display, such as a
+cloud container or CI, so a change to it can be seen and not only
+compiled. On Ubuntu 24.04:
+
+```sh
+apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev xvfb xdotool imagemagick x11-utils
+cd viewer && cargo build --release        # about 4 minutes the first time (MuPDF is built from source)
+tools/headless-viewer.sh MATTER           # the viewer on a virtual screen, :99
+```
+
+`view` commands drive it as usual, and `view state` says what each pane
+shows. `xdotool mousemove X Y click 1` clicks, and `import -window root
+shot.png` takes a picture of the screen. Page images are drawn a moment
+after a document opens, so wait for `view state` to show the page before
+taking the picture. Rendering is in software, so it is slower than on a
+desktop, but what it shows is the same.
+
 ## Not built yet
 
 - Loose files aren't in the audit log: the viewer copies them in and out
