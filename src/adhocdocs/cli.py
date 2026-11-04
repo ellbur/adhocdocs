@@ -25,6 +25,19 @@ def parser(prog, doc):
     return p
 
 
+def _grain_arg(simple):
+    """--grain: one of ``simple``, or grains joined by + (thread+family: a thread with its attachments)."""
+    def check(v):
+        from . import metadocs
+        if v in simple:
+            return v
+        if metadocs.composite(v):
+            return metadocs.canonical_grain(v)
+        raise argparse.ArgumentTypeError(f"{v!r}: one of {', '.join(simple)}, or several of "
+                                         f"{', '.join(metadocs.COMPOSABLE)} joined by + (thread+family)")
+    return check
+
+
 def matter_everywhere(sub):
     """Accept --matter after the subcommand too, not only before it."""
     for sp in sub.choices.values():
@@ -1083,7 +1096,7 @@ def search(argv=None):
     p.add_argument("--layers", default="primary", help="primary, all, or a view (native, ocr, …)")
     p.add_argument("--in", dest="in_kinds", action="append", default=[], help="segment kinds: body, quoted, header, …")
     p.add_argument("--by", choices=["doc", "hit"], default="doc")
-    p.add_argument("--grain", choices=["doc", "new", "thread", "family", "copies", "versions", "bundle"], default="doc",
+    p.add_argument("--grain", type=_grain_arg(("doc", "new", "thread", "family", "copies", "versions", "bundle")), default="doc",
                    help="report metadocuments: what each message adds, threads, families, copies, versions, bundles")
     p.add_argument("--limit", type=int, help="ranked searches; keyword and grep return everything by default")
     p.add_argument("--list", dest="list_file", help="also write the results as a list file")
@@ -2646,7 +2659,7 @@ def _graph_opts(s):
                         "HOPS steps out from the documents already in the graph (default 1)")
     s.add_argument("--email", action="store_true",
                    help="add who emailed whom, from the headers, for people whose aliases hold their addresses")
-    s.add_argument("--grain", choices=["doc", "family", "thread", "copies", "versions", "bundle"], default="doc",
+    s.add_argument("--grain", type=_grain_arg(("doc", "family", "thread", "copies", "versions", "bundle")), default="doc",
                    help="gather documents into metadocuments: one node per family, thread, item, text or bundle")
 
 
@@ -2823,6 +2836,9 @@ document in it:
   versions:D   every draft, revision and copy of D's text (estimated)
   new:D        what message D adds: its text without the quoted part
   bundle:B     a recorded bundle, by ID, ID prefix or name
+  thread+family:D   grains joined by +: everything reachable through any
+               of them (a thread with all its attachments; add +copies for
+               every copy). Any of thread, family, copies, versions
 
   meta grains                       the grains and what each means
   meta show REF [--list FILE]       what REF names: its documents and parts
@@ -2921,6 +2937,9 @@ def meta(argv=None):
         for g, what in metadocs.GRAINS.items():
             out({"grain": g, "means": what})
         out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
+        out({"grain": "A+B", "means": f"grains joined (any of {', '.join(metadocs.COMPOSABLE)}): everything reachable "
+                                      "through any of them, step after step. thread+family is a thread with all its "
+                                      "attachments; thread+family+copies adds every copy"})
         return
     m = Matter.find(a.matter)
     if a.cmd in ("split", "splits"):

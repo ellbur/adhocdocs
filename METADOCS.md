@@ -51,6 +51,20 @@ thread 3fa2… is in", so a reference never needs the representative.
 Tools report the canonical name, which uses a representative: the family's
 top item, the thread's first message, the earliest copy or draft.
 
+**Grains joined.** Grains combine with `+`: `thread+family:D` is
+everything reachable from D through its thread or its family, step after
+step, until nothing new joins. An attachment brings its email, the email
+its thread, and the thread's other emails their attachments. So a search
+`--grain thread+family` gives one line per conversation, counting hits in
+the attached documents too. `ann tag hot thread+family:D` tags the
+conversation and everything attached to it, and `view meta
+thread+family:D` lists each email in date order with its attachments under
+it. Any of `thread`, `family`, `copies` and `versions` combine, in any
+order (`thread+family+copies` adds every copy of each). The name is
+written in that order, after the earliest document. `meta of DOC` and
+`view meta DOC --of` include a document's thread with its attachments
+when that is more than its thread or its family alone.
+
 **Recorded**, as a **bundle**: documents, or ranges in them, that someone
 chose to treat as one thing ("the Q3 board pack", the pages of a merged
 PDF that were one letter, a thread as it stood when produced). A bundle has
@@ -287,4 +301,3 @@ a fair split too.
   cut by them.
 - `new` for documents other than emails, such as what a revision adds over
   the draft before it (`analyze redline` shows it; it isn't a unit yet).
-- Units of units, such as a thread with its attachments' families.

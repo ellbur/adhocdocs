@@ -43,14 +43,41 @@ GRAINS = {
 }
 _BREAK = __import__("re").compile(r"\n[>|\s]*\n|:[ \t]*\n")
 PREFIXES = tuple(f"{g}:" for g in GRAINS if g != "doc") + ("bundle:",)
+# Grains that combine: "thread+family" is everything reachable from a document
+# through its thread or its family (a thread with its attachments, and the
+# attachments' other threads), "thread+family+copies" adds every copy, and so
+# on. Written in this order, whatever order they were asked for in.
+COMPOSABLE = ("thread", "family", "copies", "versions")
 
 
 class MetaError(ValueError):
     pass
 
 
+def composite(grain: str) -> tuple[str, ...] | None:
+    """The grains a combined grain joins ("family+thread" -> ("thread", "family")), or None."""
+    parts = grain.split("+")
+    if len(parts) < 2 or len(set(parts)) != len(parts) or not all(x in COMPOSABLE for x in parts):
+        return None
+    return tuple(g for g in COMPOSABLE if g in parts)
+
+
+def canonical_grain(grain: str) -> str:
+    """A grain's own name: a combined one with its parts in their usual order."""
+    c = composite(grain)
+    return "+".join(c) if c else grain
+
+
+def is_grain(grain: str) -> bool:
+    return grain in GRAINS or composite(grain) is not None
+
+
 def is_ref(s) -> bool:
-    return isinstance(s, str) and s.startswith(PREFIXES)
+    if not isinstance(s, str) or ":" not in s:
+        return False
+    if s.startswith(PREFIXES):
+        return True
+    return composite(s.partition(":")[0]) is not None
 
 
 class _Union:
@@ -187,6 +214,42 @@ class Units:
                                             for ds in members.values() for r in [rep[ds[0]]]}
         return rep
 
+    def _joined(self, grains: tuple[str, ...]) -> dict:
+        """doc -> representative, for a combined grain: the documents joined
+        through any of ``grains``, step after step, until nothing new joins
+        (so an attachment brings its email, the email its thread, and the
+        thread's other emails their attachments)."""
+        key = "+".join(grains)
+        if key in self._groups:
+            return self._groups[key]
+        u = _Union()
+        for d in self.live:
+            u.find(d)
+        for g in grains:
+            if g == "family":
+                for d in self.live:
+                    u.union(d, self.family_root(d))
+            elif g == "thread":
+                for d in self.live:
+                    t = self.threads.get(d)
+                    if t:
+                        u.union(d, t[1]["messages"][0]["loc"][4:])
+            else:
+                rep = self._grouped(g)
+                for d in self.live:
+                    u.union(d, rep.get(d, d))
+        members = defaultdict(list)
+        for d in self.live:
+            members[u.find(d)].append(d)
+        rep = {}
+        for ds in members.values():
+            r = min(ds, key=self._order)
+            for d in ds:
+                rep[d] = r
+        self._groups[key] = rep
+        self._groups[key + "/members"] = {rep[ds[0]]: sorted(ds, key=self._order) for ds in members.values()}
+        return rep
+
     def unit(self, doc: str, grain: str) -> str:
         """The unit at ``grain`` that holds ``doc``, by its canonical name."""
         doc = self.state.follow(doc)
@@ -201,7 +264,10 @@ class Units:
             return f"{grain}:" + self._grouped("copies").get(doc, doc)
         if grain == "versions":
             return "versions:" + self._grouped("versions").get(doc, doc)
-        raise MetaError(f"no grain {grain!r}: {', '.join(GRAINS)}")
+        if composite(grain):
+            key = canonical_grain(grain)
+            return f"{key}:" + self._joined(composite(grain)).get(doc, doc)
+        raise MetaError(f"no grain {grain!r}: {', '.join(GRAINS)}, or several of {', '.join(COMPOSABLE)} joined by +")
 
     def docs(self, ref: str) -> list[str]:
         """The documents a reference covers (whole or in part), oldest first."""
@@ -209,9 +275,14 @@ class Units:
         if grain == "bundle":
             b = self.bundle(seed)
             return list(dict.fromkeys(self.state.follow(p["doc"]) for p in b["parts"]))
+        if composite(grain):
+            doc = self._doc(seed)
+            key = canonical_grain(grain)
+            r = self._joined(composite(grain)).get(doc, doc)
+            return self._groups[key + "/members"].get(r, [doc])
         if grain == "doc" or grain not in GRAINS:
             if grain != "doc":
-                raise MetaError(f"not a metadocument: {ref} (use {', '.join(PREFIXES)})")
+                raise MetaError(f"not a metadocument: {ref} (use {', '.join(PREFIXES)}, or grains joined by +)")
             return [self._doc(seed)]
         doc = self._doc(seed)
         if grain == "family":
@@ -299,8 +370,9 @@ class Units:
             out = {"ref": "bundle:" + b["bundle"], "grain": "bundle", "name": b["name"],
                    "summary": b.get("summary"), "by": b["by"], "parts": len(b["parts"])}
         else:
-            if grain not in GRAINS:
+            if not is_grain(grain):
                 raise MetaError(f"not a metadocument: {ref}")
+            grain = canonical_grain(grain)
             canon = self.unit(self._doc(ref.partition(":")[2]), grain)
             docs = self.docs(canon)
             rep = canon.partition(":")[2]
@@ -318,13 +390,18 @@ class Units:
         hold it or part of it."""
         doc = self._doc(doc)
         out = []
+        sizes = {}
         for g in GRAINS:
             if g == "doc":
                 continue
             ref = self.unit(doc, g)
-            n = len(self.docs(ref))
+            n = sizes[g] = len(self.docs(ref))
             if n > 1 or g == "new":
                 out.append(self.describe(ref))
+        # a thread with its attachments, when that is more than either alone
+        ref = self.unit(doc, "thread+family")
+        if len(self.docs(ref)) > max(sizes["thread"], sizes["family"]):
+            out.insert(1, self.describe(ref))
         for b in self.ann.bundles.values():
             if any(self.state.follow(p["doc"]) == doc for p in b["parts"]):
                 out.append(self.describe("bundle:" + b["bundle"]))
@@ -601,6 +678,25 @@ def part_items(u: Units, ref: str, group: str | None = None) -> list[dict]:
             sel = p.get("select") or {}
             what = _pages(sel) or ("passage" if sel else "whole document")
             items.append(item({**p, "doc": d}, part=f"{k}. {what} of {u.name(d)}" if sel else f"{k}. {u.name(d)}"))
+        return items
+    joined = composite(grain)
+    if joined and "family" in joined:
+        # each top-level item (an email, a loose file) in date order, its attachments under it
+        docs = u.docs(ref)
+        here = set(docs)
+        roots = sorted({u.family_root(d) if u.family_root(d) in here else d for d in docs}, key=u._order)
+
+        def walk(d, depth):
+            if d not in here:
+                return
+            here.discard(d)
+            items.append(item("doc:" + d, part="\u00a0\u00a0" * depth + ("↳ " if depth else "") + u.name(d)))
+            for c in u.state.children.get(d, []):
+                walk(c, depth + 1)
+        for r in roots:
+            walk(r, 0)
+        for d in sorted(here, key=u._order):                 # anything not under a root in the unit
+            items.append(item("doc:" + d, part=u.name(d)))
         return items
     docs = sorted(u.docs(ref), key=u._order)                 # copies, versions: oldest first
     for d in docs:

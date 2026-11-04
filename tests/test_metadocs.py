@@ -414,3 +414,49 @@ def test_meta_pane_for_the_viewer(m, capsys):
     with pytest.raises(SystemExit):
         cli.adhoc(["--matter", str(m.root), "meta-pane", "doc:" + msgs[1]])
     assert "is a document" in capsys.readouterr().err
+
+
+# -- grains joined: a thread with its attachments ------------------------------------------------
+
+def test_joined_grains(m):
+    from adhocdocs import lists
+    u = metadocs.Units(m)
+    pod = named(m, "pod-TCF-889104.pdf")                    # an attachment of an email in the proof-of-delivery thread
+    email = u.family_root(pod)
+    thread = set(u.docs("thread:" + email))
+    joined = u.docs("family+thread:" + pod)                 # named in either order, from any member
+    assert pod not in thread and set(joined) == thread | {pod} | {d for t in thread for d in u.docs("family:" + t)}
+    assert u.unit(pod, "family+thread") == u.unit(email, "thread+family") == "thread+family:" + joined[0]
+    assert metadocs.is_ref("family+thread:" + pod) and not metadocs.is_ref("thread+thread:" + pod)
+    assert metadocs.canonical_grain("versions+thread") == "thread+versions" and metadocs.composite("doc+thread") is None
+    with pytest.raises(metadocs.MetaError):
+        u.unit(pod, "thread+new")
+    # copies join too: the other custodian's copy of each message is already in its thread; +copies adds the rest
+    assert set(u.docs("thread+family+copies:" + pod)) >= set(joined)
+
+    d = u.describe("thread+family:" + pod)
+    assert d["grain"] == "thread+family" and d["documents"] == len(joined)
+    _, items = metadocs.list_of(m, "thread+family:" + pod)
+    at = [it["loc"] for it in items].index("doc:" + pod)
+    assert items[at]["fields"]["part"].lstrip(" ").startswith("↳") and items[at - 1]["loc"] == "doc:" + email
+    # what a document is part of includes it, when it is more than the thread or the family
+    assert any(x["grain"] == "thread+family" for x in u.units_of(pod))
+
+
+def test_search_and_tags_at_a_joined_grain(m, capsys):
+    from adhocdocs import cli
+    pod = named(m, "pod-TCF-889104.pdf")
+    items = search(m, '"proof of delivery"')
+    units = metadocs.regroup(m, items, "thread+family")
+    assert units and all(x["unit"].startswith("thread+family:") for x in units)
+    assert len(units) <= len(metadocs.regroup(m, items, "thread"))
+    capsys.readouterr()
+    cli.search(["--matter", str(m.root), '"proof of delivery"', "--grain", "family+thread"])
+    head = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert head["grain"] == "thread+family"
+    with pytest.raises(SystemExit):
+        cli.search(["--matter", str(m.root), "x", "--grain", "thread+new"])
+    assert "joined by +" in capsys.readouterr().err
+    # a joined unit is a target like any metadocument: each of its documents
+    targets = cli._targets(m, ["thread+family:" + pod])
+    assert {t["doc"] for t in targets} == set(metadocs.Units(m).docs("thread+family:" + pod))
