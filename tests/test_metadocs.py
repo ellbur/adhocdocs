@@ -397,3 +397,20 @@ def test_view_meta_command(m, monkeypatch, capsys, tmp_path):
     with pytest.raises(SystemExit):
         cli.view(["--matter", str(m.root), "meta", msgs[1]])
     assert "is a document" in capsys.readouterr().err
+
+
+def test_meta_pane_for_the_viewer(m, capsys):
+    """The viewer's "list parts" links run `adhoc meta-pane`: the same pane as `view meta`, as files."""
+    import base64
+    from adhocdocs import cli
+    msgs, t = past_due(m)
+    capsys.readouterr()
+    cli.adhoc(["--matter", str(m.root), "meta-pane", "doc:" + msgs[1], "--of"])
+    r = json.loads(capsys.readouterr().out)
+    assert r["title"].startswith("Around ") and t["messages"][0]["loc"] in r["sequence"]
+    assert "thread:" in base64.b64decode(r["files"]["index.html"]).decode()
+    cli.adhoc(["--matter", str(m.root), "meta-pane", "thread:" + msgs[1]])
+    assert json.loads(capsys.readouterr().out)["title"].endswith("(thread)")
+    with pytest.raises(SystemExit):
+        cli.adhoc(["--matter", str(m.root), "meta-pane", "doc:" + msgs[1]])
+    assert "is a document" in capsys.readouterr().err

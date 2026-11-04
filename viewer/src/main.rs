@@ -848,6 +848,17 @@ fn main() {
                             let _ = proxy.send_event(UserEvent::Eval(win, format!("adhoc.filesDone({}, {})", id, r)));
                         });
                     }
+                    "meta-pane" => {
+                        // a "list parts" link: the host tool lists a metadocument's parts, off the event loop
+                        let (root, panes, proxy, cmd) = (matter.lock().unwrap().root.clone(), panes.clone(), proxy.clone(), annotate.clone());
+                        let id = v["id"].clone();
+                        let args: Vec<String> = v["args"].as_array().into_iter().flatten()
+                            .filter_map(|x| x.as_str().map(String::from)).collect();
+                        std::thread::spawn(move || {
+                            let r = api::meta_pane(cmd.as_deref(), &root, &args, &panes);
+                            let _ = proxy.send_event(UserEvent::Eval(win, format!("adhoc.metaPaneReady({}, {})", id, r)));
+                        });
+                    }
                     "annotate" => {
                         // The user's own tags and notes, written as the user by the host tool.
                         let result = api::annotate(annotate.as_deref(), &matter.lock().unwrap().root, &app.user, &v["request"]);

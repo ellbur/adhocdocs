@@ -207,8 +207,58 @@ pub fn annotate(cmd: Option<&str>, root: &Path, user: &str, request: &Value) -> 
     }
 }
 
+/// A list pane of a metadocument's parts, for the viewer's own "list parts"
+/// links: the host tool makes it (`meta-pane`, read only), and its files are
+/// stored like any pane's. `args` are what follows `meta-pane`: a reference,
+/// and `--of` or `--splits [NAME]`. Returns `{content, sequence, title}` or
+/// `{error}`.
+pub fn meta_pane(cmd: Option<&str>, root: &Path, args: &[String], panes: &Panes) -> Value {
+    let cmd = cmd.unwrap_or("adhoc");
+    let parts = crate::matter::command_parts(cmd);
+    let Some((prog, rest)) = parts.split_first() else { return json!({"error": "no adhoc command"}) };
+    let out = Command::new(prog)
+        .args(rest)
+        .args(["--matter", &root.to_string_lossy(), "meta-pane"])
+        .args(args)
+        .stdin(Stdio::null())
+        .output();
+    let reply: Value = match out {
+        Ok(o) if o.status.success() => serde_json::from_slice(&o.stdout).unwrap_or(json!({"error": "bad reply"})),
+        Ok(o) => return serde_json::from_slice(&o.stderr).unwrap_or_else(|_| json!({"error": String::from_utf8_lossy(&o.stderr).trim()})),
+        Err(e) => return json!({"error": format!("can't run {}: {}", cmd, e)}),
+    };
+    if reply.get("error").is_some() {
+        return reply;
+    }
+    match store_files(panes, &reply["files"]) {
+        Ok(content) => json!({"content": content, "sequence": reply["sequence"], "title": reply["title"]}),
+        Err(e) => json!({"error": e}),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn meta_pane_stores_what_the_host_tool_lists() {
+        // a stand-in for `adhoc … meta-pane REF`: checks its arguments, prints a pane's files
+        let dir = std::env::temp_dir().join(format!("adhoc-meta-pane-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("adhoc.sh");
+        std::fs::write(&script, "[ \"$3\" = meta-pane ] && [ \"$4\" = thread:abc ] || { echo '{\"error\": \"bad args\"}' >&2; exit 1; }\n\
+            echo '{\"files\": {\"index.html\": \"PHA+aGk8L3A+\"}, \"sequence\": [\"doc:abc\"], \"title\": \"T\"}'\n").unwrap();
+        let cmd = serde_json::json!(["sh", script.to_string_lossy()]).to_string();
+        let panes: super::Panes = Default::default();
+        let r = super::meta_pane(Some(&cmd), &dir, &["thread:abc".to_string()], &panes);
+        assert_eq!(r["title"], "T");
+        assert_eq!(r["sequence"][0], "doc:abc");
+        let content = r["content"].as_str().unwrap();
+        let stored = panes.lock().unwrap()[content]["index.html"].clone();
+        assert!(String::from_utf8(stored).unwrap().contains("<p>hi</p>"));
+        let r = super::meta_pane(Some(&cmd), &dir, &["doc:abc".to_string()], &panes);
+        assert_eq!(r["error"], "bad args");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn socket_hash_matches_python() {
         // hashlib.sha256(b"/srv/matters/smith-v-jones").hexdigest()[:16], as the view CLI computes it

@@ -129,6 +129,19 @@ group per split and a row per piece, so the user can step through the
 pieces with the preview. `--splits NAME` shows one split. `--list FILE`
 keeps any of these as a list file.
 
+The user can open the same panes without asking. In a document pane:
+
+- the link bar ends with *Everything it's part of…*;
+- each bundle in the side panel has *list parts*;
+- a split's pieces come under one heading, *Split "letters" · 7 pieces ·
+  list them*;
+- the ⋯ menu has *What it's part of* and, when there are any, *Its splits*.
+
+The viewer asks the host tool for the pane (`adhoc meta-pane`, which reads
+only, as the viewer's own tags and notes go through `adhoc
+annotate-as-user`). The list opens beside the document, with that document
+as its preview, so picking a row opens it where the user was reading.
+
 **Everywhere else.** A metadocument goes where a locator goes: `text
 new:3fa2…` prints a message without its quotes, and `view open thread:3fa2…`
 opens the thread's first message. `meta show REF --list FILE` writes a list
@@ -275,6 +288,3 @@ a fair split too.
 - `new` for documents other than emails, such as what a revision adds over
   the draft before it (`analyze redline` shows it; it isn't a unit yet).
 - Units of units, such as a thread with its attachments' families.
-- Opening those panes from the viewer itself (a "list parts" link on a
-  bundle in the side panel). Today the user asks, and Claude runs `view
-  meta`.
