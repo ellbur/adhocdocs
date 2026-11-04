@@ -124,6 +124,10 @@ def objects_of(m: Matter, docs) -> list[str]:
 # -- which parts of which events --------------------------------------------------------------
 
 
+# lists of locators an event refers to: an entity's or link's evidence, a bundle's parts
+REF_LISTS = ("see", "parts", "add_parts", "remove_parts")
+
+
 def _doc_of(t) -> str | None:
     return t.get("doc") if isinstance(t, dict) and isinstance(t.get("doc"), str) else None
 
@@ -145,10 +149,10 @@ def redact(ev: dict, docs: set) -> dict | None:
     if isinstance(c, dict) and _doc_of(c.get("from")) in docs:
         # carried over from a purged document (annotations.carry_over): where from, but not what it said
         return {**ev, "carried": {**c, "from": {k: (v if k == "doc" else hide(v)) for k, v in c["from"].items()}}}
-    see = ev.get("see")
-    if isinstance(see, list) and any(_doc_of(x) in docs for x in see):
-        return {**ev, "see": [{k: (v if k == "doc" else hide(v)) for k, v in x.items()} if _doc_of(x) in docs else x
-                              for x in see]}
+    lists = {k: ev[k] for k in REF_LISTS if isinstance(ev.get(k), list) and any(_doc_of(x) in docs for x in ev[k])}
+    if lists:
+        return {**ev, **{k: [{f: (v if f == "doc" else hide(v)) for f, v in x.items()} if _doc_of(x) in docs else x
+                             for x in xs] for k, xs in lists.items()}}
     return None
 
 
@@ -174,7 +178,7 @@ def may_hide(ev: dict, docs: set) -> bool:
             if not (isinstance(f, dict) and _doc_of(f) in docs and all(is_hidden(y) or not has_hidden(y) for y in f.values())
                     and not any(has_hidden(y) for x, y in v.items() if x != "from")):
                 return False
-        elif k == "see" and isinstance(v, list):
+        elif k in REF_LISTS and isinstance(v, list):
             for x in v:
                 if has_hidden(x) and not (isinstance(x, dict) and _doc_of(x) in docs
                                           and all(is_hidden(y) or not has_hidden(y) for y in x.values())):
@@ -198,8 +202,9 @@ def reveal(ev: dict) -> dict | None:
         ev = {**ev, "carried": {**c, "from": {k: v for k, v in c["from"].items() if not has_hidden(v)}}}
         if not has_hidden(ev):
             return ev
-    if isinstance(ev.get("see"), list):
-        return {**ev, "see": [x for x in ev["see"] if not has_hidden(x)]}
+    lists = {k: [x for x in ev[k] if not has_hidden(x)] for k in REF_LISTS if isinstance(ev.get(k), list)}
+    if lists:
+        return {**ev, **lists}
     return None
 
 

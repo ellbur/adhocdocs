@@ -686,6 +686,13 @@ def text(argv=None):
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
     from .received import NAMES, resolve_name
+    from . import metadocs
+    if metadocs.is_ref(a.locator):                 # a metadocument: each of its parts
+        for part in metadocs.members(m, a.locator):
+            r = locators.resolve(m, part)
+            out({"loc": locators.format(r["loc"]) if r.get("loc") else locators.format(part), "status": r["status"],
+                 **({"text": r["text"]} if a.json and "text" in r else {})})
+        return
     if a.locator.startswith(NAMES):
         for hit in resolve_name(m, a.locator):
             r = locators.resolve(m, hit["loc"])
@@ -1034,6 +1041,14 @@ search "<query>" [--index keyword|semantic|hybrid]   (keyword is the default)
 search grep <regex>                                  regex over layer text, no index
 search similar <locator>                             semantic neighbours
 search all [--where "custodian:smith-j"] [--tag …]   every document (no text matched), by date
+search "<query>" --grain new|thread|family|copies|versions|bundle
+                                                     results on metadocuments, not documents
+
+--grain re-reads the results at another scale (METADOCS.md): one line per
+thread, family, item however many copies, or text however many drafts, or
+bundle. --grain new is one line per thing someone wrote: copies count once,
+and a hit in quoted text counts for the message that wrote it (quoted_in
+lists where it was quoted), so an email quoted in 40 replies is one result.
 
 Output: a JSON header (query, index, as_of, exhaustive, coverage, matches),
 then one line per document (--by doc) or per hit (--by hit). Each hit has a
@@ -1059,6 +1074,8 @@ def search(argv=None):
     p.add_argument("--layers", default="primary", help="primary, all, or a view (native, ocr, …)")
     p.add_argument("--in", dest="in_kinds", action="append", default=[], help="segment kinds: body, quoted, header, …")
     p.add_argument("--by", choices=["doc", "hit"], default="doc")
+    p.add_argument("--grain", choices=["doc", "new", "thread", "family", "copies", "versions", "bundle"], default="doc",
+                   help="report metadocuments: what each message adds, threads, families, copies, versions, bundles")
     p.add_argument("--limit", type=int, help="ranked searches; keyword and grep return everything by default")
     p.add_argument("--list", dest="list_file", help="also write the results as a list file")
     p.add_argument("--explain", action="store_true", help="print the parsed query and stop")
@@ -1105,6 +1122,23 @@ def search(argv=None):
         header, items = s.hybrid(a.q)
     else:
         header, items = s.keyword(a.q)
+    if a.grain != "doc":
+        if a.by == "hit":
+            p.error("--grain reports metadocuments; it doesn't go with --by hit")
+        from . import metadocs
+        limit, s.opts.limit = s.opts.limit, None
+        header, items = s.finish(header, items)
+        items = metadocs.regroup(m, items, a.grain)
+        header["grain"] = a.grain
+        header["matches"]["units"] = len(items)
+        if limit is not None:
+            items = items[:limit]
+        out(header)
+        for it in items:
+            out(it)
+        if a.list_file:
+            lists.write(a.list_file, *(lambda rows: (rows[0], rows[1:]))(metadocs.to_list(header, items)))
+        return
     header, items = s.finish(header, items)
     out(header)
     for it in items:
@@ -1385,6 +1419,26 @@ the rest.
 Filing doesn't change the thing filed, so you can file the user's notes;
 you can't unfile what the user filed. A reply is filed with its thread, and
 a tag's applications with the tag.
+
+Bundles (METADOCS.md): documents, or parts of them, treated as one thing:
+"the Q3 board pack", the pages of a merged PDF that were one letter, the
+reply above the quoted text, a thread. A tag or note on a bundle is on it as
+a whole, once; filters (search --tag, ann find) count it for every
+document in it. Anywhere a locator goes, a metadocument can too: thread:D,
+family:D, copies:D, versions:D, new:D (what message D adds, without what it
+quotes) are each of their parts, and bundle:B is the bundle (with --parts,
+each part).
+
+  ann bundle "Board pack Q3" doc:3fa2… doc:91bc… --summary "Sent to the board Oct 2"
+  ann bundle "Kettering letter" "doc:77aa…#page=4-9"         part of a merged PDF
+  ann bundle "Past-due thread" thread:3fa2…                   what's in the thread now
+  ann tag hot bundle:"Board pack Q3"     ann note bundle:b_19… --body …
+  ann tag responsive thread:3fa2…                             each message, not one bundle
+  ann edit-bundle "Board pack Q3" --add doc:… --remove doc:…
+  ann bundles [NAME] [--doc D]
+
+Privilege calls go on documents, not bundles: a production withholds
+documents (ann tag privileged bundle:B --parts is the user's to do).
 """
 
 
@@ -1401,10 +1455,26 @@ def _family(state, doc):
     return [d for d in out if d not in state.withdrawn]
 
 
-def _targets(m, locs, family=False, dupes=False):
+def _targets(m, locs, family=False, dupes=False, parts=False, units=None):
+    """Targets from locators. ``bundle:B`` is the bundle as one target (or,
+    with ``parts``, each of its parts); a metadocument (``thread:D``,
+    ``family:D``, ``new:D``…) is each of its parts."""
+    from . import metadocs
     state = m.state
     out = []
     for s in locs:
+        if isinstance(s, str) and s.startswith("bundle:") and not parts:
+            out.append({"bundle": s[7:].strip()})
+            continue
+        if metadocs.is_ref(s):
+            units = units or metadocs.Units(m)
+            if s.startswith("bundle:"):
+                s = "bundle:" + units.bundle(s[7:])["bundle"]
+            got = units.members(s)
+            if (family or dupes) and any(g.get("select") for g in got):
+                raise ValueError("--family and --dupes apply to whole documents")
+            out += _targets(m, [locators.format(g) if g.get("select") else g["doc"] for g in got], family, dupes)
+            continue
         loc = locators.parse(s if s.lstrip().startswith("{") else "doc:" + s.removeprefix("doc:"), m.objects)
         extra = []
         if family:
@@ -1451,7 +1521,29 @@ def ann(argv=None):
         s.add_argument("locators", nargs="+")
         s.add_argument("--family", action="store_true", help="every document in each one's family")
         s.add_argument("--dupes", action="store_true", help="every exact duplicate of each one")
+        s.add_argument("--parts", action="store_true", help="bundle:B: each of its parts, not the bundle as one")
         s.add_argument("--requested-by")
+    s = sub.add_parser("bundle", help="make a bundle: documents, or parts of them, treated as one (tag or note it as one)")
+    s.add_argument("name")
+    s.add_argument("parts", nargs="*", help="locators, or metadocuments: thread:D, family:D, versions:D, copies:D, new:D")
+    s.add_argument("--list", dest="list_file", help="also every item in this list file")
+    s.add_argument("--summary", help="what it is, in a line")
+    s.add_argument("--facet", action="append", help="file it under this facet too (repeatable)")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("edit-bundle")
+    s.add_argument("bundle", help="ID, ID prefix or name")
+    s.add_argument("--name")
+    s.add_argument("--summary")
+    s.add_argument("--add", action="append", default=[], help="parts to add (locators or metadocuments)")
+    s.add_argument("--remove", action="append", default=[], help="parts to remove")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("delete-bundle")
+    s.add_argument("bundle")
+    s.add_argument("--requested-by")
+    s = sub.add_parser("bundles", help="the bundles, or one with its parts, tags and notes")
+    s.add_argument("ref", nargs="?")
+    s.add_argument("--doc", help="only bundles holding this document")
+    s.add_argument("--facet")
     s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
     s.add_argument("locators", nargs="+")
     s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
@@ -1551,6 +1643,7 @@ def ann(argv=None):
         s.add_argument("--entity", action="append", default=[])
         s.add_argument("--link", action="append", default=[])
         s.add_argument("--note", action="append", default=[])
+        s.add_argument("--bundle", action="append", default=[])
         s.add_argument("--tag", dest="tags", action="append", default=[])
         s.add_argument("--requested-by")
     for name in ("define-tag", "edit-tag"):
@@ -1576,9 +1669,9 @@ def ann(argv=None):
         an = annotations.Annotations.load(m)
         if a.target:
             t = _targets(m, [a.target])[0]
-            for app in an.applications():
+            for app in an.applications(parts=set(t) == {"doc"}):     # a document: with its bundles' tags
                 if (annotations.target_key(app["target"]) == annotations.target_key(t)
-                        or (set(t) == {"doc"} and app["target"]["doc"] == t["doc"])):
+                        or (set(t) == {"doc"} and app["target"].get("doc") == t["doc"])):
                     out(app)
             return
         counts = {}
@@ -1591,7 +1684,7 @@ def ann(argv=None):
         t = _targets(m, [a.target])[0] if a.target else None
         notes = [n for n in an.notes.values() if who(a.by, n["by"]) and an.in_facet(a.facet, {"note": n["note"]})
                  and (t is None or annotations.target_key(n["target"]) == annotations.target_key(t)
-                      or (set(t) == {"doc"} and n["target"]["doc"] == t["doc"]))]
+                      or (set(t) == {"doc"} and n["target"].get("doc") == t["doc"]))]
         ids = {n["note"] for n in notes}
         def thread(n, depth):
             out({**n, "depth": depth})
@@ -1668,6 +1761,8 @@ def ann(argv=None):
         out(annapi.request(m, {k: v for k, v in req.items() if v is not None}))
     elif a.cmd in ("people", "add-people"):
         _people(m, a)
+    elif a.cmd in ("bundle", "edit-bundle", "delete-bundle", "bundles"):
+        _bundles(m, a)
     elif a.cmd in ("link", "edit-link", "delete-link", "links", "define-facet", "edit-facet", "facets", "facet",
                    "file", "unfile"):
         _graph_writes(m, a)
@@ -1685,7 +1780,7 @@ def ann(argv=None):
         req = {"op": a.cmd, "requested_by": getattr(a, "requested_by", None)}
         if a.cmd in ("tag", "untag"):
             results = []
-            for t in _targets(m, a.locators, a.family, a.dupes):
+            for t in _targets(m, a.locators, a.family, a.dupes, a.parts):
                 results.append(annapi.request(m, {**req, "tag": a.tag, "target": t}))
             out({"events": [e for r in results for e in r["events"]]})
             return
@@ -1703,6 +1798,78 @@ def ann(argv=None):
         elif a.cmd in ("define-tag", "edit-tag"):
             req.update(tag=a.tag, color=a.color, hotkey=a.hotkey, group=a.group, description=a.description)
         out(annapi.request(m, req))
+
+
+def _bundles(m, a):
+    """ann bundle / edit-bundle / delete-bundle / bundles."""
+    from . import metadocs
+    an = annotations.Annotations.load(m)
+    units = metadocs.Units(m, an)
+    req = {"requested_by": a.requested_by} if getattr(a, "requested_by", None) else {}
+
+    def parts_of(refs):
+        out = []
+        for r in refs:
+            out += _targets(m, [r], parts=True, units=units)
+        return out
+
+    if a.cmd == "bundles":
+        rows = list(an.bundles.values())
+        if a.ref:
+            b = an.bundles[an.find_bundle(a.ref)]
+            key = annotations.target_key({"bundle": b["bundle"]})
+            parts = []
+            for p_ in b["parts"]:
+                d = m.state.follow(p_["doc"])
+                parts.append({"loc": locators.format(p_), "name": units.name(d), "date": units.date(d),
+                              **({"text": p_["quote"]["exact"][:200]} if p_.get("quote") else {})})
+            out({**units.describe("bundle:" + b["bundle"]), "from": b.get("from"),
+                 "tags": [{"tag": t["tag"], "by": t["by"]} for t in an.tags.get(key, {}).values()],
+                 "notes": [n for n in an.notes.values() if annotations.bundle_of(n["target"]) == b["bundle"]],
+                 "facets": an.facets_of({"bundle": b["bundle"]}), "parts": parts})
+            return
+        if a.doc:
+            doc = m.state.follow(locators.parse("doc:" + a.doc.removeprefix("doc:"), m.objects)["doc"])
+            rows = an.bundles_of(doc)
+        for b in rows:
+            if not an.in_facet(a.facet, {"bundle": b["bundle"]}):
+                continue
+            key = annotations.target_key({"bundle": b["bundle"]})
+            out({"bundle": b["bundle"], "name": b["name"], "parts": len(b["parts"]),
+                 "documents": len({p_["doc"] for p_ in b["parts"]}), "by": b["by"],
+                 **({k: b[k] for k in ("summary", "from") if b.get(k)}),
+                 "tags": sorted(an.tags.get(key, {}))})
+        return
+    if a.cmd == "bundle":
+        refs = list(a.parts)
+        if a.list_file:
+            _, items = lists.read(a.list_file)
+            refs += [it["loc"] if isinstance(it["loc"], str) else locators.format(it["loc"]) for it in items]
+        if not refs:
+            raise ValueError("a bundle needs parts: locators, metadocuments (thread:D…) or --list FILE")
+        r = {**req, "op": "define-bundle", "name": a.name, "parts": parts_of(refs), "summary": a.summary}
+        if len(a.parts) == 1 and metadocs.is_ref(a.parts[0]) and not a.list_file:
+            r["from"] = units.describe(a.parts[0])["ref"]
+        res = annapi.request(m, {k: v for k, v in r.items() if v is not None})
+        b = res["events"][0]["bundle"]
+        for f in a.facet or []:
+            res["events"] += annapi.request(m, {**req, "op": "file", "facet": f, "item": {"bundle": b}})["events"]
+        out({"bundle": b, "name": a.name, "parts": len(r["parts"]), "events": res["events"]})
+        return
+    r = {**req, "op": a.cmd, "bundle": a.bundle}
+    if a.cmd == "edit-bundle":
+        b = an.bundles[an.find_bundle(a.bundle)]
+        remove = []
+        for x in a.remove:
+            ts = parts_of([x])
+            keys = {annotations.target_key(t) for t in ts}
+            hit = [p_ for p_ in b["parts"] if annotations.target_key(p_) in keys
+                   or (set(ts[0]) == {"doc"} and len(ts) == 1 and p_["doc"] == ts[0]["doc"])]
+            if not hit:
+                raise ValueError(f"{x} isn't a part of {b['name']!r}")
+            remove += hit
+        r.update(name=a.name, summary=a.summary, add_parts=parts_of(a.add) or None, remove_parts=remove or None)
+    out(annapi.request(m, {k: v for k, v in r.items() if v is not None}))
 
 
 def _people(m, a):
@@ -1835,14 +2002,17 @@ def _graph_writes(m, a):
             elif kind == "note":
                 n = an.notes[ref]
                 row.update({k: n[k] for k in ("note", "target", "body", "by", "at")})
+            elif kind == "bundle":
+                b = an.bundles[ref]
+                row.update({"bundle": ref, "name": b["name"], "parts": len(b["parts"]), "by": b["by"]})
             else:
                 row.update({"tag": ref, "applications": sum(1 for x in an.applications() if x["tag"] == ref)})
             out(row)
     else:
         items = [{"entity": ent(x)} for x in a.entity] + [{"link": link_id(x)} for x in a.link] \
-            + [{"note": x} for x in a.note] + [{"tag": x.strip()} for x in a.tags]
+            + [{"note": x} for x in a.note] + [{"bundle": x} for x in a.bundle] + [{"tag": x.strip()} for x in a.tags]
         if not items:
-            raise ValueError(f"{a.cmd} needs --entity, --link, --note or --tag")
+            raise ValueError(f"{a.cmd} needs --entity, --link, --note, --bundle or --tag")
         events = []
         for it in items:
             events += annapi.request(m, {**req, "op": a.cmd, "facet": a.facet, "item": it})["events"]
@@ -1932,6 +2102,14 @@ regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
 (`ptr=/a/0/b`) or XML (`xpath=/a/b[2]`), which become text ranges, cells
 by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
+
+A reference can also be a metadocument (METADOCS.md): `page ref add page.md
+chase thread:<doc>` (or family:, copies:, versions:, new:, bundle:) cites
+the whole thread, so the reader knows the scope is the conversation, not
+one email. Use it with :cite{#chase} or [the thread](ref:chase); it can't
+be quoted (quote a passage of one of its documents). If the thread gains a
+reply or the bundle changes, `page check` reports it re-anchored, and
+`page refs update` takes the new list.
 
 Format:
 """ + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
@@ -2226,6 +2404,9 @@ def view(argv=None):
 
     def loc(x):
         from .received import NAMES, resolve_name
+        from . import metadocs
+        if metadocs.is_ref(x):                # a metadocument opens at its first part
+            return locators.format(locators.expand(m, metadocs.members(m, x)[0]))
         if x.startswith(NAMES):               # the first document a Bates range, exhibit or control number names
             return locators.format(resolve_name(m, x)[0]["loc"])
         parsed = locators.parse(x if x.lstrip().startswith("{") else "doc:" + x.removeprefix("doc:"), m.objects)
@@ -2351,6 +2532,10 @@ needs the people's addresses among their aliases: `ann people` lists people
 from the headers and the text who aren't entities, and `ann add-people`
 adds them with their addresses.
 
+--grain thread|family|copies|versions|bundle gathers documents into
+metadocuments (METADOCS.md): a thread is one node with the facts that rest
+on any of its messages, a bundle one node for its documents.
+
 Options shared by all: --mentions adds every document an entity is named in;
 --cooccur adds entities named together in --min-cooccur documents or more
 (default 2); --facts makes each link a node, so documents point at the facts
@@ -2380,6 +2565,8 @@ def _graph_opts(s):
                         "HOPS steps out from the documents already in the graph (default 1)")
     s.add_argument("--email", action="store_true",
                    help="add who emailed whom, from the headers, for people whose aliases hold their addresses")
+    s.add_argument("--grain", choices=["doc", "family", "thread", "copies", "versions", "bundle"], default="doc",
+                   help="gather documents into metadocuments: one node per family, thread, item, text or bundle")
 
 
 def _load_graph(m, a, ann=None, refs=()):
@@ -2393,6 +2580,9 @@ def _load_graph(m, a, ann=None, refs=()):
     ids = [graphmod.resolve(m, g, r, ann) for r in refs]
     if a.doc_links:
         graphmod.add_doc_links(m, g, a.doc_links)
+    if getattr(a, "grain", "doc") != "doc":
+        g = graphmod.regrain(m, g, a.grain, ann)
+        ids = [i if i in g.nodes else next(u for u, n in g.nodes.items() if i in n.get("members", ())) for i in ids]
     return g, ids
 
 
@@ -2513,6 +2703,76 @@ def graph(argv=None):
             out({"written": a.out, "nodes": len(g.nodes), "edges": len(g.edges)})
         else:
             sys.stdout.write(text)
+
+
+# -- meta ------------------------------------------------------------------------------------
+
+META_HELP = """\
+Metadocuments (METADOCS.md): content at another scale than the documents
+ingestion made. Documents are the atoms; a metadocument is any other
+boundary: a family, a thread, every copy of an item, every draft of a text,
+what one message adds without what it quotes, or a bundle someone recorded
+(ann bundle). They aren't listed or indexed; each is named from any
+document in it:
+
+  family:D     D with its parent and attachments
+  thread:D     the email thread D is in, with copies
+  copies:D     D however many copies: duplicates, same text, same message
+  versions:D   every draft, revision and copy of D's text (estimated)
+  new:D        what message D adds: its text without the quoted part
+  bundle:B     a recorded bundle, by ID, ID prefix or name
+
+  meta grains                       the grains and what each means
+  meta show REF [--list FILE]       what REF names: its documents and parts
+  meta of DOC                       every metadocument a document is in
+
+A metadocument goes anywhere a locator does: `text thread:D` prints each
+part, `ann tag responsive thread:D` tags each message, `view open new:D`
+opens its first part. `search … --grain G` and `graph … --grain G` report
+metadocuments instead of documents.
+"""
+
+
+@run
+def meta(argv=None):
+    from . import metadocs
+    p = parser("meta", META_HELP)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("grains")
+    s = sub.add_parser("show", help="the documents and parts a metadocument names")
+    s.add_argument("ref")
+    s.add_argument("--list", dest="list_file", help="also write its parts as a list file (view list FILE shows it)")
+    s = sub.add_parser("of", help="the metadocuments a document is in")
+    s.add_argument("doc")
+    matter_everywhere(sub)
+    a = p.parse_args(argv)
+    if a.cmd == "grains":
+        for g, what in metadocs.GRAINS.items():
+            out({"grain": g, "means": what})
+        out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
+        return
+    m = Matter.find(a.matter)
+    u = metadocs.Units(m)
+    if a.cmd == "of":
+        for row in u.units_of(a.doc):
+            out(row)
+        return
+    ref = a.ref if metadocs.is_ref(a.ref) else "doc:" + a.ref.removeprefix("doc:")
+    if ref.startswith("doc:"):
+        raise ValueError(f"{a.ref} is a document; name a metadocument ({', '.join(metadocs.PREFIXES)})")
+    d = u.describe(ref)
+    out(d)
+    parts = u.members(d["ref"])
+    rows = []
+    for part in parts:
+        doc = part["doc"]
+        row = {"loc": locators.format(part), "name": u.name(doc), "date": u.date(doc)}
+        if part.get("quote"):
+            row["text"] = part["quote"]["exact"][:200]
+        rows.append(row)
+        out(row)
+    if a.list_file:
+        lists.write(a.list_file, *lists.new(d["name"], [r["loc"] for r in rows], query=d["ref"]))
 
 
 # -- analyze ---------------------------------------------------------------------------------
@@ -2728,7 +2988,7 @@ def work(argv=None):
 
 def main():
     """``python -m adhocdocs.cli <command> …``"""
-    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work, "raw": raw, "interp": interp, "graph": graph}
+    cmds = {"adhoc": adhoc, "idx": idx, "search": search, "layers": layers, "text": text, "list": list_, "ann": ann, "page": page, "view": view, "analyze": analyze, "produce": produce, "work": work, "raw": raw, "interp": interp, "graph": graph, "meta": meta}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(f"usage: python -m adhocdocs.cli {{{','.join(cmds)}}} …", file=sys.stderr)
         sys.exit(2)

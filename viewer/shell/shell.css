@@ -535,3 +535,9 @@ ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .pane-side .ann.fact { border-left: 3px solid var(--ent); }
 .pane-side .side-more { color: var(--muted); font-size: 11.5px; padding: 6px 8px; }
 .pane-side .side-more a { color: var(--accent); cursor: pointer; }
+
+/* bundles: documents, or parts of them, treated as one (METADOCS.md) */
+.chip.via-bundle { border-style: dashed; }
+.ann.bundle { border-left: 3px solid #b79cff; }
+.ann.bundle-note { border-left: 3px solid #b79cff; margin-left: 10px; }
+.ann .bundle-parts a { margin-right: 4px; }

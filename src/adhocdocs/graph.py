@@ -132,7 +132,7 @@ class Graph:
             for n in frontier:
                 if dist[n] >= max_len:
                     continue
-                if avoid_docs and n != a and n.startswith("doc:"):
+                if avoid_docs and n != a and self.nodes.get(n, {}).get("type") == "doc":
                     continue
                 for e in adj.get(n, []):
                     o = self.other(e, n)
@@ -924,3 +924,66 @@ def add_correspondence(m: Matter, g: Graph, docs=True) -> Graph:
         docs = list(dict.fromkeys(ab + ba))
         g.edge(a, b, "emailed", count=len(docs), sent=len(ab), replied=len(ba), docs=docs[:50])
     return g
+
+
+def regrain(m: Matter, g: Graph, grain: str, ann: Annotations | None = None) -> Graph:
+    """``g`` with its documents gathered into metadocuments at ``grain``
+    (METADOCS.md): each thread, family, item however many copies, text
+    however many drafts, or bundle becomes one node (``unit:<ref>``), so a
+    diagram shows "the thread" with the facts resting on it rather than
+    eleven emails. Edges between documents of one unit go; parallel edges
+    become one, with ``merged`` (how many) and ``locs`` (each one's
+    evidence). At ``bundle``, a document in no bundle stays itself, and one
+    in several goes with the first by name."""
+    from . import metadocs
+    if grain == "doc":
+        return g
+    u = metadocs.Units(m, ann)
+    to = {}
+    for nid, n in g.nodes.items():
+        if n.get("type") != "doc":
+            continue
+        if grain == "bundle":
+            bs = sorted(u.ann.bundles_of(n["doc"]), key=lambda b: b["name"].casefold())
+            if bs:
+                to[nid] = "unit:bundle:" + bs[0]["bundle"]
+        elif grain in metadocs.GRAINS:
+            to[nid] = "unit:" + u.unit(n["doc"], grain)
+        else:
+            raise ValueError(f"no grain {grain!r}")
+    out = Graph()
+    for nid, n in g.nodes.items():
+        if nid not in to:
+            out.nodes[nid] = dict(n)
+            continue
+        uid = to[nid]
+        if uid not in out.nodes:
+            ref = uid.removeprefix("unit:")
+            d = u.describe(ref)
+            rep = n["doc"] if grain == "bundle" else ref.partition(":")[2]
+            label = d["name"] + (f" ({d['documents']})" if d["documents"] > 1 else "")
+            out.node(uid, type="doc", label=label, doc=rep, loc=f"doc:{rep}", unit=ref, grain=grain,
+                     documents=d["documents"], date=(d.get("first") or "")[:10] or None, members=[])
+        out.nodes[uid]["members"].append(nid)
+    seen = {}
+    for e in g.edges:
+        a, b = to.get(e["from"], e["from"]), to.get(e["to"], e["to"])
+        if a == b and (e["from"] in to or e["to"] in to):
+            continue                        # inside one unit
+        key = (a, b, e["kind"], e.get("link"), e.get("rel"))
+        if key in seen:
+            x = seen[key]
+            x["merged"] = x.get("merged", 1) + 1
+            if e.get("loc"):
+                x.setdefault("locs", [x["loc"]] if x.get("loc") else []).append(e["loc"])
+            if e.get("docs"):
+                x["docs"] = list(dict.fromkeys([*x.get("docs", []), *e["docs"]]))[:50]
+            if isinstance(e.get("count"), int) and isinstance(x.get("count"), int):
+                x["count"] += e["count"]
+            continue
+        x = {**e, "from": a, "to": b}
+        seen[key] = x
+        out.edges.append(x)
+    for i, e in enumerate(out.edges):
+        e["id"] = f"x{i}"
+    return out

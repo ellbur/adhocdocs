@@ -99,6 +99,12 @@ them.
   pane's link bar), and people from email headers become entities with
   their addresses (`ann people`, `ann add-people`), so `--email` shows who
   emailed whom.
+- **Metadocuments.** *Built*: [METADOCS.md](METADOCS.md). Content at other
+  scales than the document: families, threads, copies, versions, what a
+  message adds without its quotes (`new:`), and bundles someone recorded
+  (`ann bundle`), which tags and notes can be on as one thing. `search
+  --grain` and `graph --grain` report them; pages can cite them; `meta`
+  shows them; any of them goes where a locator does.
 - **Saved sets.** *Built*, as list files: `list`, [LISTS.md](LISTS.md).
 - **Key sets.** *Built*: the few documents that explain a point, with
   duplicates, quoted emails, near-duplicates and restatements folded under

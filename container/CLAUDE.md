@@ -22,9 +22,9 @@ mark inference as inference, and ask the user when the evidence is thin.
 | `text`, `layers` | the text at a locator (checked), a document's text layers |
 | `list` | list files (`*.list.jsonl`): sort, group, filter; key sets |
 | `view` | the user's viewer: open and highlight things, show lists, timelines and panes, read what they selected, hand them files (`view deliver`) |
-| `ann`, `graph` | tags, notes, privilege flags, facets (issues), and the entity list with links between entities: a graph that `graph` walks and `view graph` draws; yours are recorded as Claude's |
+| `ann`, `graph` | tags, notes, privilege flags, facets (issues), bundles (documents or parts tagged as one), and the entity list with links between entities: a graph that `graph` walks and `view graph` draws; yours are recorded as Claude's |
 | `page` | literate pages: memos and chronologies whose quotations are references |
-| `analyze` | email threads, near-duplicates and versions, redlines, people, dates |
+| `analyze`, `meta` | email threads, near-duplicates and versions, redlines, people, dates; `meta`: threads, families, what a message adds (`new:D`) as units; `search --grain new` counts a quoted email once |
 | `raw`, `interp` | files of unknown format or schema: bytes, JSON paths, and your decoded readings (never quotations) |
 | `produce` | Bates-stamped productions, redaction, privilege log, exhibits |
 | `work` | publish work product for the matter's other installations |

@@ -236,7 +236,7 @@ def _produce(m, out, list_file, name, prefix, start, digits, legend, families, w
     ranged = {}                                 # doc -> redaction applications
     from .annotations import PRIVILEGE_CHECK, is_user
     flags = []                                  # check for possible privilege
-    for app in ann.applications():
+    for app in ann.applications(parts=True):
         t = app["target"]
         decides = app["tag"] in withhold or bool(redact and app["tag"].startswith(redact))
         if app["tag"] == PRIVILEGE_CHECK or (decides and not is_user(app["by"])):

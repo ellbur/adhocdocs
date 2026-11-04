@@ -261,9 +261,10 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
     let mut links: Vec<(String, Value)> = vec![];
     let mut facets: Vec<(String, Value)> = vec![];
     let mut filed: Vec<(String, Value)> = vec![]; // (facet + " " + item key, filing)
+    let mut bundles: Vec<(String, Value)> = vec![];
     let item_key = |i: &Value| i.as_object().and_then(|o| o.iter().next())
         .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(""))).unwrap_or_default();
-    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"]}).to_string();
+    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"], "bundle": t["bundle"]}).to_string();
     for ev in events {
         let tag = ev["tag"].as_str().unwrap_or("").to_string();
         match ev["op"].as_str().unwrap_or("") {
@@ -385,6 +386,36 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
                 links.retain(|(x, _)| *x != id);
                 filed.retain(|(_, f)| item_key(&f["item"]) != format!("link:{id}"));
             }
+            // bundles: recorded metadocuments (annotations.py, metadocs.py)
+            "define-bundle" => {
+                bundles.push((ev["bundle"].as_str().unwrap_or("").to_string(), json!({
+                    "bundle": ev["bundle"], "name": ev["name"], "parts": ev.get("parts").cloned().unwrap_or(json!([])),
+                    "summary": ev["summary"], "from": ev["from"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-bundle" => {
+                if let Some((_, b)) = bundles.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["bundle"].as_str()) {
+                    for k in ["name", "summary"] {
+                        if ev.get(k).is_some() { b[k] = ev[k].clone(); }
+                    }
+                    let gone: Vec<String> = ev["remove_parts"].as_array().into_iter().flatten().map(|p| key(p)).collect();
+                    let mut parts: Vec<Value> = b["parts"].as_array().cloned().unwrap_or_default();
+                    parts.retain(|p| !gone.contains(&key(p)));
+                    for p in ev["add_parts"].as_array().into_iter().flatten() {
+                        if !parts.iter().any(|q| key(q) == key(p)) { parts.push(p.clone()); }
+                    }
+                    b["parts"] = json!(parts);
+                    b["edited_by"] = ev["author"].clone();
+                }
+            }
+            "delete-bundle" => {
+                let id = ev["bundle"].as_str().unwrap_or("").to_string();
+                bundles.retain(|(x, _)| *x != id);
+                tags.retain(|(_, t)| t["target"]["bundle"] != json!(id));
+                let gone: Vec<String> = notes.iter().filter(|(_, n)| n["target"]["bundle"] == json!(id))
+                    .map(|(x, _)| format!("note:{x}")).collect();
+                notes.retain(|(_, n)| n["target"]["bundle"] != json!(id));
+                filed.retain(|(_, f)| { let k = item_key(&f["item"]); k != format!("bundle:{id}") && !gone.contains(&k) });
+            }
             "define-facet" => {
                 let f = ev["facet"].as_str().unwrap_or("").to_string();
                 if !facets.iter().any(|(x, _)| *x == f) {
@@ -424,7 +455,8 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
            "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
            "links": links.into_iter().map(|(_, l)| l).collect::<Vec<_>>(),
            "facets": facets.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
-           "filed": filed.into_iter().map(|(_, f)| f).collect::<Vec<_>>()})
+           "filed": filed.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "bundles": bundles.into_iter().map(|(_, b)| b).collect::<Vec<_>>()})
 }
 
 impl Handler {
@@ -932,6 +964,35 @@ mod tests {
         assert_eq!(st["facets"][0]["facet"], "delivery");
         let filed: Vec<&Value> = st["filed"].as_array().unwrap().iter().map(|f| &f["item"]).collect();
         assert_eq!(filed, [&serde_json::json!({"link": "l_1"})]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn bundles_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-bundles-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-tag", "tag": "hot", "author": "user:a"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-bundle", "bundle": "b_1", "name": "Pack",
+                               "parts": [{"doc": "d1"}, {"doc": "d2"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-bundle", "bundle": "b_2", "name": "Other",
+                               "parts": [{"doc": "d3"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_1"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_2"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "note", "note": "n_1", "target": {"bundle": "b_2"}, "body": "x", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "edit-bundle", "bundle": "b_1", "add_parts": [{"doc": "d4"}],
+                               "remove_parts": [{"doc": "d1"}], "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "delete-bundle", "bundle": "b_2", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // two bundles' tags are two applications, not one target
+        assert_eq!(st["bundles"].as_array().unwrap().len(), 1);
+        assert_eq!(st["bundles"][0]["parts"], serde_json::json!([{"doc": "d2"}, {"doc": "d4"}]));
+        assert_eq!(st["tags"].as_array().unwrap().len(), 1);
+        assert_eq!(st["tags"][0]["target"]["bundle"], "b_1");
+        assert!(st["notes"].as_array().unwrap().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

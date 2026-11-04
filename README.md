@@ -318,6 +318,8 @@ uv run analyze people                   # from email headers and names in the do
 uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
 uv run graph path "Raymond Voss" "Rita Ames"   # how two entities connect, with the evidence for each step
 uv run graph export --format mermaid           # the entities and their links, for a diagram
+uv run search '"past due"' --grain new          # one result per thing written, not per email that quotes it
+uv run meta of "$(uv run search '"past due"' | sed -n 2p | jq -r .loc)"   # its thread, family, copies, versions, bundles
 uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
 uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
 uv run page docs memo.md --list memo.list.jsonl            # the documents memo.md cites
@@ -350,6 +352,7 @@ data system-wide, put `eng.traineddata` in
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
 - [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
+- [METADOCS.md](METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
 - [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after
 - [PAGES.md](PAGES.md): literate pages that quote and cite documents

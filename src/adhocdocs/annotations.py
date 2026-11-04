@@ -32,8 +32,14 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
                    ``description``, ``color``
 ``edit-facet``     ``facet`` and the fields that change
 ``file``/``unfile`` ``facet``, ``item``: one of ``{"entity": ID}``, ``{"link": ID}``,
-                   ``{"note": ID}`` or ``{"tag": NAME}`` (a tag definition, so
-                   every application of it)
+                   ``{"note": ID}``, ``{"bundle": ID}`` or ``{"tag": NAME}`` (a tag
+                   definition, so every application of it)
+``define-bundle``  ``bundle`` (new ID), ``name``, ``parts`` (targets: documents or
+                   ranges in them), optional ``summary``, ``from`` (the
+                   metadocument it was made from, e.g. ``thread:<doc>``)
+``edit-bundle``    ``bundle`` and what changes: ``name``, ``summary``,
+                   ``add_parts``, ``remove_parts``
+``delete-bundle``  ``bundle``; tags, notes and filings on it go with it
 ``reserve-numbers`` ``series`` (``bates:<prefix>`` or ``exhibit:<prefix>``), ``first``,
                    ``last``, optional ``name`` (the production or set): a range taken
                    before it's used, so two installations don't number the same
@@ -54,6 +60,14 @@ link, note or tag under one lets the viewer and the tools show only what
 bears on the issue at hand. Filings are like tags: Claude can't unfile what
 the user filed, and filing never changes the thing filed, so Claude can
 file the user's notes.
+
+A bundle is a recorded metadocument (METADOCS.md, :mod:`adhocdocs.metadocs`):
+documents, or parts of them, treated as one thing. A tag or note's
+``target`` can be ``{"bundle": ID}``: on the bundle as a whole, not on
+each part. For filters a document has the tags of the bundles it is in.
+Privilege calls can't be on a bundle (a production withholds and redacts
+documents): tag the parts. Claude can't edit or delete a bundle the user
+made or edited, or delete one with the user's tags or notes on it.
 
 Authorship comes from the write path, never from the request: the viewer
 writes as ``user:<id>``, and the annotation API (:mod:`adhocdocs.annapi`),
@@ -95,8 +109,13 @@ class Refused(Exception):
 
 
 def target_key(target: dict) -> str:
-    """Identity of a target: document, layer and selector (not the quote)."""
-    return json.dumps({k: target[k] for k in ("doc", "layer", "select") if k in target}, sort_keys=True)
+    """Identity of a target: document, layer and selector (not the quote), or bundle."""
+    return json.dumps({k: target[k] for k in ("doc", "layer", "select", "bundle") if k in target}, sort_keys=True)
+
+
+def bundle_of(target) -> str | None:
+    """The bundle a target is, if it is one."""
+    return target.get("bundle") if isinstance(target, dict) and isinstance(target.get("bundle"), str) else None
 
 
 def is_user(author: str) -> bool:
@@ -130,6 +149,8 @@ class Annotations:
         self.link_alias: dict[str, str] = {}     # merged link ID -> the link it joined
         self.facets: dict[str, dict] = {}        # facet name -> definition
         self.filed: dict[str, dict] = {}         # facet -> item key -> filing
+        self.bundles: dict[str, dict] = {}       # bundle ID -> a recorded metadocument
+        self.bundle_alias: dict[str, str] = {}   # merged bundle ID -> the bundle it joined
 
     @classmethod
     def load(cls, m: Matter) -> "Annotations":
@@ -201,9 +222,13 @@ class Annotations:
                 ev = {**ev, k: self.entity_alias[ev[k]]}
         if ev.get("link") in self.link_alias:
             ev = {**ev, "link": self.link_alias[ev["link"]]}
+        if ev.get("bundle") in self.bundle_alias and op != "define-bundle":
+            ev = {**ev, "bundle": self.bundle_alias[ev["bundle"]]}
+        if bundle_of(ev.get("target")) in self.bundle_alias:
+            ev = {**ev, "target": {"bundle": self.bundle_alias[ev["target"]["bundle"]]}}
         if op in ("file", "unfile") and isinstance(ev.get("item"), dict):
             item = ev["item"]
-            alias = {"entity": self.entity_alias, "link": self.link_alias}
+            alias = {"entity": self.entity_alias, "link": self.link_alias, "bundle": self.bundle_alias}
             for k, table in alias.items():
                 if item.get(k) in table:
                     ev = {**ev, "item": {k: table[item[k]]}}
@@ -263,6 +288,22 @@ class Annotations:
                 ev = {**ev, "remove_aliases": gone}
         if op == "delete-link" and ev["link"] not in self.links:
             return []
+        if op == "delete-bundle" and ev["bundle"] not in self.bundles:
+            return []
+        if op == "define-bundle":
+            same = self.bundle_named(ev.get("name", ""))
+            if same:
+                # the same name, on two installations: one bundle, with both's parts
+                self.bundle_alias[ev["bundle"]] = same["bundle"]
+                self._conflict(ev, "bundle-merged", f"bundle {ev['name']!r} was also made as {same['bundle']} by "
+                                                    f"{same['by']}; the two are now one, with the parts of both")
+                have = {target_key(p) for p in same["parts"]}
+                more = [p for p in ev.get("parts", []) if target_key(p) not in have]
+                edit = {"id": ev["id"], "at": ev["at"], "author": ev["author"], "op": "edit-bundle",
+                        "bundle": same["bundle"], **({"add_parts": more} if more else {}),
+                        **({"summary": ev["summary"]} if ev.get("summary") and not same.get("summary") else {}),
+                        **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+                return [edit] if len(edit) > 5 + bool(ev.get("requested_by")) else []
         if op == "define-facet":
             d = self.facets.get(ev["facet"])
             if d is not None:
@@ -397,6 +438,30 @@ class Annotations:
         elif op == "delete-link":
             self.links.pop(ev["link"], None)
             self._unfile_all(f"link:{ev['link']}")
+        elif op == "define-bundle":
+            self.bundles[ev["bundle"]] = {
+                "bundle": ev["bundle"], "name": " ".join(ev["name"].split()), "parts": list(ev["parts"]),
+                "summary": ev.get("summary"), "from": ev.get("from"), "by": ev["author"], "at": ev["at"],
+                **({"requested_by": ev["requested_by"]} if ev.get("requested_by") else {})}
+        elif op == "edit-bundle":
+            b = self.bundles.get(ev["bundle"])
+            if b:
+                if "name" in ev:
+                    b["name"] = " ".join(ev["name"].split())
+                if "summary" in ev:
+                    b["summary"] = ev["summary"]
+                gone = {target_key(p) for p in ev.get("remove_parts", [])}
+                b["parts"] = [p for p in b["parts"] if target_key(p) not in gone]
+                have = {target_key(p) for p in b["parts"]}
+                b["parts"] += [p for p in ev.get("add_parts", []) if target_key(p) not in have]
+                b["edited_at"], b["edited_by"] = ev["at"], ev["author"]
+        elif op == "delete-bundle":
+            self.bundles.pop(ev["bundle"], None)
+            self._unfile_all(f"bundle:{ev['bundle']}")
+            self.tags.pop(target_key({"bundle": ev["bundle"]}), None)
+            for nid in [nid for nid, n in self.notes.items() if bundle_of(n["target"]) == ev["bundle"]]:
+                self.notes.pop(nid)
+                self._unfile_all(f"note:{nid}")
         elif op == "define-facet":
             self.facets[ev["facet"]] = {k: ev[k] for k in ("facet", "description", "color") if k in ev} \
                 | {"by": ev["author"], "at": ev["at"]}
@@ -447,6 +512,29 @@ class Annotations:
                 return ln
         return None
 
+    def bundle_named(self, name: str) -> dict | None:
+        f = " ".join(str(name).casefold().split())
+        return next((b for b in self.bundles.values() if " ".join(b["name"].casefold().split()) == f), None)
+
+    def find_bundle(self, ref: str) -> str:
+        """A bundle's ID from its ID, an ID prefix or its name."""
+        ref = str(ref).strip()
+        ref = self.bundle_alias.get(ref, ref)
+        if ref in self.bundles:
+            return ref
+        hits = [b for b in self.bundles.values()
+                if " ".join(b["name"].casefold().split()) == " ".join(ref.casefold().split())] or \
+            [b for b in self.bundles.values() if len(ref) >= 4 and b["bundle"].startswith(ref)] or \
+            [b for b in self.bundles.values() if ref and b["name"].casefold().startswith(ref.casefold())] or \
+            [b for b in self.bundles.values() if len(ref) >= 3 and ref.casefold() in b["name"].casefold()]
+        if len(hits) == 1:
+            return hits[0]["bundle"]
+        raise Refused(f"no bundle {ref!r}" if not hits else f"bundle {ref!r} could be {', '.join(b['name'] for b in hits)}")
+
+    def bundles_of(self, doc: str) -> list[dict]:
+        """The bundles that hold a document, or part of it."""
+        return [b for b in self.bundles.values() if any(p.get("doc") == doc for p in b["parts"])]
+
     def _unfile_all(self, key: str):
         for per in self.filed.values():
             per.pop(key, None)
@@ -455,7 +543,7 @@ class Annotations:
         k = item_key(item)
         kind, _, ref = k.partition(":")
         return bool(ref) and ref in {"entity": self.entities, "link": self.links, "note": self.notes,
-                                     "tag": self.definitions}.get(kind, {})
+                                     "tag": self.definitions, "bundle": self.bundles}.get(kind, {})
 
     def facets_of(self, item) -> list[str]:
         """The facets an item is filed under. A reply is filed where its thread
@@ -483,6 +571,15 @@ class Annotations:
         privilege call by Claude is then kept, as a flag: productions act only
         on a person's (produce.py), and the replay reports it."""
         op, author = ev["op"], ev["author"]
+        if bundle_of(ev.get("target")) is not None:
+            b = self.bundles.get(ev["target"]["bundle"])
+            if b is None:
+                raise Refused(f"no bundle {ev['target']['bundle']}")
+            if op == "tag" and is_privilege_call(ev["tag"]):
+                raise Refused(f"a production withholds and redacts documents, not bundles: apply {ev['tag']!r} "
+                              f"to the parts of {b['name']!r} (ann tag … bundle:{b['bundle']} --parts)")
+        if op in ("define-bundle", "edit-bundle", "delete-bundle"):
+            self._check_bundle(ev, author)
         if op == "define-tag":
             if ev["tag"] in self.definitions:
                 raise Refused(f"tag {ev['tag']!r} is already defined; use edit-tag")
@@ -573,7 +670,7 @@ class Annotations:
                 raise Refused(f"no facet {ev['facet']!r} is defined" + (f" (did you mean {', '.join(near)}?)" if near else "")
                               + "; define it first with define-facet")
             if item_key(ev.get("item")) == "?":
-                raise Refused('an item is {"entity": ID}, {"link": ID}, {"note": ID} or {"tag": NAME}')
+                raise Refused('an item is {"entity": ID}, {"link": ID}, {"note": ID}, {"bundle": ID} or {"tag": NAME}')
             if op == "file" and not self.item_exists(ev["item"]):
                 raise Refused(f"no {item_key(ev['item']).replace(':', ' ', 1)}")
             if op == "unfile":
@@ -614,6 +711,46 @@ class Annotations:
                     raise Refused(f"{a!r} is not an alias of {e['name']}")
                 if a == ev.get("name", e["name"]):
                     raise Refused(f"{a!r} is the entity's name; rename it first")
+
+    def _check_bundle(self, ev: dict, author: str):
+        op = ev["op"]
+        if op == "define-bundle":
+            if not str(ev.get("name", "")).strip():
+                raise Refused("a bundle needs a name")
+            same = self.bundle_named(ev["name"])
+            if same:
+                raise Refused(f"there is already a bundle {same['name']!r} ({same['bundle']}); "
+                              "add to it with edit-bundle, or give this one another name")
+            if not ev.get("parts"):
+                raise Refused("a bundle needs parts: documents, or ranges in them")
+            return
+        b = self.bundles.get(ev["bundle"])
+        if b is None:
+            raise Refused(f"no bundle {ev['bundle']}")
+        if "name" in ev:
+            if not str(ev["name"]).strip():
+                raise Refused("a bundle needs a name")
+            same = self.bundle_named(ev["name"])
+            if same and same["bundle"] != b["bundle"]:
+                raise Refused(f"there is already a bundle {same['name']!r}")
+        users = is_user(b["by"]) or is_user(b.get("edited_by", ""))
+        if author == CLAUDE and users:
+            raise Refused(f"bundle {b['name']!r} is the user's ({b.get('edited_by') if is_user(b.get('edited_by', '')) else b['by']}); "
+                          f"Claude can't {'delete' if op == 'delete-bundle' else 'change'} it")
+        if op == "delete-bundle" and author == CLAUDE:
+            key = target_key({"bundle": b["bundle"]})
+            if any(is_user(a["by"]) for a in self.tags.get(key, {}).values()) or \
+                    any(is_user(n["by"]) for n in self.notes.values() if bundle_of(n["target"]) == b["bundle"]):
+                raise Refused(f"bundle {b['name']!r} has the user's tags or notes on it; Claude can't delete it")
+        if op == "edit-bundle":
+            have = {target_key(p) for p in b["parts"]}
+            for p in ev.get("remove_parts", []):
+                if target_key(p) not in have:
+                    raise Refused(f"that isn't a part of {b['name']!r}: {locators.format(p)}")
+            gone = {target_key(p) for p in ev.get("remove_parts", [])}
+            left = (have - gone) | {target_key(p) for p in ev.get("add_parts", [])}
+            if not left:
+                raise Refused(f"that would leave {b['name']!r} with no parts; delete it instead")
 
     def _check_link(self, ev: dict, author: str):
         if ev["op"] == "define-link":
@@ -661,20 +798,39 @@ class Annotations:
             return None
         return item if item and item.get("carried") else None
 
-    def applications(self) -> list[dict]:
-        return [a for per in self.tags.values() for a in per.values()]
+    def applications(self, parts=False) -> list[dict]:
+        """Every tag application. With ``parts``, one on a bundle is one on
+        each of its parts instead (with ``via``: the bundle), for code that
+        acts on documents."""
+        out = [a for per in self.tags.values() for a in per.values()]
+        if not parts:
+            return out
+        flat = []
+        for a in out:
+            b = bundle_of(a["target"])
+            if b is None:
+                flat.append(a)
+            elif b in self.bundles:
+                flat += [{**a, "target": p, "via": {"bundle": b}} for p in self.bundles[b]["parts"]]
+        return flat
 
     def doc_tags(self) -> dict[str, set[str]]:
-        """Document ID -> tags on the document or anywhere in it."""
+        """Document ID -> tags on the document, anywhere in it, or on a
+        bundle it (or part of it) is in."""
         out: dict[str, set[str]] = {}
         for a in self.applications():
-            out.setdefault(a["target"]["doc"], set()).add(a["tag"])
+            b = bundle_of(a["target"])
+            if b is None:
+                out.setdefault(a["target"]["doc"], set()).add(a["tag"])
+            elif b in self.bundles:
+                for p in self.bundles[b]["parts"]:
+                    out.setdefault(p["doc"], set()).add(a["tag"])
         return out
 
 
 ENTITY_FIELDS = ("name", "kind", "summary", "recap", "see", "date")
 LINK_FIELDS = ("rel", "summary", "see", "date")
-ITEM_KINDS = ("entity", "link", "note", "tag")
+ITEM_KINDS = ("entity", "link", "note", "tag", "bundle")
 
 
 def item_key(item) -> str:
@@ -701,7 +857,14 @@ def current_tags(m: Matter) -> dict[str, set[str]]:
 
 def normalize_target(m: Matter, loc) -> dict:
     """A checked, durable target: broken locators are refused, and text
-    ranges get their layer and quote fingerprint from the store."""
+    ranges get their layer and quote fingerprint from the store. A bundle
+    (``{"bundle": ID}`` or ``bundle:ID``) is checked when it's written."""
+    if isinstance(loc, str) and loc.startswith("bundle:"):
+        loc = {"bundle": loc[7:].strip()}
+    if isinstance(loc, dict) and "bundle" in loc:
+        if set(loc) != {"bundle"} or not isinstance(loc["bundle"], str) or not loc["bundle"]:
+            raise Refused('a bundle target is {"bundle": ID} and nothing else')
+        return {"bundle": loc["bundle"]}
     r = locators.resolve(m, loc)
     if r["status"] == "broken":
         raise Refused(f"locator is broken: {r.get('error')}")
@@ -736,6 +899,9 @@ OPS = {
     "edit-facet": (("facet",), ("description", "color")),
     "file": (("facet", "item"), ()),
     "unfile": (("facet", "item"), ()),
+    "define-bundle": (("name", "parts"), ("summary", "from")),
+    "edit-bundle": (("bundle",), ("name", "summary", "add_parts", "remove_parts")),
+    "delete-bundle": (("bundle",), ()),
     "reserve-numbers": (("series", "first", "last"), ("name",)),
     "release-numbers": (("reservation",), ()),
     "use-numbers": (("reservation",), ()),
@@ -765,7 +931,7 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
     ev = {"op": op, **{k: req[k] for k in required + optional if req.get(k) is not None}}
     if "target" in ev:
         ev["target"] = normalize_target(m, ev["target"])
-    for k in ("aliases", "add_aliases", "remove_aliases", "see"):
+    for k in ("aliases", "add_aliases", "remove_aliases", "see", "parts"):
         if k in ev and not isinstance(ev[k], list):
             raise Refused(f"{k} must be a list")
     for k in ("aliases", "add_aliases", "remove_aliases"):
@@ -773,6 +939,17 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
             ev[k] = [" ".join(str(a).split()) for a in ev[k] if str(a).strip()]
     if "see" in ev:
         ev["see"] = [normalize_target(m, t) for t in ev["see"]]
+    for k in ("parts", "add_parts", "remove_parts"):
+        if k in ev:
+            if not isinstance(ev[k], list):
+                raise Refused(f"{k} must be a list")
+            ts = [normalize_target(m, t) for t in ev[k]]
+            if any("bundle" in t for t in ts):
+                raise Refused("a bundle's parts are documents or ranges in them, not other bundles")
+            ev[k] = list({target_key(t): t for t in ts}.values())
+    if op == "define-bundle":
+        ev["bundle"] = "b_" + new_event_id()[3:]
+        ev["name"] = " ".join(str(ev["name"]).split())
     if op == "define-entity":
         ev["entity"] = "e_" + new_event_id()[3:]
     if op in ("note", "reply"):
@@ -799,7 +976,17 @@ def write(m: Matter, author: str, req: dict) -> list[dict]:
             ev[k] = ann.entity_alias.get(ev[k], ev[k])
         if ev.get("link") in ann.link_alias:
             ev["link"] = ann.link_alias[ev["link"]]
+        if op in ("edit-bundle", "delete-bundle") or bundle_of(ev.get("target")):
+            # a bundle by ID, ID prefix or name
+            ref = ev["bundle"] if op in ("edit-bundle", "delete-bundle") else ev["target"]["bundle"]
+            bid = ann.find_bundle(ref)
+            if op in ("edit-bundle", "delete-bundle"):
+                ev["bundle"] = bid
+            else:
+                ev["target"] = {"bundle": bid}
         if op in ("file", "unfile") and isinstance(ev["item"], dict):
+            if "bundle" in ev["item"]:
+                ev["item"] = {"bundle": ann.find_bundle(ev["item"]["bundle"])}
             for k, table in (("entity", ann.entity_alias), ("link", ann.link_alias)):
                 if ev["item"].get(k) in table:
                     ev["item"] = {k: table[ev["item"][k]]}
@@ -1023,5 +1210,20 @@ def carry_over(m: Matter, pairs: list[tuple[str, str]], person: str, reason: str
                 new_id[n["note"]] = written_ev["note"]
                 carried.append({"note": written_ev["note"], "target": target, "from_note": n["note"],
                                 **({"unplaced": True} if more.get("unplaced") else {})})
+            # bundles: the replacement joins each bundle the old document is in
+            for b in ann.bundles_of(old):
+                adds = [t for t in (place(p) for p in b["parts"] if p.get("doc") == old) if t is not None]
+                have = {target_key(p) for p in b["parts"]}
+                adds = [t for t in {target_key(t): t for t in adds}.values() if target_key(t) not in have]
+                if not adds:
+                    continue
+                users = is_user(b["by"]) or is_user(b.get("edited_by", ""))
+                try:
+                    emit({"op": "edit-bundle", "bundle": b["bundle"], "add_parts": adds,
+                          "author": person if users else CLAUDE})
+                except Refused as e:
+                    skipped.append({"bundle": b["bundle"], "why": str(e)})
+                    continue
+                carried.append({"bundle": b["bundle"], "added": adds})
         save_replay(m, ann)
     return {"carried": carried, "not_carried": skipped}

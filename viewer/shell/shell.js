@@ -882,6 +882,8 @@ class DocumentPane {
       walk(n.note);
       place(n.target, { text: [`${n.by}: ${n.body}`, ...replies].join("\n\n"), author: n.by, color: "#9cc2ff", note: true });
     }
+    for (const b of bundlesOf(doc)) for (const p of b.parts.filter((p) => p.doc === doc && p.select?.char && (!p.layer || p.layer === this.layer)))
+      out.push({ range: p.select.char, text: `In the bundle “${b.name}”` + (b.summary ? `: ${b.summary}` : ""), author: b.by, color: "#e3d4ff" });
     for (const h of this.highlights.filter((h) => !h.temp && h.label !== "annotation")) {
       if (h.range) out.push({ range: h.range, text: h.label || "highlight", author: "claude", color: "#ffc34d" });
       else if (h.region) out.push({ region: h.region, text: h.label || "highlight", author: "claude", color: "#ffc34d" });
@@ -1852,7 +1854,10 @@ class DocumentPane {
       ? el("span", { class: "chip carried " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`,
           title: carriedNote(t.carried) + "\nClick to confirm it still holds.",
           onclick: () => confirmCarried({ tag: t.tag, target: t.target }, `“${t.tag}”`) }, "↪ " + t.tag)
-      : el("span", { class: "chip " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`, title: `${t.by}, ${t.at}` }, t.tag)));
+      : el("span", { class: "chip " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`, title: `${t.by}, ${t.at}` }, t.tag)),
+      ...bundlesOf(doc).flatMap((b) => A.tags.filter((t) => t.target.bundle === b.bundle).map((t) =>
+        el("span", { class: "chip via-bundle " + (t.by === "claude" ? "by-claude" : ""), style: `color:${color(t.tag)}`,
+          title: `On the bundle “${b.name}”, which this document is in (${t.by}, ${t.at})` }, "◫ " + t.tag))));
     const allRanged = A.tags.filter((t) => t.target.doc === doc && t.target.select);
     const ranged = allRanged.filter((t) => inFacet("tag", t.tag));
     const allNotes = A.notes.filter((n) => n.target?.doc === doc);
@@ -1885,6 +1890,35 @@ class DocumentPane {
     };
     if (top.length) kids.push(el("div", { class: "side-h" }, "Notes"));
     top.forEach((n) => thread(n, 0));
+    // the bundles this document (or part of it) is in: each with its tags and notes, which are on the bundle as a whole
+    const bundles = bundlesOf(doc);
+    const shownBundles = bundles.filter((b) => inFacet("bundle", b.bundle));
+    if (shownBundles.length) kids.push(el("div", { class: "side-h", title: "Bundles: documents, or parts of them, treated as one. Tags and notes here are on the whole bundle." }, "In bundles"));
+    for (const b of shownBundles) {
+      const mine = b.parts.filter((p) => p.doc === doc);
+      const others = [...new Set(b.parts.map((p) => p.doc).filter((d) => d !== doc))];
+      const btags = A.tags.filter((t) => t.target.bundle === b.bundle).map((t) => t.tag);
+      kids.push(el("div", { class: "ann bundle" + (b.by === "claude" ? " by-claude" : ""), title: (b.summary || b.name) + (b.from ? `\nMade from ${b.from}` : ""),
+        onclick: () => { const r = mine.find((p) => p.select); if (r) this.highlight(r, `In the bundle “${b.name}”`); } },
+        el("div", {}, "◫ " + b.name + (btags.length ? " · " + btags.join(", ") : "")),
+        el("div", { class: "who" }, (mine.some((p) => !p.select) ? "this document" : plural(mine.length, "passage") + " here")
+          + (others.length ? ` and ${plural(others.length, "other document")}` : "") + " · " + b.by),
+        ...(others.length ? [el("div", { class: "bundle-parts" }, ...others.slice(0, 8).map((d, i) =>
+          el("a", { title: "Open this part", onclick: (e) => { e.stopPropagation(); this.open(b.parts.find((p) => p.doc === d).select
+            ? locString(b.parts.find((p) => p.doc === d)) : "doc:" + d, { source: "pane" }); } }, `part ${i + 1} `)),
+          ...(others.length > 8 ? [el("span", {}, `+${others.length - 8} more`)] : []))] : []),
+        el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "note", target: { bundle: b.bundle } }, `Note on the bundle “${b.name}”`); } }, "note on the bundle")));
+      const bnotes = A.notes.filter((n) => n.target?.bundle === b.bundle && inFacet("note", n.note));
+      const btop = bnotes.filter((n) => !n.parent || !bnotes.some((p) => p.note === n.parent));
+      const bthread = (n, depth) => {
+        kids.push(item("bundle-note " + (depth ? "reply" : ""), n.body, n.by + (n.edited_at ? " (edited)" : ""), null, [
+          el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "reply", parent: n.note }, "Reply"); } }, "reply "),
+          el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "edit-note", note: n.note }, "Edit note", n.body); } }, "edit "),
+          el("a", { onclick: (e) => { e.stopPropagation(); if (confirm("Delete this note?")) annotate({ op: "delete-note", note: n.note }); } }, "delete")]));
+        for (const r of bnotes.filter((x) => x.parent === n.note)) bthread(r, depth + 1);
+      };
+      btop.forEach((n) => bthread(n, 0));
+    }
     // the facts that rest on this document: links and entities whose evidence is here
     const here = (see) => (see || []).filter((t) => t.doc === doc);
     const facts = [];
@@ -1893,7 +1927,7 @@ class DocumentPane {
     if (facts.length) kids.push(el("div", { class: "side-h", title: "Links and entities whose evidence is in this document" }, "Evidence for"));
     for (const f of facts) kids.push(el("div", { class: "ann fact" + (f.by === "claude" ? " by-claude" : ""), title: f.at.select ? "Go to the evidence" : "",
       onclick: () => f.at.select && this.highlight(f.at, f.text) }, el("div", {}, f.text), el("div", { class: "who" }, f.link ? "link" + (f.link.date ? " · " + f.link.date : "") : "entity")));
-    const hidden = (allRanged.length - ranged.length) + (allNotes.length - notes.length);
+    const hidden = (allRanged.length - ranged.length) + (allNotes.length - notes.length) + (bundles.length - shownBundles.length);
     if (adhoc.facet && hidden) kids.push(el("div", { class: "side-more" }, `${plural(hidden, "tag or note", "tags and notes")} on other issues · `,
       el("a", { onclick: () => setFacet(null) }, "show all")));
     this.side.replaceChildren(...kids);
@@ -2668,7 +2702,7 @@ async function refreshAnnotations() {
     const graphBefore = graph(adhoc.annotations);
     adhoc.annotations = await getJSON("/api/annotations");
     adhoc.annotations.entities ||= [];
-    for (const k of ["links", "facets", "filed"]) adhoc.annotations[k] ||= [];
+    for (const k of ["links", "facets", "filed", "bundles"]) adhoc.annotations[k] ||= [];
     const entitiesChanged = JSON.stringify(adhoc.annotations.entities) !== before;
     const graphChanged = graph(adhoc.annotations) !== graphBefore;
     for (const p of adhoc.panes) {
@@ -2809,6 +2843,8 @@ const who = (by) => by === "claude" ? "Claude" : by === adhoc.user ? "you" : (by
 // facet chosen (F, or the ◇ button), what isn't filed under it is dimmed.
 
 function linkById(id) { return (adhoc.annotations.links || []).find((l) => l.link === id); }
+// the bundles that hold a document, or part of it (annotations.py: bundles_of)
+function bundlesOf(doc) { return (adhoc.annotations.bundles || []).filter((b) => (b.parts || []).some((p) => p.doc === doc)); }
 function linkSentence(l) { return `${entityById(l.from)?.name || "?"} ${l.rel} ${entityById(l.to)?.name || "?"}`; }
 function itemKey(i) { const [k, v] = Object.entries(i || {})[0] || []; return k ? `${k}:${v}` : "?"; }
 function facetsOf(kind, id) {
