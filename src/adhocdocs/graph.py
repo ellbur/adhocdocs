@@ -809,6 +809,92 @@ def dossier(m: Matter, ref: str, mentions_limit: int = 15) -> str:
     return text
 
 
+# -- an entity's timeline ------------------------------------------------------------------------
+
+def timeline_list(m: Matter, refs, facet=None, lanes="other", doc_dates=False,
+                  ann: Annotations | None = None) -> tuple[dict, list[dict], dict]:
+    """(header, items, summary): a list file (LISTS.md) of the dated links of
+    the entities ``refs`` name, for ``view timeline``. One item a link, at
+    its first piece of evidence, with fields ``date``, ``event`` (the link
+    as a sentence), ``rel``, ``link``, ``other`` and ``evidence`` (how
+    many). A link with no date of its own takes the date of an event at
+    either end (preferring the other end). An entity's own date (an event, with evidence) is an item
+    too.
+
+    Undated links go in the timeline's Undated list, rather than at their
+    evidence's date: the email that shows Voss works for Harrowgate doesn't
+    say when he started. ``doc_dates`` places them at that date anyway,
+    marked approximate (``date_from: document``). A link with no evidence
+    has nowhere to point, so it is left out and counted in the summary
+    (``graph unsupported`` lists them). ``lanes``: ``other`` (the entity at
+    the other end), ``rel`` (the relation), or ``none``."""
+    from . import lists, locators
+    ann = ann or Annotations.load(m)
+    ents = ann.entities
+    roots = [entmod.resolve(m, r, list(ents.values())) for r in refs]
+    ids = {e["entity"] for e in roots}
+    if facet is not None and facet not in ann.facets:
+        raise KeyError(f"no facet {facet!r}" + (f"; facets: {', '.join(ann.facets)}" if ann.facets else ""))
+    state = m.state
+
+    def evidence(see):
+        """The live targets among ``see``, each followed to its current document."""
+        live = []
+        for t in see or []:
+            try:
+                d = state.follow(t["doc"])
+            except Exception:
+                continue
+            if d in state.documents and d not in state.withdrawn:
+                live.append({**t, "doc": d})
+        return live
+
+    def loc(t):
+        return locators.format({k: t[k] for k in ("doc", "layer", "select") if t.get(k)})
+
+    items, no_evidence, undated = [], [], 0
+    for e in roots:
+        if e.get("date") and evidence(e.get("see")):
+            ev = evidence(e["see"])
+            items.append({"loc": loc(ev[0]), "group": e["name"] if lanes == "other" else e["kind"] if lanes == "rel" else "",
+                          "fields": {"date": str(e["date"]), "event": e["name"], "entity": e["entity"], "evidence": len(ev)}})
+    for ln in ann.links.values():
+        if not ({ln["from"], ln["to"]} & ids):
+            continue
+        if facet is not None and not (ann.in_facet(facet, {"link": ln["link"]})
+                                      or (ann.in_facet(facet, {"entity": ln["from"]}) and ann.in_facet(facet, {"entity": ln["to"]}))):
+            continue
+        a, b = ents[ln["from"]], ents[ln["to"]]
+        says = f"{a['name']} {ln['rel']} {b['name']}"
+        ev = evidence(ln.get("see"))
+        if not ev:
+            no_evidence.append({"link": ln["link"], "says": says})
+            continue
+        other = b if ln["from"] in ids else a
+        when = ln.get("date") or next((x["date"] for x in (other, a, b) if x["kind"] == "event" and x.get("date")), None)
+        f = {"event": says, "rel": ln["rel"], "link": ln["link"], "other": other["name"], "evidence": len(ev)}
+        if when:
+            f["date"] = str(when)
+        elif doc_dates:
+            f["date_from"] = "document"          # no "date": the timeline takes the evidence's
+        else:
+            f["undated"] = True                  # and not to be guessed from the document's date
+            undated += 1
+        if ln.get("summary"):
+            f["summary"] = ln["summary"]
+        group = {"other": other["name"], "rel": ln["rel"], "none": ""}[lanes]
+        items.append({"loc": loc(ev[0]), "group": group, "fields": f})
+    names = ", ".join(e["name"] for e in roots)
+    header, _ = lists.new(f"Timeline: {names}" + (f" · {facet}" if facet else ""), [],
+                          columns=["date", "event", "other", "evidence"])
+    header["entities"] = sorted(ids)
+    if facet:
+        header["facet"] = facet
+    summary = {"entities": [{"entity": e["entity"], "name": e["name"]} for e in roots], "items": len(items),
+               "undated": undated, "no_evidence": no_evidence}
+    return header, items, summary
+
+
 # -- documents and correspondence ------------------------------------------------------------------
 
 def doc_relations(m: Matter) -> dict[str, list[dict]]:

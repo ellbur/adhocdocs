@@ -102,6 +102,33 @@ paralegal would assemble by hand, built from what has been recorded, so it
 is only as complete as the links are: `graph unsupported` says what still
 has no document.
 
+## An entity's timeline
+
+`view timeline --entity "Rita Ames"` lays an entity's links out by date,
+in the timeline pane ([LISTS.md](LISTS.md#the-timeline-display)): each link
+a chip labeled as a sentence ("Rita Ames signed for Dock 4 delivery"), at
+its date, in a lane for the entity at its other end (`--by rel`: a lane
+per relation). Clicking one previews its first piece of evidence, so
+stepping through the chips walks the entity's story document by document.
+`graph timeline REF` writes the same thing as a list file
+([`graph.timeline_list`](src/adhocdocs/graph.py)), to keep, edit, or show
+with `view timeline FILE`; a list in the workspace also puts its entries on
+the date cards ([DATES.md](DATES.md)).
+
+- **A link's date** is its own `date`, or else the date of an event at
+  either end: "Ames signed for the Dock 4 delivery" happened when the
+  delivery did. An entity with a date and evidence of its own (an event)
+  is a chip too.
+- **Undated links aren't guessed at.** That an email shows Voss works for
+  Harrowgate doesn't mean he started that day, so by default undated links
+  are listed after the timeline (the item's `undated` field). `--doc-dates`
+  places them at their evidence's date anyway, drawn dashed as approximate
+  and saying so in their tooltip.
+- **Links with no evidence are left out:** a chip has to open something.
+  They are reported (`no_evidence`), as `graph unsupported` reports them.
+- More than one entity (`--entity A --entity B`) gives their links on one
+  axis; `--facet` keeps one issue.
+
 ## Diagrams
 
 `view graph` draws the graph as a diagram in a viewer pane, with a linked
@@ -209,6 +236,3 @@ and `received` edges to each email. Claude adds the people who matter to
 the matter, not everyone in a To line, since a list that holds everyone
 is as useless as none ([ENTITIES.md](ENTITIES.md)).
 
-## Not built yet
-- A timeline pane of an entity's dated links (`view timeline` takes list
-  files; a list made from the links would do it).

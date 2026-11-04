@@ -444,7 +444,7 @@ def around(m, when: str, days: int = 7) -> dict:
                 doc = lists.doc_of(it)
             except Exception:
                 doc = None
-            dt = f.get("date") or (dds.get(doc) or {}).get("date")
+            dt = None if f.get("undated") else f.get("date") or (dds.get(doc) or {}).get("date")
             if dt and near(dt):
                 chron.append({"date": dt[:10], "event": f["event"], "loc": it["loc"],
                               "list": str(path.relative_to(m.workspace)), "title": header.get("title")})

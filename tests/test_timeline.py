@@ -102,3 +102,17 @@ def test_view_timeline_command(m, tmp_path, monkeypatch, capsys):
     assert len(c["sequence"]) == len(m.state.documents)
     result = json.loads(capsys.readouterr().out)
     assert result["pane"] == "p1" and result["timeline"]["lanes"] == "custodian"
+
+
+def test_undated_and_document_dates(m, tmp_path):
+    """``undated`` keeps an item off the axis though its document has a date;
+    ``date_from: document`` places it there, marked approximate."""
+    docs = sorted(m.state.documents)
+    header, _ = lists.new("Facts", [])
+    items = [{"loc": "doc:" + docs[0], "fields": {"event": "A fact, no date", "undated": True}},
+             {"loc": "doc:" + docs[1], "fields": {"event": "As of its email", "date_from": "document"}}]
+    files, _, s = timeline.timeline_html(m, (header, items), lanes="none")
+    out = page(files)
+    assert s["dated"] == 1 and s["undated"] == 1
+    assert out.index("Undated (") < out.index("A fact, no date")
+    assert 'approx" data-locator="doc:' + docs[1] in out and "evidence&#x27;s date" in out

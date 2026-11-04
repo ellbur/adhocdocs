@@ -49,7 +49,8 @@ them.
 - **List display.** *Built*, as list panes with a linked preview (`view
   list`): [LISTS.md](LISTS.md). Search results are shown the same way.
 - **Timeline / chronology display.** *Built*, as a pane (`view timeline`):
-  a list's items by date, in lanes ([LISTS.md](LISTS.md#the-timeline-display)).
+  a list's items by date, in lanes ([LISTS.md](LISTS.md#the-timeline-display)),
+  or an entity's dated links (`--entity`; [GRAPH.md](GRAPH.md#an-entitys-timeline)).
 - **Relationship diagrams.** *Built*, as a pane (`view graph`): entities,
   their links and the documents they rest on, laid out in columns
   ([GRAPH.md](GRAPH.md#diagrams)).
@@ -92,7 +93,7 @@ them.
   entity list is a graph: the viewer's cards show each entity's connections
   and move from one to the next, a document's side panel lists the facts
   that rest on it, `graph` walks it (`show`, `around`, `path`, `evidence`,
-  `unsupported`, `export` as JSON, dot or Mermaid), and `view graph` draws
+  `unsupported`, `timeline`, `export` as JSON, dot or Mermaid), and `view graph` draws
   it. Facets are issues that entities, links, notes and tags are filed
   under; the viewer shows one at a time (`F`). Documents relate too
   (replies, quotations, versions, copies: `--doc-links`, and a document

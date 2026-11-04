@@ -11,7 +11,11 @@ document's date. ``YYYY-MM`` and ``YYYY`` are allowed, for entries known
 only to the month or year. Its label is the field ``event`` (or
 ``label``), else the email subject or the document name. So a chronology
 is a list file whose items carry ``{"fields": {"date": …, "event": …}}``
-and a locator to the evidence for each entry.
+and a locator to the evidence for each entry. ``"undated": true`` means
+undated, with no falling back to the document's date (a fact the document
+shows, not one that happened when it was written); ``"date_from":
+"document"`` marks an item placed at its document's date as approximate.
+``graph timeline`` makes such a list from an entity's links.
 
 Lanes are horizontal bands: the list's own groups (``analyze threads
 --list`` groups by thread), or a document field (custodian, sender, kind),
@@ -46,9 +50,10 @@ def parse_date(v) -> date | None:
 
 
 def entries(m, path, lanes: str) -> tuple[dict, list[dict]]:
-    """The list's items with a date, label, lane and tooltip each, in date order."""
+    """The list's items with a date, label, lane and tooltip each, in date
+    order. ``path`` is a list file, or its ``(header, items)``."""
     from .index import open_index
-    header, items = lists.read(path)
+    header, items = path if isinstance(path, tuple) else lists.read(path)
     fx = open_index(m, "fields")
     fx.update()
     rows = fx.rows()
@@ -59,8 +64,9 @@ def entries(m, path, lanes: str) -> tuple[dict, list[dict]]:
         loc = it["loc"] if isinstance(it["loc"], str) else locators.format(it["loc"])
         row = rows.get(locators.parse(loc)["doc"], {})
         f = it.get("fields") or {}
-        when = parse_date(f.get("date")) or parse_date(row.get("date"))
-        approx = bool(f.get("date")) and len(str(f["date"])) < 10           # known to the month or year only
+        when = None if f.get("undated") else parse_date(f.get("date")) or parse_date(row.get("date"))
+        approx = (bool(f.get("date")) and len(str(f["date"])) < 10           # known to the month or year only
+                  or f.get("date_from") == "document" and when is not None)  # placed at its evidence's date
         label = f.get("event") or f.get("label") or row.get("subject") or row.get("name") or loc[4:20]
         lane = {"group": it.get("group"), "custodian": row.get("custodian"), "kind": row.get("kind"),
                 "from": (row.get("from") or [None])[0], "none": ""}[lanes]
@@ -68,6 +74,10 @@ def entries(m, path, lanes: str) -> tuple[dict, list[dict]]:
                                           row.get("custodian")) if x)
         if f.get("event") or f.get("label"):
             tip += "\n" + str(label)
+        if f.get("date_from") == "document" and when is not None:
+            tip += "\n(undated: shown at its evidence's date)"
+        if f.get("summary"):
+            tip += "\n" + str(f["summary"])
         out.append({"loc": loc, "date": when, "label": str(label), "lane": lane if lane is not None else "(none)",
                     "kind": row.get("kind") or "", "tip": tip, "order": i, "approx": approx})
     out.sort(key=lambda e: (e["date"] is None, e["date"] or date.min, e["order"]))
@@ -149,7 +159,8 @@ def _ticks(a: date, b: date, px: float):
 
 def timeline_html(m, path, lanes="auto", scale="auto", title=None) -> tuple[dict, list[str], dict]:
     """(files, sequence, summary): the pane's HTML, its items' locators in
-    date order, and what was shown."""
+    date order, and what was shown. ``path`` is a list file, or its
+    ``(header, items)``."""
     header, es = entries(m, path, lanes)
     truncated = len(es) > MAX_ITEMS
     es = es[:MAX_ITEMS]

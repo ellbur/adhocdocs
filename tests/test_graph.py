@@ -317,3 +317,75 @@ def test_entity_page(m, cast):
     assert "## In date order" not in page or "2026-03-09" in page
     assert "found by matching its names" in page
     assert literate.problems(literate.check(m, page)) == []
+
+
+# -- an entity's timeline ------------------------------------------------------------------------
+
+def test_entity_timeline(m, cast, tmp_path):
+    from adhocdocs import lists, timeline
+    write(m, "claude", {"op": "edit-link", "link": cast["ames_at"], "summary": "she signs as Bellwether receiving"})
+    header, items, s = graph.timeline_list(m, ["Ames"])
+    by = {it["fields"]["link"]: it for it in items}
+    assert set(by) == {cast["received"], cast["ames_at"]} and s["no_evidence"] == []
+    signed = by[cast["received"]]
+    assert signed["loc"] == "doc:" + m.pod and signed["group"] == "Dock 4 delivery"
+    assert signed["fields"]["date"] == "2026-03-09" and signed["fields"]["event"] == "Rita Ames signed for Dock 4 delivery"
+    works = by[cast["ames_at"]]["fields"]
+    assert works["undated"] and "date" not in works and s["undated"] == 1       # not guessed from the receipt
+
+    path = tmp_path / "t.list.jsonl"
+    lists.write(path, header, items)
+    files, seq, t = timeline.timeline_html(m, path)
+    out = base64.b64decode(files["index.html"]).decode()
+    assert t["dated"] == 1 and t["undated"] == 1 and t["lanes"] == "group" and t["lane_names"] == ["Dock 4 delivery"]
+    assert "Undated (1)" in out and "Rita Ames works for Bellwether" in out
+    assert "she signs as Bellwether receiving" in out                          # the link's summary in its tooltip
+
+    # --doc-dates: at the evidence's date (here, the receipt has none: still undated), lanes by relation
+    _, items, s = graph.timeline_list(m, ["Ames"], doc_dates=True, lanes="rel")
+    assert s["undated"] == 0 and {it["group"] for it in items} == {"signed for", "works for"}
+    assert next(it for it in items if it["fields"]["link"] == cast["ames_at"])["fields"]["date_from"] == "document"
+    _, _, t = timeline.timeline_html(m, (header, items))
+    assert t["dated"] == 1 and t["undated"] == 1
+
+    # a link with no evidence has nowhere to point: left out, and said
+    _, items, s = graph.timeline_list(m, ["Voss"])
+    assert [it["fields"]["link"] for it in items] == [cast["signed"]]
+    assert s["no_evidence"] == [{"link": cast["works"], "says": "Raymond Voss works for Harrowgate Fastener Supply Co."}]
+
+    # an event's own date and evidence, and links to a dated event take its date
+    write(m, "claude", {"op": "edit-entity", "entity": cast["delivery"], "see": [{"doc": m.pod}]})
+    rec = link(m, cast["bellwether"], "received", cast["delivery"], see=[{"doc": m.note}])
+    _, items, _ = graph.timeline_list(m, ["Dock 4 delivery"])
+    dates = {it["fields"].get("event"): it["fields"].get("date") for it in items}
+    assert dates["Dock 4 delivery"] == "2026-03-09"
+    assert dates["Bellwether Marine Systems, Inc. received Dock 4 delivery"] == "2026-03-09"
+    assert any(it["fields"].get("link") == rec for it in items)
+
+    # a facet keeps what is filed under it
+    write(m, "claude", {"op": "define-facet", "facet": "delivery"})
+    write(m, "claude", {"op": "file", "facet": "delivery", "item": {"link": cast["received"]}})
+    _, items, _ = graph.timeline_list(m, ["Ames"], facet="delivery")
+    assert [it["fields"]["link"] for it in items] == [cast["received"]]
+    with pytest.raises(KeyError, match="no facet"):
+        graph.timeline_list(m, ["Ames"], facet="nope")
+
+
+def test_entity_timeline_cli(m, cast, tmp_path, monkeypatch, capsys):
+    import json
+    from adhocdocs import cli, lists, view
+    monkeypatch.chdir(tmp_path)
+    capsys.readouterr()
+    cli.graph(["--matter", str(m.root), "timeline", "Ames"])
+    r = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert r["written"] == "timeline-rita-ames.list.jsonl" and r["items"] == 2 and r["next"].startswith("view timeline")
+    header, items = lists.read(tmp_path / r["written"])
+    assert header["title"] == "Timeline: Rita Ames" and len(items) == 2
+
+    sent = []
+    monkeypatch.setattr(view, "command", lambda m, c: sent.append(c) or {"pane": "p1"})
+    cli.view(["--matter", str(m.root), "timeline", "--entity", "Voss"])
+    c = sent[-1]
+    assert c["kind"] == "timeline" and c["title"] == "Timeline: Raymond Voss" and c["sequence"] == ["doc:" + m.msa]
+    r = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert r["timeline"]["no_evidence"][0]["link"] == cast["works"]
