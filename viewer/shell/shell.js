@@ -1899,13 +1899,15 @@ class DocumentPane {
       const others = [...new Set(b.parts.map((p) => p.doc).filter((d) => d !== doc))];
       const btags = A.tags.filter((t) => t.target.bundle === b.bundle).map((t) => t.tag);
       // a piece of a split of this document (split.py) is named without the document's name, and is pages, not passages
-      const piece = b.split && mine.length && mine.every((p) => p.select?.page !== undefined && p.select.char === undefined);
+      const paged = mine.length && mine.every((p) => p.select?.page !== undefined && p.select.char === undefined);
+      const piece = paged && b.split;
       const pagesOf = (p) => Array.isArray(p.select.page) ? `pp. ${p.select.page[0]}–${p.select.page[1]}` : `p. ${p.select.page}`;
-      kids.push(el("div", { class: "ann bundle" + (b.by === "claude" ? " by-claude" : ""), title: (b.summary || b.name) + (b.from ? `\nMade from ${b.from}` : ""),
+      const made = b.split ? `\nPiece ${b.split.piece} of ${b.split.pieces} of the split “${b.split.name}”` : b.from ? `\nMade from ${b.from}` : "";
+      kids.push(el("div", { class: "ann bundle" + (b.by === "claude" ? " by-claude" : ""), title: (b.summary || b.name) + made,
         onclick: () => { const r = mine.find((p) => p.select); if (!r) return;
-                         if (piece) this.scrollTo(parseLoc(locString(r))); else this.highlight(r, `In the bundle “${b.name}”`); } },
+                         if (paged) this.scrollTo(parseLoc(locString(r))); else this.highlight(r, `In the bundle “${b.name}”`); } },
         el("div", {}, "◫ " + (piece ? b.name.split(" · ").slice(1).join(" · ") || b.name : b.name) + (btags.length ? " · " + btags.join(", ") : "")),
-        el("div", { class: "who" }, (piece ? mine.map(pagesOf).join(", ")
+        el("div", { class: "who" }, (paged ? mine.map(pagesOf).join(", ")
                                      : mine.some((p) => !p.select) ? "this document" : plural(mine.length, "passage") + " here")
           + (others.length ? ` and ${plural(others.length, "other document")}` : "") + " · " + b.by),
         ...(others.length ? [el("div", { class: "bundle-parts" }, ...others.slice(0, 8).map((d, i) =>

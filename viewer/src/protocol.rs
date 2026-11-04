@@ -390,7 +390,9 @@ pub fn annotation_state(root: &std::path::Path) -> Value {
             "define-bundle" => {
                 bundles.push((ev["bundle"].as_str().unwrap_or("").to_string(), json!({
                     "bundle": ev["bundle"], "name": ev["name"], "parts": ev.get("parts").cloned().unwrap_or(json!([])),
-                    "summary": ev["summary"], "from": ev["from"], "by": ev["author"], "at": ev["at"]})));
+                    "summary": ev["summary"], "from": ev["from"], "by": ev["author"], "at": ev["at"],
+                    // one piece of a named split of a document (split.py): the side panel names it by its split
+                    "split": ev.get("split").cloned().unwrap_or(Value::Null)})));
             }
             "edit-bundle" => {
                 if let Some((_, b)) = bundles.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["bundle"].as_str()) {
@@ -978,6 +980,9 @@ mod tests {
                                "parts": [{"doc": "d1"}, {"doc": "d2"}], "author": "claude"}),
             serde_json::json!({"id": "ev_3", "at": "t", "op": "define-bundle", "bundle": "b_2", "name": "Other",
                                "parts": [{"doc": "d3"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_3b", "at": "t", "op": "define-bundle", "bundle": "b_3", "name": "scan.pdf · letters 1/2 · A",
+                               "parts": [{"doc": "d5", "select": {"page": [1, 2]}}], "author": "claude",
+                               "split": {"of": "d5", "name": "letters", "piece": 1, "pieces": 2}}),
             serde_json::json!({"id": "ev_4", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_1"}, "author": "user:a"}),
             serde_json::json!({"id": "ev_5", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_2"}, "author": "user:a"}),
             serde_json::json!({"id": "ev_6", "at": "t", "op": "note", "note": "n_1", "target": {"bundle": "b_2"}, "body": "x", "author": "user:a"}),
@@ -988,8 +993,10 @@ mod tests {
         std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
         let st = super::annotation_state(&dir);
         // two bundles' tags are two applications, not one target
-        assert_eq!(st["bundles"].as_array().unwrap().len(), 1);
+        assert_eq!(st["bundles"].as_array().unwrap().len(), 2);
         assert_eq!(st["bundles"][0]["parts"], serde_json::json!([{"doc": "d2"}, {"doc": "d4"}]));
+        assert_eq!(st["bundles"][1]["split"]["name"], "letters");      // a split's piece says so
+        assert!(st["bundles"][0]["split"].is_null());
         assert_eq!(st["tags"].as_array().unwrap().len(), 1);
         assert_eq!(st["tags"][0]["target"]["bundle"], "b_1");
         assert!(st["notes"].as_array().unwrap().is_empty());
