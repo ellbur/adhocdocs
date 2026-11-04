@@ -44,7 +44,7 @@ needs, so a new kind of metadocument costs a function, not a re-index.
 | `thread` | an email conversation, with copies | threading headers |
 | `copies` | one item, however many copies: duplicates, the same text in another format, the same message from several custodians | content hashes, text hashes, Message-IDs |
 | `versions` | every draft, revision and copy of a text | near-duplicates (estimated: [GRAPH.md](GRAPH.md#how-documents-relate)) |
-| `new` | what one message adds: its text without the part it quotes | the email extractor's `quoted` segments |
+| `new` | what one document adds: a message's text without the part it quotes; a revision's changes over the version before it | the email extractor's `quoted` segments; the versions, compared word by word as `analyze redline` does |
 
 A unit is named from *any* document in it: `thread:3fa2…` means "the
 thread 3fa2… is in", so a reference never needs the representative.
@@ -90,6 +90,17 @@ in the matter, the hit goes to the earliest message that quotes it, marked
 `quoted`. So an email quoted in 40 replies is one result, not 41.
 `--grain thread`, `family`, `copies`, `versions` and `bundle` group
 results the same way; each line lists its documents and their hits.
+
+**Revisions.** For a document that quotes nothing but revises an earlier
+one (a draft and its revision, found as `versions`), `new:D` is what the
+revision changed: the passages inserted or reworded since the nearest
+earlier version with different text. `meta show new:D` says which version
+that is (`over`). Search at `--grain new` treats kept text the way it
+treats quoted email: a hit in words the revision carried over counts for
+the version that first had them, with the revision listed in `kept_in`. So
+a phrase in all five drafts of a memo is one result, at the draft that
+wrote it, and a phrase only the last draft has is a result for that
+draft. A revision that only removed text adds nothing, and has no parts.
 
 **Tags and notes.** Tags and notes could always target a range inside a
 document. Now a target can also be a bundle: `ann tag hot bundle:"Board
@@ -299,5 +310,6 @@ a fair split too.
   letterhead artwork, handwriting or stamps. It reads only the text layer
   and its word positions; Claude can look at the pictures (`--sheet`) and
   cut by them.
-- `new` for documents other than emails, such as what a revision adds over
-  the draft before it (`analyze redline` shows it; it isn't a unit yet).
+- Choosing which version a revision is compared with. It is the nearest
+  earlier one with different text; a revision of a revision of a branch
+  may want another.

@@ -38,8 +38,9 @@ GRAINS = {
     "copies": "one item, however many copies: exact duplicates, the same text in another format, "
               "the same message from several custodians",
     "versions": "every draft, revision and copy of a text (near-duplicates, estimated)",
-    "new": "what a message adds: its own text without the text it quotes; copies count once, "
-           "and quoted text counts for the message that wrote it",
+    "new": "what a document adds: a message's own text without the text it quotes, a revision's changes "
+           "over the version before it; copies count once, and quoted or kept text counts for the "
+           "document that wrote it",
 }
 _BREAK = __import__("re").compile(r"\n[>|\s]*\n|:[ \t]*\n")
 PREFIXES = tuple(f"{g}:" for g in GRAINS if g != "doc") + ("bundle:",)
@@ -109,6 +110,7 @@ class Units:
         self._fields = self._threads = self._links = None
         self._groups = {}
         self._texts = {}
+        self._previous = {}
 
     # -- what is known about documents ---------------------------------------------------
 
@@ -345,6 +347,83 @@ class Units:
             out.append((pos, len(text)))
         return out
 
+    # -- what a revision adds over the version before it --------------------------------------
+
+    def previous_version(self, doc) -> str | None:
+        """The version a document revises: the nearest earlier one among its
+        versions (near-duplicates or one inside the other, estimated) with
+        different text. Copies don't count. None if it is the first."""
+        cache = self._previous
+        if doc not in cache:
+            copies = set(self.docs("copies:" + doc))
+            here = self._order(doc)
+            earlier = [d for d in self.docs("versions:" + doc) if d not in copies and self._order(d) < here
+                       and self.text(d) is not None]
+            mine = self.text(doc)
+            earlier = [d for d in earlier if mine is not None and self.text(d)[1] != mine[1]]
+            cache[doc] = earlier[-1] if earlier else None
+        return cache[doc]
+
+    def added_ranges(self, doc) -> list[tuple[int, int]] | None:
+        """The char ranges of what a document adds over the version before it:
+        words inserted or changed, compared as `analyze redline` compares them
+        (line breaks, hyphenation and case aside). None if it revises nothing."""
+        prev = self.previous_version(doc)
+        if prev is None:
+            return None
+        import difflib
+        _, ta, _ = self.text(prev)
+        _, tb, _ = self.text(doc)
+        xa, xb = self._words(prev), self._words(doc)
+        sm = difflib.SequenceMatcher(None, [w for w, _, _ in xa], [w for w, _, _ in xb], autojunk=False)
+        out: list[list[int]] = []
+        for op, _, _, j1, j2 in sm.get_opcodes():
+            if op in ("insert", "replace") and j2 > j1:
+                s, e = xb[j1][1], xb[j2 - 1][2]
+                if out and not tb[out[-1][1]:s].strip(" \t\n\f.,;:"):      # runs apart by spacing or punctuation join
+                    out[-1][1] = e
+                else:
+                    out.append([s, e])
+        return [(s, e) for s, e in out]
+
+    def new_ranges(self, doc) -> list[tuple[int, int]] | None:
+        """What a document says that isn't said before it: a message's text
+        without what it quotes; a revision's changes over the version before;
+        else all of it. None if it has no text."""
+        own = self.own_ranges(doc)
+        t = self.text(doc)
+        if own is None or t is None:
+            return own
+        quotes = any(g["kind"] == "quoted" for g in t[2])
+        if not quotes:
+            added = self.added_ranges(doc)
+            if added is not None:
+                return added
+        return own
+
+    def version_origin(self, doc, s, e) -> tuple[str, int, int] | None:
+        """Where words at ``doc`` [s, e) that a revision kept were first
+        written: the earliest version before it that has them, with their
+        range there. None if they are the revision's own."""
+        if any(a <= s and e <= b for a, b in (self.new_ranges(doc) or [])):
+            return None
+        want = [w for w, a, b in self._words(doc) if a < e and s < b]
+        if not want:
+            return None
+        found = None
+        d = self.previous_version(doc)
+        while d is not None:
+            ws = self._words(d)
+            words = [w for w, _, _ in ws]
+            hit = next((i for i in range(len(words) - len(want) + 1) if words[i:i + len(want)] == want), None)
+            if hit is None:
+                break
+            found = (d, ws[hit][1], ws[hit + len(want) - 1][2])
+            if any(a <= found[1] and found[2] <= b for a, b in (self.new_ranges(d) or [])):
+                break                       # that version wrote them
+            d = self.previous_version(d)
+        return found
+
     def members(self, ref: str) -> list[dict]:
         """The parts of a unit or bundle as locators (dicts): whole
         documents, or for ``new`` and bundles, ranges in them."""
@@ -353,8 +432,10 @@ class Units:
             return [dict(p) for p in self.bundle(seed)["parts"]]
         if grain == "new":
             doc = self.unit(self._doc(seed), "new")[4:]
-            ranges = self.own_ranges(doc)
+            ranges = self.new_ranges(doc)
             t = self.text(doc)
+            if ranges == [] and self.previous_version(doc):
+                return []                   # a revision that adds nothing
             if not ranges or t is None or ranges == [(0, len(t[1]))]:
                 return [{"doc": doc}]
             return [locators.char_locator(doc, t[0].id, t[1], s, e) for s, e in ranges]
@@ -380,6 +461,10 @@ class Units:
             if grain == "new":
                 out["parts"] = len(self.members(canon))
                 out["copies"] = len(self.docs("copies:" + rep))
+                prev = self.previous_version(rep)
+                t = self.text(rep)
+                if prev and t is not None and not any(g["kind"] == "quoted" for g in t[2]):
+                    out["over"] = "doc:" + prev         # what it adds over this version
         dates = sorted(d[:10] for d in (self.date(x) for x in docs) if d)
         out.update({"documents": len(docs), "first": dates[0] if dates else None,
                     "last": dates[-1] if dates else None})
@@ -554,6 +639,20 @@ def regroup(m: Matter, items: list[dict], grain: str, units: Units | None = None
                     continue
                 add_hit(slot(own_unit, it.get("score")), doc, h, quoted=True)
                 continue
+            sel = (h.get("loc") or {}).get("select") or {}
+            if "char" in sel and u.previous_version(doc) is not None:
+                o = u.version_origin(doc, *sel["char"])
+                if o is not None:                   # words a revision kept: they count for the version that wrote them
+                    src, a, b = o
+                    x = slot(u.unit(src, "new"), it.get("score"))
+                    x.setdefault("kept_in", [])
+                    if "doc:" + doc not in x["kept_in"]:
+                        x["kept_in"].append("doc:" + doc)
+                    layer, text, _ = u.text(src)
+                    from .search import snippet
+                    add_hit(x, src, {"loc": locators.char_locator(src, layer.id, text, a, b), "in": ["body"],
+                                     "snippet": snippet(text, a, b)})
+                    continue
             add_hit(slot(own_unit, it.get("score")), doc, h)
     rows = []
     for x in out.values():

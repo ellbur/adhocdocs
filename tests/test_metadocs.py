@@ -460,3 +460,37 @@ def test_search_and_tags_at_a_joined_grain(m, capsys):
     # a joined unit is a target like any metadocument: each of its documents
     targets = cli._targets(m, ["thread+family:" + pod])
     assert {t["doc"] for t in targets} == set(metadocs.Units(m).docs("thread+family:" + pod))
+
+
+# -- what a revision adds over the version before it ----------------------------------------------
+
+def test_new_for_a_revision(m):
+    u = metadocs.Units(m)
+    v1 = named(m, "memo-collection-bellwether-2026-03-16.pdf")
+    v2 = named(m, "memo-collection-bellwether-2026-03-18-rev.pdf")
+    assert u.previous_version(v2) == v1 and u.previous_version(v1) is None
+    text = u.text(v2)[1]
+    added = [text[a:b] for a, b in u.new_ranges(v2)]
+    assert any("Carrier position" in x for x in added) and "REVISED" in added
+    assert not any("Raymond Voss" in x for x in added)              # kept from the first version
+    parts = u.members("new:" + v2)
+    assert parts and all("char" in p["select"] for p in parts)
+    d = u.describe("new:" + v2)
+    assert d["over"] == "doc:" + v1
+    assert u.members("new:" + v1) == [{"doc": v1}]                  # the first version: all of it is its own
+    # kept words go back to the version that wrote them
+    s = text.index("Raymond Voss")
+    src, a, b = u.version_origin(v2, s, s + len("Raymond Voss"))
+    assert src == v1 and u.text(v1)[1][a:b] == "Raymond Voss"
+    s = text.index("Carrier position")
+    assert u.version_origin(v2, s, s + 16) is None
+
+
+def test_search_new_counts_kept_words_once(m):
+    v1 = named(m, "memo-collection-bellwether-2026-03-16.pdf")
+    v2 = named(m, "memo-collection-bellwether-2026-03-18-rev.pdf")
+    units = metadocs.regroup(m, search(m, "Bellwether"), "new")
+    first = next(x for x in units if x["unit"] == metadocs.Units(m).unit(v1, "new"))
+    assert "doc:" + v2 in first.get("kept_in", [])
+    units = metadocs.regroup(m, search(m, '"Carrier position"'), "new")
+    assert [x["unit"] for x in units] == [metadocs.Units(m).unit(v2, "new")]   # only the revision says it
