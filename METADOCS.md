@@ -109,11 +109,31 @@ is in: their tags (also shown as dashed ◫ chips), their notes, and links to
 the other parts. A bundle's ranges in the document are marked. The user can
 write a note on a bundle from there.
 
+**Its parts in a pane.** `view meta REF` shows a metadocument's parts in a
+list pane, with a linked preview, in the order that reads best at its
+grain:
+
+- a thread in reply order, each message indented by its depth, with its
+  copies under it;
+- a family from the top item down, attachments indented under their parent;
+- copies and versions oldest first;
+- what a message adds, passage by passage;
+- a bundle's parts as recorded, each saying whether it is a whole document,
+  pages or a passage.
+
+Two more views start from a document. `view meta DOC --of` shows
+everything it is in (its thread, family, copies, versions and bundles), a
+group each, so "what is this part of?" is one pane. `view meta DOC
+--splits` shows its recorded splits ([below](#splitting-a-merged-pdf)), a
+group per split and a row per piece, so the user can step through the
+pieces with the preview. `--splits NAME` shows one split. `--list FILE`
+keeps any of these as a list file.
+
 **Everywhere else.** A metadocument goes where a locator goes: `text
-new:3fa2…` prints a message without its quotes, `view open thread:3fa2…`
-opens the thread's first message, and `meta show REF --list FILE` makes a
-list of its parts for `view list`. `meta of DOC` lists every unit and
-bundle a document is in.
+new:3fa2…` prints a message without its quotes, and `view open thread:3fa2…`
+opens the thread's first message. `meta show REF --list FILE` writes a list
+of its parts, and `meta of DOC` lists every unit and bundle a document is
+in.
 
 ## Splitting a merged PDF
 
@@ -209,6 +229,7 @@ and wherever a cut would change a review call.
 - `--list FILE` writes the pieces as a list of page ranges: `view list
   FILE` steps through them with a preview, so the user can look at each
   cut.
+- `view meta DOC --splits` shows the recorded splits the same way.
 - `--record NAME` keeps the split as bundles named "DOC · NAME k/n ·
   label", each with `split: {of, name, piece, pieces}`. A piece can then be
   tagged, noted, cited or searched (`--grain bundle`) as one thing.
@@ -254,5 +275,6 @@ a fair split too.
 - `new` for documents other than emails, such as what a revision adds over
   the draft before it (`analyze redline` shows it; it isn't a unit yet).
 - Units of units, such as a thread with its attachments' families.
-- Viewer panes listing a metadocument's parts directly. Today `meta show
-  --list` and `view list` do it in two steps.
+- Opening those panes from the viewer itself (a "list parts" link on a
+  bundle in the side panel). Today the user asks, and Claude runs `view
+  meta`.

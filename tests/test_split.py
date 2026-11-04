@@ -242,3 +242,21 @@ def test_cli_plan(api, tmp_path, capsys, monkeypatch):
     cli.meta(["--matter", str(m.root), "split", m.merged, "--pages", "6-7"])
     rows = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
     assert [r["page"] for r in rows] == [6, 7]
+
+
+def test_view_splits(api, capsys, monkeypatch):
+    from adhocdocs import cli, view
+    m = api
+    cli.meta(["--matter", str(m.root), "split", m.merged, "--record", "letters"])
+    sent = []
+    monkeypatch.setattr(view, "command", lambda m, c: sent.append(c) or {"pane": "p1"})
+    capsys.readouterr()
+    cli.view(["--matter", str(m.root), "meta", m.merged, "--splits"])
+    c = sent[-1]
+    assert c["title"] == "scan-batch.pdf: letters split"
+    assert c["sequence"][2].startswith(f"doc:{m.merged}") and c["sequence"][2].endswith("#page=4-5")
+    page = __import__("base64").b64decode(c["files"]["index.html"]).decode()
+    assert "PURCHASE ORDER PO-BMS-26-0112" in page and "pp. 4–5" in page and "letters (7)" in page
+    with pytest.raises(SystemExit):
+        cli.view(["--matter", str(m.root), "meta", m.merged, "--splits", "exhibits"])
+    assert "no split named 'exhibits'; its splits: letters" in capsys.readouterr().err

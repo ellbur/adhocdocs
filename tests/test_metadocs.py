@@ -350,3 +350,50 @@ def test_a_cited_bundle_that_changed_is_re_anchored(m, tmp_path):
     assert r["status"] == "re-anchored" and "1 more document" in r["error"]
     assert pages.update_refs(m, page)[0]["new"]["docs"] == [msgs[0], msgs[1]]
     assert literate.check(m, page.read_text(encoding="utf-8"))[0]["status"] == "exact"
+
+
+# -- in the viewer: a metadocument's parts in a list pane -------------------------------------------
+
+def test_parts_as_lists(m):
+    from adhocdocs import lists
+    msgs, t = past_due(m)
+    header, items = metadocs.list_of(m, "thread:" + msgs[-1])
+    assert header["query"] == "thread:" + msgs[0] and header["title"].endswith("(thread)")
+    assert [it["loc"] for it in items] == [x["loc"] for x in t["messages"]]                 # reply order
+    assert items[0]["children"][0]["fields"]["part"] == "copy"                               # its copy under it
+    assert items[1]["fields"]["part"].lstrip("\u00a0").startswith("↳")                              # indented by depth
+
+    pod = named(m, "pod-TCF-889104.pdf")
+    _, items = metadocs.list_of(m, "family:" + pod)
+    assert items[1]["loc"] == "doc:" + pod and not items[0]["fields"]["part"].startswith("\u00a0") and items[1]["fields"]["part"].startswith("\u00a0")
+
+    _, items = metadocs.list_of(m, "new:" + msgs[-1])
+    assert all("char" in lists.locators.parse(it["loc"])["select"] for it in items)
+
+    v1 = named(m, "memo-collection-bellwether-2026-03-16.pdf")
+    write(m, "claude", {"op": "define-bundle", "name": "Memo pages", "parts": [{"doc": v1, "select": {"page": 1}}, {"doc": pod}]})
+    header, items = metadocs.list_of(m, "bundle:Memo pages")
+    assert [it["fields"]["part"] for it in items] == ["1. p. 1 of memo-collection-bellwether-2026-03-16.pdf",
+                                                       "2. pod-TCF-889104.pdf"]
+    header, items = metadocs.around_list(m, pod)
+    groups = list(dict.fromkeys(it["group"] for it in items))
+    assert any(g.startswith("family:") for g in groups) and any(g.startswith("bundle: Memo pages") for g in groups)
+
+
+def test_view_meta_command(m, monkeypatch, capsys, tmp_path):
+    from adhocdocs import cli, view
+    sent = []
+    monkeypatch.setattr(view, "command", lambda m, c: sent.append(c) or {"pane": "p1"})
+    msgs, t = past_due(m)
+    capsys.readouterr()
+    cli.view(["--matter", str(m.root), "meta", "thread:" + msgs[1], "--list", str(tmp_path / "t.list.jsonl")])
+    c = sent[-1]
+    assert c["kind"] == "list" and c["preview_new"] and c["sequence"][0] == t["messages"][0]["loc"]
+    assert len(c["sequence"]) == len(metadocs.Units(m).docs("thread:" + msgs[0]))           # copies are rows too
+    r = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert r["meta"]["items"] == len(t["messages"]) and (tmp_path / "t.list.jsonl").exists()
+    cli.view(["--matter", str(m.root), "meta", msgs[1], "--of"])
+    assert sent[-1]["title"].startswith("Around ")
+    with pytest.raises(SystemExit):
+        cli.view(["--matter", str(m.root), "meta", msgs[1]])
+    assert "is a document" in capsys.readouterr().err
