@@ -2458,6 +2458,12 @@ def view(argv=None):
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     _graph_opts(s)
     where(s)
+    s = sub.add_parser("trace", help="draw a fact's trace (analyze trace --list) as a time DAG: events joined by "
+                                     "how each came from the last, unrelated strands apart (TRACE.md)")
+    s.add_argument("file", help="a list file written by analyze trace --list")
+    s.add_argument("--title")
+    s.add_argument("--pane", help="replace this pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     s = sub.add_parser("facet", help="show the user one issue (a facet: ann --help), dimming what isn't filed under it")
     s.add_argument("facet", nargs="?", help="omit, or --clear, for every issue")
     s.add_argument("--clear", action="store_true")
@@ -2531,6 +2537,15 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence,
              "title": header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "trace":
+        from . import trace as tracemod
+        header, _ = lists.read(a.file)
+        result, _ = tracemod.again(m, header)
+        title = a.title or header.get("title") or "Trace"
+        files, sequence, summary = tracemod.dag_html(m, result, title)
+        c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
+        shown = summary
     elif a.cmd == "meta":
         header, items = meta_list(m, a.ref, a.of, a.splits)
         if a.list_file:
@@ -2607,6 +2622,8 @@ def view(argv=None):
             result["timeline"]["no_evidence"] = links_summary["no_evidence"]     # not shown: nothing to point at
     if a.cmd == "graph":
         result["graph"] = summary
+    if a.cmd == "trace":
+        result["trace"] = shown
     if a.cmd == "meta":
         result["meta"] = shown
     out(result)
@@ -3127,6 +3144,20 @@ def analyze(argv=None):
     s.add_argument("--html", help="also write static HTML for a viewer pane (view pane --new FILE)")
     s = sub.add_parser("dates", help="a document's own date (and where it came from) and the dates in its text, resolved")
     s.add_argument("doc")
+    s = sub.add_parser("trace", help="trace a fact: where a passage (or what a query finds) appears, how it got "
+                                     "from one place to the next, and who had it when (TRACE.md)")
+    s.add_argument("seed", nargs="?", help="a passage: a locator with a char range (or msg=)")
+    s.add_argument("--text", help="the passage's text, instead of a locator")
+    s.add_argument("--query", help="a keyword query describing the fact (search's query language): "
+                                   "its passages join the trace, so it follows the fact when it is reworded")
+    s.add_argument("--include", action="append", default=[], metavar="LOC",
+                   help="a passage judged to say the same thing (repeatable)")
+    s.add_argument("--exclude", action="append", default=[], metavar="LOC",
+                   help="a passage or document that doesn't belong (repeatable)")
+    s.add_argument("--paraphrases", type=int, default=10, help="semantic candidates to offer for judging (0: none)")
+    s.add_argument("--list", dest="list_file", help="also write a list file of the appearances, in date order")
+    s.add_argument("--again", metavar="LIST", help="trace again what a list file written by --list traced, "
+                                                   "with any --include/--exclude added")
     s = sub.add_parser("around", help="what is near a date: documents, dated events, chronology entries")
     s.add_argument("date", help="YYYY-MM-DD")
     s.add_argument("--days", type=int, default=7, help="how far either side (default 7)")
@@ -3191,6 +3222,28 @@ def analyze(argv=None):
     elif a.cmd == "around":
         from . import dates
         out(dates.around(m, a.date, a.days))
+    elif a.cmd == "trace":
+        from . import trace
+        seed, text, query = a.seed, a.text, a.query
+        include, exclude = list(a.include), list(a.exclude)
+        if a.again:
+            head, _ = lists.read(a.again)
+            if seed or text or query:
+                raise ValueError("--again traces what the list traced: add --include or --exclude, not a new seed")
+            result, terms = trace.again(m, head, include, exclude, a.paraphrases)
+            query, include, exclude = terms["query"], terms["include"], terms["exclude"]
+            a.list_file = a.list_file or a.again
+        else:
+            if seed and not seed.lstrip().startswith(("{", "tr:")):
+                seed = "doc:" + seed.removeprefix("doc:")
+            s0 = trace.seed_of(m, seed, text) if (seed or text) else None
+            result = trace.trace(m, s0, query=query, include=include, exclude=exclude, paraphrases=a.paraphrases)
+        if a.list_file:
+            head, items = trace.to_list(result, query=query, include=include, exclude=exclude)
+            lists.write(a.list_file, head, items)
+            result["written"] = a.list_file
+            result["next"] = f"view list {a.list_file}"
+        out(result)
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))
         out(header)

@@ -137,6 +137,11 @@ details).
 - **Near-duplicate and version detection** (MinHash, with similarity and
   containment).
 - **A redline** of two documents as locators, or as HTML for a viewer pane.
+- **Tracing a fact** (`analyze trace`, [TRACE.md](TRACE.md)): where a
+  passage, or what a query describes, appears; the route each appearance
+  came by (quoted, copied, attached, kept from a draft, already known to
+  whoever wrote it); each person's first exposure; and the appearances
+  nothing explains.
 - **A cast of characters** from email headers and from names in document
   text. Addresses whose display names fold to the same name become one
   person. Names in text ("T. Kettering", "Mr. Kettering", "Tom Kettering")

@@ -546,3 +546,9 @@ ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .ann .bundle-acts { display: block; color: var(--muted, #888); }
 .split-h { font-size: 11px; color: var(--muted); margin: 6px 0 2px; }
 .split-h a { color: var(--accent); cursor: pointer; }
+.adhoc-trace-strand { fill: var(--muted); font-size: 11.5px; font-weight: 600; }
+.adhoc-trace-rule { stroke: var(--line); stroke-dasharray: 2 4; }
+.adhoc-trace-gap rect { fill: none; stroke: var(--bad); stroke-dasharray: 5 3; }
+.adhoc-trace-gap .adhoc-graph-name { fill: var(--bad); }
+.adhoc-graph-node.adhoc-trace-gapped rect { stroke: var(--bad); }
+.adhoc-graph-edge.kind-gap { stroke: var(--bad); }
