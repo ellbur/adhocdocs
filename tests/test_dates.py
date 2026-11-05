@@ -197,3 +197,46 @@ def test_event_entities_and_around(m):
     assert [c["event"] for c in got["chronology"]] == ["Ames writes to Voss"]
     assert len(got["documents"]) == 1                                  # the email; its attachment goes with it
     assert dates.around(m, "2026-04-10", 3)["events"] == []
+
+
+# -- ambiguous numeric dates: day first or month first, from the evidence -------------------------
+
+def test_ambiguous_dates_follow_the_text():
+    d = dates.detect("Shipped 25/03/2026, invoiced 03/04/2026.")[1]
+    assert (d["date"], d["alt"], d["read"]) == ("2026-04-03", "2026-03-04", "day first")
+    assert d["basis"] == "another date in the text can only be read day first"
+    d = dates.detect("Shipped 03/25/2026 and 03/26/2026, invoiced 03/04/2026.")[2]
+    assert (d["date"], d["read"]) == ("2026-03-04", "month first") and d["basis"].startswith("2 other dates")
+    d, = dates.detect("Invoiced 03/04/2026.")
+    assert d["date"] == "2026-03-04" and "read" not in d                       # no evidence: month first, unexplained
+    assert dates.detect("9.3.2026, then 3/4/2026")[1]["date"] == "2026-04-03"  # dots are day first: so is the rest
+    assert "order" not in dates.detect("On 3/3/2026")[0]                       # the same either way: no evidence
+
+
+def test_ambiguous_dates_follow_the_custodian(tmp_path):
+    """A text with nothing to settle it is read as its custodian's other texts write dates."""
+    m = Matter.create(tmp_path / "m")
+    add = lambda cust, name, text: ingest_bytes(m, text.encode(), name, {"custodian": f"cust:{cust}",
+                                                                         "source": {"collection": "c", "path": name}})
+    add("uk", "log.txt", "Received 14/02/2026, 21/02/2026 and 28/02/2026; refused 13/03/2026.")
+    add("uk", "note.txt", "Invoice paid 03/04/2026.")
+    add("us", "note-us.txt", "Invoice paid 03/04/2026 per AP.")
+    m = Matter(m.root)
+    ix = open_index(m, "dates")
+    ix.update()
+    texts = {m.objects.get_object(m.state.metadata[d])["name"]: m.state.primary_layer(m.state.documents[d]).text
+             for d in m.state.live_documents()}
+    uk, = ix.mentions(texts["note.txt"])
+    assert (uk["date"], uk["read"]) == ("2026-04-03", "day first") and uk["basis"].startswith("uk's other documents have 4 dates")
+    sidecar = json.loads(ix._sidecar(texts["note.txt"]).read_text())["dates"][0]
+    assert sidecar["date"] == "2026-04-03"                                     # what the viewer reads
+    us, = ix.mentions(texts["note-us.txt"])
+    assert us["date"] == "2026-03-04" and "read" not in us                     # its custodian has no evidence
+    # the evidence goes: the reading goes back
+    log = next(d for d in m.state.live_documents() if m.objects.get_object(m.state.metadata[d])["name"] == "log.txt")
+    m.logs["store"].append(op="withdraw", doc=log, reason="test")
+    ix = open_index(Matter(m.root), "dates")
+    ix.update()
+    ix.learn_orders()
+    uk, = ix.mentions(texts["note.txt"])
+    assert uk["date"] == "2026-03-04" and "read" not in uk

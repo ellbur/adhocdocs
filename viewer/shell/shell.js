@@ -2076,7 +2076,8 @@ class DocumentPane {
     const x = this.ents.dates.find((d) => d.start <= c[0] && c[1] <= d.end);
     if (!x) return null;
     return { form: x.form.replace(/\s+/g, " "), date: x.resolved, kind: x.kind, ...(x.until ? { until: x.until } : {}),
-             ...(x.ambiguous ? { ambiguous: true, alt: x.alt } : {}), ...(x.header ? { quoted_from: x.header.who } : {}) };
+             ...(x.ambiguous ? { ambiguous: true, alt: x.alt, read: x.read || "month first", ...(x.basis ? { basis: x.basis } : {}) } : {}),
+             ...(x.header ? { quoted_from: x.header.who } : {}) };
   }
   selectionEntity() {
     const x = this.selectionMention();
@@ -3139,7 +3140,9 @@ const dateCard = {
       const read = x.kind === "relative" || x.kind === "noyear";
       if (read) lines.push(el("div", { class: "ec-why" }, `“${x.form.replace(/\s+/g, " ")}”, counted from the document's date`));
       if (x.rel?.bare === "near") lines.push(el("div", { class: "ec-why" }, "Read as the nearer one; the text doesn't say whether it's before or after"));
-      if (x.ambiguous) lines.push(el("div", { class: "ec-why" }, `Or ${fmtDay(x.alt, false)}, if the day is written first`));
+      // an ambiguous numeric date: read day first or month first, why, and the other reading
+      if (x.ambiguous) lines.push(el("div", { class: "ec-why" },
+        `Read ${x.read || "month first"}${x.basis ? `: ${x.basis}` : ""}. Or ${fmtDay(x.alt, false)}, if the ${(x.read || "month first") === "day first" ? "month" : "day"} is written first`));
     }
     card.el.replaceChildren(el("div", { class: "ec-entity dc" }, head, ...lines, el("div", { class: "ec-empty" }, "…")));
     card.place(at);

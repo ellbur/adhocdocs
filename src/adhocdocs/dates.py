@@ -38,8 +38,12 @@ day, written like ``date`` (``--04-02`` without a year). "This week",
 "last week" and "next week" have ``precision`` ``week``; their date is the
 Monday and their ``until`` the Sunday (:func:`resolve_until`).
 
-A numeric date with both parts 12 or under (``3/4/2026``) is read month
-first, with ``ambiguous`` and the other reading in ``alt``. A date in a
+A numeric date with both parts 12 or under (``3/4/2026``) is
+``ambiguous``, with the other reading in ``alt``. It is read the way the
+text's other numeric dates are written (``order`` on each: 25/3/2026 is
+day first, 3/25/2026 month first), else the way its custodian's other
+texts write them (the dates index learns that), else month first; ``read``
+and ``basis`` say which and why. A date in a
 quoted email's header ("On Mar 9, 2026, R. Voss wrote:", "Sent: …") has
 ``header`` with the sender as written, so the viewer can find that email.
 
@@ -51,7 +55,7 @@ import calendar
 import re
 from datetime import date, timedelta
 
-VERSION = 2
+VERSION = 3
 
 MONTHS = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
 MONTHS.update({m.lower(): i for i, m in enumerate(calendar.month_abbr) if m})
@@ -197,6 +201,8 @@ def detect(text: str) -> list[dict]:
                 if m["sep"] == "." and len(m["year"]) == 2:
                     continue                    # 1.2.26 is more often a section number than a date
                 us, eu = _valid(y, a, b), _valid(y, b, a)
+                # evidence for how the text writes dates: only one reading works, or dots (9.3.2026: day first)
+                order = "month first" if us and not eu else "day first" if (eu and not us) or (m["sep"] == "." and eu) else None
                 if m["sep"] == "." and eu:      # 9.3.2026 is day first
                     us, eu = eu, None
                 d = us or eu
@@ -205,6 +211,8 @@ def detect(text: str) -> list[dict]:
                 out.update(kind="absolute", date=d.isoformat(), precision="day")
                 if us and eu and us != eu:
                     out.update(ambiguous=True, alt=eu.isoformat())
+                elif order:
+                    out["order"] = order                    # 3/25/2026, 25/3/2026: evidence for the rest
             elif kind == "month":
                 out.update(kind="month", date=f"{int(m['year']):04d}-{_month(m['mon']):02d}", precision="month")
             elif kind == "noyear-numeric":
@@ -235,7 +243,44 @@ def detect(text: str) -> list[dict]:
             found.append(out)
     found.sort(key=lambda d: d["start"])
     _mark_headers(text, found)
+    first, n = evidence(found)
+    if first:
+        read_ambiguous(found, first, ("another date in the text" if n == 1 else f"{n} other dates in the text")
+                       + f" can only be read {first}")
     return found
+
+
+def evidence(found: list[dict]) -> tuple[str | None, int]:
+    """Which way the unambiguous numeric dates in ``found`` are written
+    (day first or month first, by a clear majority) and how many there are."""
+    day = sum(1 for d in found if d.get("order") == "day first" and not d.get("read"))
+    month = sum(1 for d in found if d.get("order") == "month first" and not d.get("read"))
+    if day > month:
+        return "day first", day
+    if month > day:
+        return "month first", month
+    return None, 0
+
+
+def read_ambiguous(found: list[dict], order: str | None, basis: str | None) -> bool:
+    """Read the ambiguous numeric dates in ``found`` day first or month first
+    (None: the default, month first), saying why in ``read`` and ``basis``,
+    with the other reading kept in ``alt``. True if any changed."""
+    changed = False
+    for d in found:
+        if not d.get("ambiguous"):
+            continue
+        now = d.get("read", "month first")
+        want = order or "month first"
+        if now != want:
+            d["date"], d["alt"] = d["alt"], d["date"]
+            changed = True
+        if order:
+            d["read"], d["basis"] = order, basis
+        else:
+            d.pop("read", None)
+            d.pop("basis", None)
+    return changed
 
 
 def _mark_headers(text: str, found: list[dict]):
@@ -401,7 +446,7 @@ def doc_mentions(m, doc: str) -> dict:
             found.append({"loc": f"doc:{doc}@{layer.id}#char={x['start']},{x['end']}", "form": x["form"], "kind": x["kind"],
                           "date": r, **({"until": until} if until else {}),
                           **({"precision": x["precision"]} if x.get("precision") not in (None, "day") else {}),
-                          **{k: x[k] for k in ("ambiguous", "alt", "header") if k in x}})
+                          **{k: x[k] for k in ("ambiguous", "alt", "read", "basis", "header") if k in x}})
     return {"doc": doc, "dated": dd, "mentions": found}
 
 

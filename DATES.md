@@ -111,8 +111,19 @@ small file. The rules, with examples, are in `dates.py`'s docstring:
 
 Some rules are about mistakes the user can't see:
 
-- **Ambiguous numeric dates.** A date like 3/4/2026 is read month first,
-  and the card gives the other reading.
+- **Ambiguous numeric dates.** A date like 3/4/2026 could be either. It is
+  read the way the evidence says, in this order:
+  - the same text's other numeric dates: 25/3/2026 can only be day first,
+    3/25/2026 only month first, and 9.3.2026 is day first;
+  - failing that, its custodian's other texts, when they lean clearly one
+    way (at least three such dates, three times as many as the other way).
+    The dates index works this out after each update, so a reading follows
+    the evidence and goes back if the evidence goes;
+  - failing both, month first.
+
+  The card says which reading it took and why ("Read day first: 4 other
+  dates in the text can only be read day first"), and gives the other
+  reading.
 - **Placed dates are labeled.** The card says when a date was counted from
   the document's date, so a wrong anchor shows.
 - **Metadata dates are named.** The strip names the source of a metadata
@@ -144,7 +155,7 @@ and [`tests/date_cases.json`](tests/date_cases.json) keeps them in step.
   recorded at ingestion, so they can't be shown.
 - A range's card is about its first day: what's dated near the start,
   not across the whole range.
-- The day-first or month-first reading of ambiguous dates isn't learned
-  from the rest of the corpus.
+- Learning the reading of ambiguous dates from a matter as a whole, or
+  from a sender, rather than the text and its custodian.
 - Documents ingested before `date_source` existed show "Dated" with no
   source, until they are ingested again.
