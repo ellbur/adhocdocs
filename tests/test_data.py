@@ -430,3 +430,63 @@ def test_columns_by_header(tmp_path):
     loc = locators.parse(f"doc:{pay}#col=Amount%20due&row=2-3")
     assert loc["select"] == {"col": "Amount due", "row": [2, 3]} and locators.parse(locators.format(loc)) == loc
     assert locators.expand(m, f"doc:{pay}#col=Amount&row=2")["select"] == {"cells": "C2"}
+
+
+# -- raw schema for spreadsheets and CSV -------------------------------------------------------------
+
+def test_cell_types():
+    t = structured.cell_type
+    assert [t(x) for x in ("12", "1,200", "-3.5", "$48,612.50", "(1,044.50) USD", "12.5%")] == \
+        ["integer", "integer", "decimal", "money", "money", "percent"]
+    assert [t(x) for x in ("2026-03-09", "3/9/2026", "Mar 9, 2026", "2026-03-09 10:58", "09:16", "yes", "Dock 4", "")] == \
+        ["date", "date", "date", "datetime", "time", "boolean", "text", "empty"]
+
+
+def test_raw_schema_of_spreadsheets(tmp_path, capsys):
+    import openpyxl
+    from adhocdocs import cli
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Log"
+    ws.append(["date", "dock", "amount", "status"])
+    ws.append(["2026-03-09", 4, "$1,044.50", "RECEIVED"])
+    ws.append(["2026-03-10", 2, "$12.00", "REFUSED"])
+    ws.append(["2026-03-11", 4, None, "RECEIVED"])
+    ws2 = wb.create_sheet("Aging")
+    ws2.append(["Aging report, March 2026"])
+    ws2.append(["Invoice", "Days", "Days"])
+    ws2.append(["INV-2026/0347", 2, 32])
+    xlsx = tmp_path / "files" / "log.xlsx"
+    xlsx.parent.mkdir()
+    wb.save(xlsx)
+    (tmp_path / "files" / "plain.csv").write_text("1,2,3\n4,5,6\n")
+    m = Matter.create(tmp_path / "m")
+    ingest_paths(m, [xlsx, tmp_path / "files" / "plain.csv"], "a", "c")
+    m = Matter(m.root)
+    doc = next(d for d in m.state.live_documents() if m.objects.get_object(m.state.metadata[d])["name"] == "log.xlsx")
+    capsys.readouterr()
+    cli.raw(["--matter", str(m.root), "schema", doc])
+    log, aging = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert log["sheet"] == "Log" and log["header_row"] == 1 and log["rows"] == 4
+    cols = {c["header"]: c for c in log["columns"]}
+    assert cols["date"]["types"] == {"date": 3} and cols["dock"]["types"] == {"integer": 3}
+    assert cols["amount"]["filled"] == 2 and cols["amount"]["types"] == {"money": 2}
+    assert cols["status"]["distinct"] == 2
+    ex = cols["amount"]["examples"][0]
+    assert ex["value"] == "$1,044.50" and ex["loc"].endswith("#col=amount&row=2")
+    assert locators.resolve(m, ex["loc"])["text"] == "$1,044.50"               # the locator names the cell
+    # the second sheet: a title row above the header, and a header that repeats (col= can't name those)
+    assert aging["header_row"] == 1                                              # found: the first text row
+    cli.raw(["--matter", str(m.root), "schema", doc, "--header", "2"])
+    aging = [json.loads(x) for x in capsys.readouterr().out.splitlines()][1]
+    assert aging["header_row"] == 2 and [c["header"] for c in aging["columns"]] == ["Invoice", "Days", "Days"]
+    inv, days = aging["columns"][0], aging["columns"][1]
+    assert inv["examples"][0]["loc"].endswith("#sheet=Aging&col=Invoice&row=3&header=2")
+    assert locators.resolve(m, inv["examples"][0]["loc"])["text"] == "INV-2026/0347"
+    assert days["header_repeats"] and days["examples"][0]["loc"].endswith("#sheet=Aging&cells=B3")
+    # a CSV of numbers only has no header: its columns are known by their letters
+    csv_doc = next(d for d in m.state.live_documents() if d != doc)
+    cli.raw(["--matter", str(m.root), "schema", csv_doc])
+    plain = json.loads(capsys.readouterr().out)
+    assert plain["header_row"] is None and [c["col"] for c in plain["columns"]] == ["A", "B", "C"]
+    assert plain["columns"][0]["examples"][0]["loc"].endswith("#cells=A1")

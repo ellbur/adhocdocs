@@ -67,6 +67,16 @@ standard even when their schema isn't, so:
   parent objects have it, and examples, each with its `ptr=` locator.
   XML gets element and attribute paths with counts and examples, each
   with its `xpath=` locator.
+  Spreadsheets and CSV get each sheet's columns:
+  - the header (the first row that is mostly text, or `--header N` when a
+    title sits above it);
+  - what the cells below hold and how often: integer, decimal, money,
+    percent, date, datetime, time, boolean or text, judged from the cell's
+    text;
+  - how many cells are filled and how many distinct values there are;
+  - examples, each with a `col=` locator that names its column by header
+    (`#col=amount&row=7`). Where the header repeats or there is none, the
+    locator names the cell (`#cells=B3`).
 - **`xpath=` locators** do for XML what `ptr=` does for JSON, with a small
   subset of XPath: `/orders/order[2]/sku` (steps of names, `[n]` from 1),
   `order[@id='7']` (the child with that attribute value), `*`, and a last
@@ -197,8 +207,6 @@ Read as records, the largest payment went to :interp{#top-party}.
 ## Not built yet
 
 - Semantic search of interpretations.
-- `raw schema` for spreadsheets and CSV (each column's header, types and
-  examples, with `col=` locators).
 - Interpretations travelling with published pages: publish the
   interpretation's folder alongside the page (`work publish`) for now.
 - Built-in readers for common structured binaries (SQLite, Parquet, EVTX).

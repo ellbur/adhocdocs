@@ -796,9 +796,11 @@ def raw(argv=None):
     s.add_argument("--limit", type=int, default=2000)
     s.add_argument("--start", type=lambda x: int(x, 0), default=0)
     s.add_argument("--length", type=lambda x: int(x, 0), default=None, help="default: to the end (at most 64 MB)")
-    s = sub.add_parser("schema")
+    s = sub.add_parser("schema", help="what structured data holds: JSON, JSON Lines and XML path by path; "
+                                      "spreadsheets and CSV column by column")
     s.add_argument("doc")
     s.add_argument("--paths", type=int, default=500, help="most paths to report")
+    s.add_argument("--header", type=int, help="spreadsheets: the header row (default: found)")
     s = sub.add_parser("path")
     s.add_argument("doc")
     matter_everywhere(sub)
@@ -844,6 +846,22 @@ def raw(argv=None):
     elif a.cmd == "schema":
         doc = doc_of(a.doc)
         content = rawmod.content_of(m, doc)
+        layer = m.state.primary_layer(content)
+        segs = m.objects.get_jsonl(m.objects.get_object(layer.id).get("segments")) if layer else []
+        if any(g.get("kind") == "sheet" for g in segs):
+            sheets = structured.table_schema(m.objects.get_text(layer.text), segs, a.header)
+            for k, sh in enumerate(sheets):
+                for col in sh["columns"]:
+                    for ex in col["examples"]:
+                        sel = {"sheet": sh["sheet"]} if k and sh["sheet"] else {}
+                        if col["header"] and not col.get("header_repeats"):
+                            sel.update(col=col["header"], row=ex.pop("row"),
+                                       **({"header": sh["header_row"]} if sh["header_row"] != 1 else {}))
+                        else:
+                            sel["cells"] = f"{col['col']}{ex.pop('row')}"
+                        ex["loc"] = locators.format({"doc": doc, "select": sel})
+                out({"doc": doc, "format": "spreadsheet", **sh})
+            return
         kind = locators.pointer_kind(m, doc)
         layer = m.state.primary_layer(content)
         if kind is None and layer is not None:
@@ -857,7 +875,8 @@ def raw(argv=None):
             text_ = m.objects.get_text(layer.text)
             res, key = structured.schema(structured.loads(text_, kind), kind == "ndjson", a.paths), "ptr"
         else:
-            raise ValueError("raw schema is for JSON, JSON Lines and XML; for other formats see raw info, raw strings, raw hex")
+            raise ValueError("raw schema is for JSON, JSON Lines, XML, spreadsheets and CSV; "
+                             "for other formats see raw info, raw strings, raw hex")
         for row in res["paths"]:
             for ex in row.get("examples", []):
                 ex["loc"] = locators.format({"doc": doc, "select": {key: ex.pop(key)}})

@@ -452,3 +452,81 @@ def xml_schema(data: bytes, limit_paths: int = 500) -> dict:
             el.clear()
     return {"shape": "xml", "paths": [{k: v for k, v in p.items() if v != []} for p in paths.values()],
             **({"truncated": True} if len(paths) >= limit_paths else {})}
+
+
+# -- spreadsheets and CSV: what each column holds ----------------------------------------------------
+
+_CELL_TYPES = [
+    ("integer", re.compile(r"[-+]?\d{1,3}(,\d{3})+|[-+]?\d+")),
+    ("money", re.compile(r"[-+(]?\s*[$€£¥]\s*[-+(]?\d[\d,]*(\.\d+)?\)?|[-+(]?\d[\d,]*\.\d{2}\)?\s*(USD|EUR|GBP)", re.I)),
+    ("decimal", re.compile(r"[-+]?(\d{1,3}(,\d{3})+|\d*)\.\d+([eE][-+]?\d+)?")),
+    ("percent", re.compile(r"[-+]?\d+(\.\d+)?\s*%")),
+    ("datetime", re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?([zZ]|[-+]\d{2}:?\d{2})?")),
+    ("date", re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4}"
+                        r"|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}|\d{1,2} [A-Za-z]{3,9} \d{4}")),
+    ("time", re.compile(r"\d{1,2}:\d{2}(:\d{2})?\s*([AaPp][Mm])?")),
+    ("boolean", re.compile(r"true|false|yes|no|y|n", re.I)),
+]
+
+
+def cell_type(v: str) -> str:
+    """What a cell's text looks like: integer, decimal, money, percent, date,
+    datetime, time, boolean, text, or empty. Only the text: a number Excel
+    shows as a date was already turned into one by the extractor."""
+    v = v.strip()
+    if not v:
+        return "empty"
+    for name, rx in _CELL_TYPES:
+        if rx.fullmatch(v):
+            return name
+    return "text"
+
+
+def table_schema(text: str, segments: list[dict], header: int | None = None, examples: int = 3,
+                 limit_cols: int = 200) -> list[dict]:
+    """Each sheet's columns: header, the kinds of values below it and how
+    often, how many cells are filled, how many distinct values, and examples
+    with their cells. ``header`` is the header row (1-based); by default the
+    first non-empty row, when it is mostly text over rows that aren't; else
+    the columns are known only by their letters. Rows are lines and cells
+    are tab-separated (the spreadsheet and CSV extractors' layout)."""
+    from .extract.simple import col_name
+    sheets = [s for s in segments if s.get("kind") == "sheet"] or [{"start": 0, "end": len(text), "name": None}]
+    out = []
+    for sh in sheets:
+        lines = text[sh["start"]:sh["end"]].split("\n")
+        rows = [ln.split("\t") for ln in lines]
+        filled = [r for r, cells in enumerate(rows) if any(c.strip() for c in cells)]
+        h = header
+        if h is None and filled:
+            first = filled[0]
+            kinds = [cell_type(c) for c in rows[first] if c.strip()]
+            if kinds and sum(k == "text" for k in kinds) >= 0.6 * len(kinds) and len(filled) > 1:
+                h = first + 1
+        heads = [c.strip() for c in rows[h - 1]] if h and h <= len(rows) else []
+        ncols = min(max((len(r) for r in rows), default=0), limit_cols)
+        cols = []
+        for c in range(ncols):
+            name = heads[c] if c < len(heads) else ""
+            types: Counter = Counter()
+            seen, ex, n = set(), [], 0
+            for r in range(h or 0, len(rows)):
+                v = rows[r][c].strip() if c < len(rows[r]) else ""
+                t = cell_type(v)
+                if t == "empty":
+                    continue
+                n += 1
+                types[t] += 1
+                if v not in seen:
+                    seen.add(v)
+                    if len(ex) < examples:
+                        ex.append({"value": _short(v), "row": r + 1})
+            if not n and not name:
+                continue
+            col = {"col": col_name(c), "header": name or None, "types": dict(types.most_common()),
+                   "filled": n, "distinct": len(seen), "examples": ex}
+            if name and heads.count(name) > 1:
+                col["header_repeats"] = True          # col= can't name it: use cells=
+            cols.append(col)
+        out.append({"sheet": sh.get("name"), "rows": len(filled), "header_row": h, "columns": cols})
+    return out
