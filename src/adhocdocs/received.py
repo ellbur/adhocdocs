@@ -179,6 +179,108 @@ def parse_opt(path) -> list[dict]:
     return pages
 
 
+def parse_lfp(path) -> list[dict]:
+    """IPRO: per page, ``{key, path, first}`` like Opticon's, and ``text`` on
+    a document's first page when an ``FT`` line names its text file. Lines
+    are ``IM,KEY,FLAG,OFFSET,@VOLUME;FOLDER;FILE;TYPE``: FLAG ``D`` starts a
+    document and ``C`` an attached one, blank carries on; a multi-page image
+    is named on each of its pages, with its offset."""
+    text, _ = read_text(path)
+    pages, texts = [], {}
+    for line in text.splitlines():
+        f = [x.strip() for x in line.split(",", 4)]
+        if len(f) < 5 or f[0].upper() not in ("IM", "FT"):
+            continue
+        where = f[4].lstrip("@").split(";")
+        parts = [x for x in (where[1:3] if len(where) >= 3 else where[-1:]) if x]
+        file = "/".join(x.replace("\\", "/").strip("/") for x in parts)
+        if f[0].upper() == "FT":
+            texts[f[1]] = file
+            continue
+        pages.append({"key": f[1], "path": file, "first": f[2].upper() in ("D", "C"), "count": ""})
+    for pg in pages:
+        if pg["key"] in texts:
+            pg["text"] = texts[pg["key"]]
+    return pages
+
+
+def parse_edrm(path) -> tuple[dict, list[dict]]:
+    """EDRM XML (1.x): the records as :func:`parse_dat` gives them, and the
+    pages as :func:`parse_opt` does. A document's ``Tag``s are its columns
+    (``#BegDoc`` is ``BegDoc``, so the usual names map); its ``File``s give
+    the native and text paths (and the native's hash), and its images the
+    pages; ``Relationship``s of type attachment set each child's
+    BEGATTACH to its parent's begin number."""
+    import xml.etree.ElementTree as ET
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError as e:
+        raise ValueError(f"{Path(path).name}: not XML ({e})")
+    local = lambda el: el.tag.rsplit("}", 1)[-1]
+    docs = [el for el in tree.iter() if local(el) == "Document"]
+    if not docs:
+        raise ValueError(f"{Path(path).name}: no EDRM <Document> elements")
+    columns, rows, pages, by_id = [], [], [], {}
+
+    def col(name):
+        if name not in columns:
+            columns.append(name)
+        return name
+
+    for d in docs:
+        row = {}
+        for t in (el for el in d.iter() if local(el) == "Tag"):
+            name = (t.get("TagName") or t.get("Name") or "").lstrip("#").strip()
+            if name:
+                row[col(name)] = (t.get("TagValue") or t.get("Value") or t.text or "").strip()
+        doc_id = d.get("DocID") or d.get("DocId") or row.get("DocID") or ""
+        if doc_id and "DocID" not in row:
+            row[col("DocID")] = doc_id
+        begin = row.get("BegDoc") or row.get("BegBates") or row.get("BEGBATES") or doc_id
+        images = []
+        for f in (el for el in d.iter() if local(el) == "File"):
+            kind = (f.get("FileType") or "").lower()
+            for x in (el for el in f.iter() if local(el) in ("ExternalFile", "File") and el is not f):
+                file = "/".join(p_.replace("\\", "/").strip("/") for p_ in (x.get("FilePath") or "", x.get("FileName") or "") if p_)
+                if kind == "native":
+                    row[col("NATIVEPATH")] = file
+                    if x.get("Hash"):
+                        row[col("MD5HASH")] = x.get("Hash")
+                elif kind == "text":
+                    row[col("TEXTPATH")] = file
+                elif kind == "image":
+                    images.append((file, int(x.get("PageCount") or 1)))
+        for k, (file, n) in enumerate(images):
+            for j in range(n if len(images) == 1 else 1):
+                pages.append({"key": begin if not pages or pages[-1].get("_doc") != doc_id else f"{begin}#{len(pages)}",
+                              "path": file, "first": not k and not j, "count": "", "_doc": doc_id})
+        if not row.get("BegDoc") and begin:
+            row[col("BegDoc")] = begin
+        rows.append(row)
+        by_id[doc_id] = row
+    for rel in (el for el in tree.iter() if local(el) == "Relationship"):
+        if (rel.get("Type") or "").lower() not in ("attachment", "family", "parent"):
+            continue
+        parent, child = by_id.get(rel.get("ParentDocId") or rel.get("ParentDocID") or ""), \
+            by_id.get(rel.get("ChildDocId") or rel.get("ChildDocID") or "")
+        if parent is not None and child is not None:
+            child[col("BEGATTACH")] = parent.get("BegDoc", "")
+            parent.setdefault(col("BEGATTACH"), parent.get("BegDoc", ""))
+    for pg in pages:
+        pg.pop("_doc", None)
+    rows = [{c: r.get(c, "") for c in columns} for r in rows]
+    return {"columns": columns, "rows": rows, "dialect": "edrm-xml", "encoding": "utf-8"}, pages
+
+
+def _is_edrm(p: Path) -> bool:
+    try:
+        with open(p, "rb") as f:
+            head = f.read(4096).decode("utf-8", "replace")
+    except OSError:
+        return False
+    return "<Document" in head or "EDRM" in head or "<Batch" in head
+
+
 # -- finding the files a load file names -----------------------------------------------------------
 
 
@@ -213,7 +315,8 @@ class Volume:
 def find_load_files(root: Path) -> tuple[Path | None, Path | None]:
     pick = lambda ext: sorted((p for p in root.rglob("*") if p.is_file() and p.suffix.lower() == ext),
                               key=lambda p: (len(p.parts), str(p)))
-    dats, opts = pick(".dat") or pick(".csv"), pick(".opt")
+    dats = pick(".dat") or [p for p in pick(".xml") if _is_edrm(p)] or pick(".csv")
+    opts = pick(".opt") or pick(".lfp")
     return (dats[0] if dats else None), (opts[0] if opts else None)
 
 
@@ -296,15 +399,19 @@ def read_volume(root, dat=None, opt=None, overrides=None, day_first=False) -> di
     dat = Path(dat) if dat else found_dat
     opt = Path(opt) if opt else found_opt
     if dat is None:
-        raise ValueError(f"no .dat load file in {root} (name one with --dat)")
+        raise ValueError(f"no .dat load file (or EDRM XML) in {root} (name one with --dat)")
     vol = Volume(root)
-    d = parse_dat(dat)
+    xml_pages = None
+    if dat.suffix.lower() == ".xml":
+        d, xml_pages = parse_edrm(dat)        # records and pages in one file
+    else:
+        d = parse_dat(dat)
     cols = map_columns(d["columns"], overrides)
     if "begin" not in cols:
         raise ValueError(f"{dat.name}: no column looks like the begin Bates number (columns: "
                          f"{', '.join(d['columns'])}); name it with --map begin=COLUMN")
     problems = []
-    pages = parse_opt(opt) if opt else []
+    pages = (parse_lfp(opt) if opt.suffix.lower() == ".lfp" else parse_opt(opt)) if opt else (xml_pages or [])
     pos = {}
     for i, pg in enumerate(pages):
         pos.setdefault(pg["key"], i)
@@ -339,6 +446,8 @@ def read_volume(root, dat=None, opt=None, overrides=None, day_first=False) -> di
             p = vol.find(g)
             (r["images"].append(p) if p else missing.append(g))
         native, text = get(row, "native"), get(row, "text")
+        if not text and begin in pos:
+            text = pages[pos[begin]].get("text", "")      # an IPRO FT line
         r["native"] = vol.find(native) if native else None
         r["text"] = vol.find(text) if text else None
         if text and not r["text"]:
@@ -372,7 +481,7 @@ def read_volume(root, dat=None, opt=None, overrides=None, day_first=False) -> di
         firsts = {pg["key"] for pg in pages if pg["first"]} if breaks else set()
         orphans = sorted(firsts - set(by_begin))
         if orphans:
-            problems.append({"problem": f"{len(orphans)} documents in {opt.name} that no .dat record begins: "
+            problems.append({"problem": f"{len(orphans)} documents in {(opt or dat).name} that no record begins: "
                                         + ", ".join(orphans[:10]) + ("…" if len(orphans) > 10 else "")})
     return {"root": root, "dat": dat, "opt": opt, "dialect": d["dialect"], "encoding": d["encoding"],
             "columns": cols, "unmapped": [c for c in d["columns"] if c not in cols.values()],

@@ -70,7 +70,73 @@ class DatesIndex(TextIndex):
         n = super().update(progress)
         if n or not (self.dir / "threads.json").exists():
             self.write_threads()
+        if n:
+            self.learn_orders()
         return n
+
+    # how much a custodian's other texts must lean one way before their dates decide a text's
+    LEAN, AT_LEAST = 3, 3
+
+    def learn_orders(self):
+        """For a text with ambiguous numeric dates (3/4/2026) and no date of
+        its own that settles which way it writes them: read them as its
+        custodians' other texts write dates, when those clearly lean one way
+        (at least ``AT_LEAST`` dates, ``LEAN`` times as many as the other
+        way). Done again after every update, so a reading follows the
+        evidence, and undone when the evidence goes."""
+        from collections import defaultdict
+        state = self.m.state
+        cust_of = defaultdict(set)
+        for d in state.live_documents():
+            c = (self.m.objects.get_object(d) or {}).get("custodian")
+            for layer in state.layers.get(state.documents[d], []):
+                if c:
+                    cust_of[layer.text].add(c)
+        own = defaultdict(lambda: [0, 0])          # text -> [day first, month first], from its unambiguous dates
+        ambiguous = set()
+        for th, data in self.db.execute("SELECT text_hash, data FROM mentions WHERE kind='absolute'"):
+            x = json.loads(data)
+            if x.get("order") == "day first":
+                own[th][0] += 1
+            elif x.get("order") == "month first":
+                own[th][1] += 1
+            if x.get("ambiguous"):
+                ambiguous.add(th)
+        by_cust = defaultdict(lambda: [0, 0])
+        for th, (day, month) in own.items():
+            for c in cust_of.get(th, ()):
+                by_cust[c][0] += day
+                by_cust[c][1] += month
+        for th in ambiguous:
+            if own[th][0] != own[th][1]:
+                continue                            # its own dates settle it (dates.detect)
+            day = sum(by_cust[c][0] for c in cust_of.get(th, ())) - own[th][0]
+            month = sum(by_cust[c][1] for c in cust_of.get(th, ())) - own[th][1]
+            order = basis = None
+            for o, a, b in (("day first", day, month), ("month first", month, day)):
+                if a >= self.AT_LEAST and a >= self.LEAN * max(b, 1):
+                    who = ", ".join(sorted(c.removeprefix("cust:") for c in cust_of[th]))
+                    order, basis = o, f"{who}'s other documents have {a} dates that can only be read {o}" + \
+                        (f" (and {b} the other way)" if b else "")
+            found = self.mentions(th)
+            if dates.read_ambiguous(found, order, basis) or any(
+                    x.get("ambiguous") and x.get("basis") != basis for x in found):
+                for x in found:
+                    if x.get("ambiguous"):
+                        x["basis"] = basis
+                        if basis is None:
+                            x.pop("basis", None)
+                self._rewrite(th, found)
+        self.db.commit()
+
+    def _rewrite(self, text_hash, found):
+        self.db.execute("DELETE FROM mentions WHERE text_hash=?", (text_hash,))
+        self.db.executemany("INSERT INTO mentions VALUES(?,?,?,?,?,?)",
+                            [(text_hash, d["start"], d["end"], d["kind"], d.get("date"), json.dumps(d, ensure_ascii=False))
+                             for d in found])
+        tmp = self._sidecar(text_hash).with_suffix(".tmp")
+        tmp.write_text(json.dumps({"text": text_hash, "dates": found}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self._sidecar(text_hash))
 
     def mentions(self, text_hash: str) -> list[dict]:
         return [json.loads(d) for (d,) in self.db.execute(

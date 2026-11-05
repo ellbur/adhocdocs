@@ -29,8 +29,8 @@ ACME_VOL001/
 adhoc ingest-production ACME_VOL001 --party "Acme Corp." [--check]
 ```
 
-It finds the `.dat` and `.opt` in the volume (`--dat`, `--opt` to name
-them), works out which columns are which, and ingests one document per
+It finds the load files in the volume (`--dat`, `--opt` to name them): a
+`.dat` (or EDRM XML) and an `.opt` (or IPRO `.lfp`), works out which columns are which, and ingests one document per
 `.dat` record. `--check` reads everything and reports the column mapping,
 the counts and every problem, and ingests nothing: run it first. The
 producing party (`--party`) is required, since who produced a document
@@ -50,6 +50,20 @@ in is skipped and an interrupted ingest finishes, as with `adhoc ingest`.
 - **`.opt`** (Opticon): one line per page: `Bates,volume,image path,Y at a
   document's first page,,,page count`. A `.dat` record's images are the
   pages from its first Bates number to the next document break.
+- **`.lfp`** (IPRO), used when there is no `.opt`: one `IM` line per page,
+  `IM,Bates,flag,offset,@volume;folder;file;type`. The flag `D` starts a
+  document and `C` an attached one; blank carries on. An `FT` line names a
+  document's text file, used when the `.dat` gives none.
+- **EDRM XML** (version 1.x), used when there is no `.dat`. It holds the
+  records and the pages in one file:
+  - each `<Document>`'s `Tag`s are its columns (`#BegDoc` is `BegDoc`, so
+    the usual names map), and its `DocID` is the control number;
+  - its `File`s give the native (with its hash, checked as an MD5), the
+    text, and the page images, one file per page or one with a page count;
+  - `<Relationship Type="Attachment">` makes the child an attachment of
+    its parent.
+
+  `--dat` names the XML file when the volume has several.
 - **Paths** are relative to the volume, usually with Windows backslashes,
   sometimes with a leading `\` or `.\`, and often in a different case from
   the files on disk (they were made on Windows). They're matched ignoring
@@ -224,4 +238,6 @@ confirm-carried` confirms one ([ANNOTATIONS.md](ANNOTATIONS.md)).
 
 ## Not built yet
 
-- IPRO `.lfp` image load files, EDRM XML, and other formats than these.
+- Other load-file formats: Summation `.dii`, Relativity `.rdo` exports,
+  EDRM XML 2.0's packaging. Their records can be converted to a CSV `.dat`
+  with the paths, for now.

@@ -59,8 +59,8 @@ text is now at the old offsets.
   pages are the exhibit's own, mapped back to the original's).
 - `sheet=…&cells=B2:D10` resolves to the rectangle's text (tab-separated,
   one row per line), and its quote is that text; the viewer selects cells
-  this way. A quoted page reference can't use cells yet: it needs a char
-  range.
+  this way. Pages quote cells as a table, or inline joined by semicolons
+  ([PAGES.md](PAGES.md)).
 - `page=3&xywh=x,y,w,h` (fractions of the page) is a region of a page; it
   resolves to that page, and is checked to lie on it. Pages quote regions
   as images.
