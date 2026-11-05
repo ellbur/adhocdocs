@@ -127,3 +127,49 @@ def test_seed_from_a_locator_and_the_list(m, tmp_path):
     lists.write(path, head, items)
     h2, i2 = lists.read(path)
     assert h2["trace"]["query"] == PALLET and len(i2) == len(items)
+
+
+# -- the time DAG ------------------------------------------------------------------------------
+
+def test_the_time_dag_keeps_unrelated_strands_apart(m):
+    boiler = named(m, "PO-BMS-26-0112.pdf") + named(m, "master-supply-agreement-2025-11-03.docx")
+    r = trace.trace(m, trace.seed_of(m, text=KETTERING), query=PALLET, exclude=boiler, paraphrases=0)
+    strands = trace.dag(r)
+    main, *rest = strands
+    # the exhibit list, dated only by the email it names, joins nothing: a strand of its own
+    assert any(s["events"][0]["appearances"][0]["name"] == "deposition-exhibits-kettering.csv" for s in rest)
+    events = {e["id"]: e for e in main["events"]}
+    # copies and a document's other passages are one event
+    assert sum(len(e["appearances"]) for s in strands for e in s["events"]) == len(r["appearances"])
+    assert len({e["appearances"][0]["doc"] for e in main["events"]}) == len(main["events"])
+    # every edge runs forward a column at least, and only along a route
+    for e in main["events"]:
+        for x in e["in"]:
+            assert events[x["from"]]["column"] < e["column"]
+    roots = [e for e in main["events"] if not e["in"]]
+    assert [e["appearances"][0]["name"] for e in roots] == ["dock-receiving-log-2026-02.csv"]
+    told = next(e for e in main["events"] if e["appearances"][0]["name"].startswith("RE: Dock 4 check"))
+    assert [x["label"] for x in told["in"]] == ["via Kettering"]
+    files, sequence, summary = trace.dag_html(m, r, "Q-3")
+    import base64
+    page = base64.b64decode(files["index.html"]).decode()
+    assert summary["strands"] == len(strands) and summary["gaps"] == 0
+    assert page.count("data-locator=") == summary["events"] == len(sequence)
+    assert "not the calendar" in page
+
+
+def test_a_gap_is_a_question_mark_in_the_dag(m):
+    r = trace.trace(m, None, query='pallet AND unclaimed AND (march OR "3/4")', paraphrases=0)
+    [gapped] = [e for s in trace.dag(r) for e in s["events"] if e["gap"]]
+    assert gapped["gap"] == "no record of how" and gapped["column"] == 1
+    import base64
+    files, _, summary = trace.dag_html(m, r, "unclaimed")
+    page = base64.b64decode(files["index.html"]).decode()
+    assert summary["gaps"] == 1 and "adhoc-trace-gap" in page and ">?<" in page
+
+
+def test_short_names():
+    assert trace._short("Thomas Kettering") == "Kettering"
+    assert trace._short("Bellwether Accounts Payable") == "Bellwether Accounts Payable"
+    assert trace._short("Tri-County Freight Lines Dispatch") == "Tri-County Freight Lines Dispatch"
+    assert trace._short("ar@harrowgate.example") == "ar@harrowgate.example"

@@ -70,6 +70,7 @@ open source.
 | `document` | a document in page, flow (its presentation), text, grid (spreadsheets) or hex mode (the original's bytes), with mode switches (and layer switches, when there's more than one layer), tag chips, a side panel of highlights, range tags and notes (those carried over from a document a replacement superseded are marked `↪`, with a confirm link: [RECEIVED.md](RECEIVED.md)), family and duplicate links, and a ⋯ menu for downloads and hex mode |
 | `list` | a list file ([LISTS.md](LISTS.md)), rendered by `view list` with a linked preview pane |
 | `timeline` | a list file by date, in lanes, rendered by `view timeline`, linked the same way |
+| `graph` | an SVG diagram, linked the same way: entities and their links (`view graph`, [GRAPH.md](GRAPH.md)), or a fact's trace as a time DAG (`view trace`, [TRACE.md](TRACE.md)) |
 | `custom` | static HTML from Claude, a file or a bundle; literate pages (`page render`) are shown this way |
 | `home` | the overview: what the matter holds and what state it's in (below) |
 | `files` | loose files: what the user handed Claude and what Claude handed back, which aren't discovery documents ([below](#loose-files)) |

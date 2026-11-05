@@ -15,6 +15,7 @@ where it turns up with nothing in the matter to explain how.
 analyze trace DOC#char=… [--query Q] [--include LOC]… [--exclude LOC]… [--list F]
 analyze trace --text "…" …
 analyze trace --again F --exclude LOC      # the same trace, judged further
+view trace F                               # drawn as a time DAG
 ```
 
 ## Describing the fact
@@ -87,6 +88,35 @@ fits).
 with the appearance, role and route. An earlier record dated only by what
 it mentions is given beside it (`maybe_earlier`). An exhibit list naming
 a 3/2 email isn't evidence that its holder knew on 3/2.
+
+## The time DAG
+
+`view trace F` draws a trace as a **time DAG**, not a timeline. A timeline
+puts every event on one line, as if each followed from the one before.
+Most don't: Kettering's note to the carrier and Voss's collection memo
+happened weeks apart in different companies, and neither had anything to
+do with the other. A trace already knows what came from what, so the
+diagram draws only that:
+
+- **An event** is a document with its copies and its other passages: one
+  box, with its date (`≥` when only a lower bound) and who sent it to whom.
+- **An edge** is a route: `quoted`, `attached`, `kept from a draft`, or
+  `via Kettering` (whoever wrote or held the later one had it from the
+  earlier). A fan-out is labeled once.
+- **Columns follow the edges, not the calendar.** An event sits one step
+  after the latest event it came from, so two events in the same column
+  aren't claimed to be at the same time, and an event further right isn't
+  claimed to be later than one it has no path from.
+- **Strands** are the groups of events joined by edges: the subplots.
+  Each is drawn apart, under the names of the people in it, with no order
+  between strands. A record that joins nothing (an exhibit list, undated
+  notes) is a strand of its own, which is itself worth seeing.
+- **A gap** is a dashed `?` leading into the event nothing explains.
+
+It is a pane like `view graph`'s: a click on an event previews its
+passage in the linked document pane, and `]`/`[` step through the events,
+strand by strand. The diagram is made again from the list's header, so it
+follows the latest judgments (`analyze trace --again F --exclude …`).
 
 ## Limits
 

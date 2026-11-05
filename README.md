@@ -325,6 +325,7 @@ uv run analyze groups                   # near-duplicates and versions
 uv run analyze people                   # from email headers and names in the documents
 uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
 uv run analyze trace --query 'pallet AND (q-3 OR quarantine)' --list q3.list.jsonl   # who knew, when, and how
+uv run view trace q3.list.jsonl                 # the trace as a time DAG: what came from what, in strands
 uv run graph path "Raymond Voss" "Rita Ames"   # how two entities connect, with the evidence for each step
 uv run graph export --format mermaid           # the entities and their links, for a diagram
 uv run search '"past due"' --grain new          # one result per thing written, not per email that quotes it

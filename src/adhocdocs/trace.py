@@ -644,3 +644,227 @@ def to_list(result: dict, query=None, include=(), exclude=()) -> tuple[dict, lis
             first[o["doc"]] = row
             items.append(row)
     return head, items
+
+
+def again(m: Matter, head: dict, include=(), exclude=(), paraphrases: int = 0) -> tuple[dict, dict]:
+    """Trace again what a list file's header (``to_list``) says was traced,
+    with more judgments added. (result, the trace's terms)."""
+    t = head.get("trace")
+    if not t:
+        raise TraceError("this list wasn't written by analyze trace --list")
+    terms = {"seed": t.get("seed"), "text": t.get("text"), "query": t.get("query"),
+             "include": list(dict.fromkeys(list(t.get("include") or []) + list(include))),
+             "exclude": list(dict.fromkeys(list(t.get("exclude") or []) + list(exclude)))}
+    seed = seed_of(m, terms["seed"], terms["text"]) if (terms["seed"] or terms["text"]) else None
+    return trace(m, seed, query=terms["query"], include=terms["include"], exclude=terms["exclude"],
+                 paraphrases=paraphrases), terms
+
+
+# -- the time DAG ----------------------------------------------------------------------------
+
+EDGE_WORDS = {"quoted": "quoted", "attached": "attached", "draft": "kept from a draft", "knew": "via someone"}
+
+
+def dag(result: dict) -> list[dict]:
+    """The trace as a time DAG, in **strands**: the appearances joined by
+    their routes, each group of connected ones a strand (a subplot), with
+    no order claimed between strands. An event is a document with its
+    copies and its other passages; an edge is a route from an earlier
+    event; a gap is an event with a route from nowhere (``?``). Columns
+    follow the routes, not the calendar: an event sits one step after the
+    latest event it came from."""
+    apps = result["appearances"]
+    if not apps:
+        return []
+    # events: an appearance and its copies (and a document's other passages) are one
+    event_of: dict[int, int] = {}
+    docs_event: dict[str, int] = {}
+    for o in apps:
+        if o["route"]["kind"] == "copy" and o["route"].get("from") in event_of:
+            event_of[o["n"]] = event_of[o["route"]["from"]]
+        elif o["doc"] in docs_event:
+            event_of[o["n"]] = docs_event[o["doc"]]
+        else:
+            event_of[o["n"]] = o["n"]
+        docs_event.setdefault(o["doc"], event_of[o["n"]])
+    events: dict[int, dict] = {}
+    for o in apps:
+        e = events.setdefault(event_of[o["n"]], {"id": event_of[o["n"]], "appearances": [], "in": [], "gap": None})
+        e["appearances"].append(o)
+    edges = set()
+    for o in apps:
+        to = event_of[o["n"]]
+        r = o["route"]
+        frm = event_of.get(r.get("from")) if r.get("from") else None
+        if frm is not None and frm != to:
+            word = EDGE_WORDS.get(r["kind"], r["kind"])
+            if r["kind"] in ("knew",) or (r["kind"] == "attached" and r.get("person")):
+                who = next((p["name"] for p in o["people"] if p["person"] == r.get("person")), None)
+                word = f"via {_short(who)}" if who else word
+            edges.add((frm, to, word, bool(r.get("lower_bound"))))
+        elif r["kind"] == "unexplained" or r.get("missing"):
+            events[to]["gap"] = "quoted from a message not in the matter" if r.get("missing") else "no record of how"
+    for frm, to, word, weak in sorted(edges):
+        events[to]["in"].append({"from": frm, "label": word, "weak": weak})
+    # strands: connected groups of events
+    parent = {i: i for i in events}
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for frm, to, *_ in edges:
+        a, b = find(frm), find(to)
+        if a != b:
+            parent[max(a, b)] = min(a, b)
+    strands: dict[int, list] = defaultdict(list)
+    for i in sorted(events):
+        strands[find(i)].append(events[i])
+    out = []
+    for root, evs in sorted(strands.items()):
+        col = {}
+        for e in evs:                              # in date order, so sources come first
+            col[e["id"]] = 1 + max((col.get(x["from"], 0) for x in e["in"]), default=-1 if not e["gap"] else 0)
+        for e in evs:
+            e["column"] = col[e["id"]]
+        people = Counter(p["name"] for e in evs for o in e["appearances"] for p in o["people"])
+        out.append({"events": evs, "people": [n for n, _ in people.most_common(4)],
+                    "first": next((o["date"] for e in evs for o in e["appearances"] if o["date"]), None),
+                    "gaps": sum(1 for e in evs if e["gap"])})
+    # strands with the most events first; a single undated or unplaced record last
+    out.sort(key=lambda s: (len(s["events"]) == 1, -len(s["events"]), s["first"] or "9999"))
+    return out
+
+
+ORG_WORDS = {"inc", "llc", "ltd", "co", "corp", "company", "accounts", "payable", "receivable", "reporting",
+             "freight", "lines", "dispatch", "systems", "supply", "services", "group", "bank", "court", "department",
+             "team", "office", "portal", "noreply", "support", "sales", "the"}
+
+
+def _short(name: str | None) -> str:
+    """A surname for an edge or box: "Thomas Kettering" -> "Kettering";
+    an organization's name stays whole."""
+    if not name:
+        return ""
+    words = name.replace(",", " ").split()
+    folded = {_fold(w).strip(".") for w in words}
+    if 2 <= len(words) <= 4 and "@" not in name and not folded & ORG_WORDS and all(w[:1].isupper() for w in words):
+        return words[-1]
+    return name
+
+
+def _event_text(e: dict) -> tuple[str, str]:
+    """An event's box: its name, and a line of when and who."""
+    first = e["appearances"][0]
+    copies = len({o["doc"] for o in e["appearances"]})
+    passages = len(e["appearances"]) - copies + 1
+    roles = defaultdict(list)
+    for o in e["appearances"]:
+        for p in o["people"]:
+            if p["name"] not in roles[p["role"]]:
+                roles[p["role"]].append(p["name"])
+    who_from = [_short(n) for n in roles["wrote"] + roles["sent"]]
+    who_to = [_short(n) for n in roles["received"]]
+    who = ", ".join(dict.fromkeys(who_from))
+    if who_to:
+        who += " → " + ", ".join(dict.fromkeys(who_to[:3])) + (" +%d" % (len(who_to) - 3) if len(who_to) > 3 else "")
+    elif roles["held"] and not who:
+        who = "held by " + ", ".join(_short(n) for n in roles["held"])
+    date = (first["date"] or "undated")[:10]
+    if first["date"] and first["date_basis"] == LOWER_BOUND:
+        date = "≥ " + date
+    extra = [f"{copies} copies"] if copies > 1 else []
+    extra += [f"{passages} passages"] if passages > 1 else []
+    return first["name"], " · ".join([date, *([who] if who else []), *extra])
+
+
+def dag_html(m: Matter, result: dict, title: str) -> tuple[dict, list[str], dict]:
+    """(files, sequence, summary): the time DAG as an SVG diagram for a
+    viewer pane, like ``view graph``'s: a click on an event previews its
+    passage in the linked document pane, and ]/[ step through the events,
+    strand by strand."""
+    import base64
+    import html as html_
+    from .graph import Graph, PAD, _layout, _path, _trim, CHAR_W, SUB_W
+    esc = html_.escape
+    strands = dag(result)
+    out = [f"<h2>{esc(title)}</h2>"]
+    n_events = sum(len(s["events"]) for s in strands)
+    n_gaps = sum(s["gaps"] for s in strands)
+    out.append(f'<p class="adhoc-query">{n_events} events in {len(strands)} strand{"s" * (len(strands) != 1)}'
+               + (f" · {n_gaps} gap{'s' * (n_gaps != 1)} (dashed ?)" if n_gaps else "")
+               + " · columns follow what came from what, not the calendar; strands are unrelated to each other"
+               + " · click an event to see its passage</p>")
+    sequence, body, y0, width = [], [], 0.0, 0.0
+    for k, s in enumerate(strands):
+        g = Graph()
+        col = {}
+        for e in s["events"]:
+            name, sub = _event_text(e)
+            nid = f"e{e['id']}"
+            g.node(nid, type="doc", label=name, kind=sub, date=None)
+            col[nid] = e["column"]
+            if e["gap"]:
+                gid = f"gap{e['id']}"
+                g.node(gid, type="gap", label="?", kind=e["gap"], date=None)
+                col[gid] = e["column"] - 1
+                g.edge(gid, nid, "gap", label="no record" if e["gap"] == "no record of how" else "not collected")
+            for x in e["in"]:
+                g.edge(f"e{x['from']}", nid, "route", label=x["label"], weak=x["weak"])
+        box, routes, w, h = _layout(g, col)
+        head = f"Strand {k + 1}" + (f": {', '.join(s['people'])}" if s["people"] else "")
+        body.append(f'<text class="adhoc-trace-strand" x="{PAD}" y="{y0 + 16:.0f}">{esc(head)}</text>')
+        y0 += 18
+        labels, said = [], set()
+        for e in g.edges:
+            d, (mx, my, _) = _path(g, box, routes[e["id"]])
+            fan = (e["from"], e["label"])           # a fan-out says "via X" once, on its first branch
+            show = fan not in said
+            said.add(fan)
+            cls = "adhoc-graph-edge kind-" + e["kind"] + (" derived" if e.get("weak") or e["kind"] == "gap" else "")
+            body.append(f'<path class="{cls}" transform="translate(0,{y0:.0f})" d="{d}" marker-end="url(#arr)">'
+                        f'<title>{esc(e["label"])}</title></path>')
+            if show:
+                labels.append((mx, my + y0, _trim(e["label"], 26), e["kind"]))
+        for nid, (x, y, bw, bh) in box.items():
+            if nid not in g.nodes:
+                continue
+            n = g.nodes[nid]
+            y += y0
+            if n["type"] == "gap":
+                body.append(f'<g class="adhoc-graph-node adhoc-trace-gap" transform="translate({x:.0f},{y:.0f})">'
+                            f'<title>{esc(n["kind"])}</title><rect width="{bw:.0f}" height="{bh}" rx="15"/>'
+                            f'<text x="8" y="14" class="adhoc-graph-name">?</text>'
+                            f'<text x="8" y="26" class="adhoc-graph-sub">{esc(_trim(n["kind"], int((bw - 14) / SUB_W)))}</text></g>')
+                continue
+            e = next(ev for ev in s["events"] if f"e{ev['id']}" == nid)
+            loc = e["appearances"][0]["loc"]
+            sequence.append(loc)
+            tip = "\n".join([n["label"], n["kind"], *(f"#{o['n']} {o['how']}: {o['route']['text']}" for o in e["appearances"]),
+                             "", e["appearances"][0]["excerpt"]])
+            body.append(f'<g class="adhoc-graph-node type-doc{" adhoc-trace-gapped" if e["gap"] else ""}" '
+                        f'data-locator="{esc(loc)}" transform="translate({x:.0f},{y:.0f})"><title>{esc(tip)}</title>'
+                        f'<rect width="{bw:.0f}" height="{bh}" rx="4"/>'
+                        f'<text x="8" y="14" class="adhoc-graph-name">{esc(_trim(n["label"], int((bw - 14) / CHAR_W)))}</text>'
+                        f'<text x="8" y="26" class="adhoc-graph-sub">{esc(_trim(n["kind"], int((bw - 14) / SUB_W)))}</text></g>')
+        for mx, my, text, kind in labels:
+            lw = 8 + len(text) * 6.1
+            body.append(f'<g class="adhoc-graph-label{" derived" if kind == "gap" else ""}" '
+                        f'transform="translate({mx - lw / 2:.0f},{my - 8:.0f})"><rect width="{lw:.0f}" height="15" rx="3"/>'
+                        f'<text x="4" y="11">{esc(text)}</text></g>')
+            w = max(w, mx + lw / 2 + PAD)
+        width = max(width, w)
+        y0 += h + 10
+        if k < len(strands) - 1:
+            body.append(f'<line class="adhoc-trace-rule" x1="{PAD}" x2="{{W}}" y1="{y0 - 6:.0f}" y2="{y0 - 6:.0f}"/>')
+    svg = (f'<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="{width:.0f}" '
+           f'height="{y0:.0f}" viewBox="0 0 {width:.0f} {y0:.0f}">'
+           '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
+           'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="adhoc-graph-arrow"/></marker></defs>')
+    out.append(svg + "\n".join(body).replace("{W}", f"{width - PAD:.0f}") + "</svg></div>")
+    if not strands:
+        out.append('<p class="adhoc-query">Nothing to show: the trace found no appearances.</p>')
+    files = {"index.html": base64.b64encode("\n".join(out).encode()).decode()}
+    return files, sequence, {"strands": len(strands), "events": n_events, "gaps": n_gaps,
+                             "width": round(width), "height": round(y0)}

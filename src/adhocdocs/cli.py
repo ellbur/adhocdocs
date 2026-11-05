@@ -2458,6 +2458,12 @@ def view(argv=None):
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     _graph_opts(s)
     where(s)
+    s = sub.add_parser("trace", help="draw a fact's trace (analyze trace --list) as a time DAG: events joined by "
+                                     "how each came from the last, unrelated strands apart (TRACE.md)")
+    s.add_argument("file", help="a list file written by analyze trace --list")
+    s.add_argument("--title")
+    s.add_argument("--pane", help="replace this pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     s = sub.add_parser("facet", help="show the user one issue (a facet: ann --help), dimming what isn't filed under it")
     s.add_argument("facet", nargs="?", help="omit, or --clear, for every issue")
     s.add_argument("--clear", action="store_true")
@@ -2531,6 +2537,15 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "list", "files": files, "sequence": sequence,
              "title": header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
+    elif a.cmd == "trace":
+        from . import trace as tracemod
+        header, _ = lists.read(a.file)
+        result, _ = tracemod.again(m, header)
+        title = a.title or header.get("title") or "Trace"
+        files, sequence, summary = tracemod.dag_html(m, result, title)
+        c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
+        shown = summary
     elif a.cmd == "meta":
         header, items = meta_list(m, a.ref, a.of, a.splits)
         if a.list_file:
@@ -2607,6 +2622,8 @@ def view(argv=None):
             result["timeline"]["no_evidence"] = links_summary["no_evidence"]     # not shown: nothing to point at
     if a.cmd == "graph":
         result["graph"] = summary
+    if a.cmd == "trace":
+        result["trace"] = shown
     if a.cmd == "meta":
         result["meta"] = shown
     out(result)
@@ -3211,17 +3228,16 @@ def analyze(argv=None):
         include, exclude = list(a.include), list(a.exclude)
         if a.again:
             head, _ = lists.read(a.again)
-            t = head.get("trace") or {}
-            if not t:
-                raise ValueError(f"{a.again} wasn't written by analyze trace --list")
-            seed, text, query = seed or t.get("seed"), text or t.get("text"), query or t.get("query")
-            include = list(dict.fromkeys(t.get("include", []) + include))
-            exclude = list(dict.fromkeys(t.get("exclude", []) + exclude))
+            if seed or text or query:
+                raise ValueError("--again traces what the list traced: add --include or --exclude, not a new seed")
+            result, terms = trace.again(m, head, include, exclude, a.paraphrases)
+            query, include, exclude = terms["query"], terms["include"], terms["exclude"]
             a.list_file = a.list_file or a.again
-        if seed and not seed.lstrip().startswith(("{", "tr:")):
-            seed = "doc:" + seed.removeprefix("doc:")
-        s0 = trace.seed_of(m, seed, text) if (seed or text) else None
-        result = trace.trace(m, s0, query=query, include=include, exclude=exclude, paraphrases=a.paraphrases)
+        else:
+            if seed and not seed.lstrip().startswith(("{", "tr:")):
+                seed = "doc:" + seed.removeprefix("doc:")
+            s0 = trace.seed_of(m, seed, text) if (seed or text) else None
+            result = trace.trace(m, s0, query=query, include=include, exclude=exclude, paraphrases=a.paraphrases)
         if a.list_file:
             head, items = trace.to_list(result, query=query, include=include, exclude=exclude)
             lists.write(a.list_file, head, items)
