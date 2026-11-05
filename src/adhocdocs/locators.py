@@ -82,7 +82,7 @@ def _parse_selector(s: str) -> dict:
             sel["row"] = [int(a), int(b)] if b else int(a)
         elif key == "header":
             sel["header"] = int(val)
-        elif key in ("cells", "label", "pl"):
+        elif key in ("cells", "label", "pl", "msg"):
             sel[key] = val
         else:
             raise LocatorError(f"unknown selector: {key}")
@@ -262,8 +262,10 @@ def _segments(matter, layer) -> list[dict]:
 
 def expand_alias(matter, loc: dict, content: str) -> dict:
     """Turn ``pl=14:3,15:7`` (transcript page:line, through ``line``
-    segments) or ``label=iv`` (a printed page label, through ``page-label``
-    segments) into the canonical char or page selector."""
+    segments), ``msg=ID`` or ``msg=ID1,ID2`` (chat messages, through
+    ``message`` segments; IDs percent-encoded) or ``label=iv`` (a printed
+    page label, through ``page-label`` segments) into the canonical char or
+    page selector."""
     state = matter.state
     sel = dict(loc["select"])
     layers = state.layers.get(content, [])
@@ -283,6 +285,17 @@ def expand_alias(matter, loc: dict, content: str) -> dict:
                     raise LocatorError(f"pl={first},{last} runs backwards")
                 return {"doc": loc["doc"], "layer": layer.id, "select": {**sel, "char": [s, e]}}
         raise LocatorError(f"no transcript lines {first}–{last} in this document")
+    if "msg" in sel:
+        first, _, last = sel.pop("msg").partition(",")
+        first, last = _unpct(first), _unpct(last or first)
+        for layer in layers:
+            msgs = {s["id"]: s for s in _segments(matter, layer) if s["kind"] == "message" and "id" in s}
+            if first in msgs and last in msgs:
+                s, e = msgs[first]["start"], msgs[last]["end"]
+                if s > e:
+                    raise LocatorError(f"msg={first},{last} runs backwards")
+                return {"doc": loc["doc"], "layer": layer.id, "select": {**sel, "char": [s, e]}}
+        raise LocatorError(f"no chat message {first}" + (f" or {last}" if last != first else "") + " in this document")
     label = sel.pop("label")
     for layer in layers:
         text = None
@@ -313,7 +326,7 @@ def resolve(matter, loc) -> Resolution:
             return Resolution(status="broken", loc=loc, error=f"document withdrawn ({reason})" if reason else "no such document")
     content = state.documents[doc]
     sel = loc.get("select") or {}
-    if "pl" in sel or "label" in sel:
+    if "pl" in sel or "label" in sel or "msg" in sel:
         loc = expand_alias(matter, loc, content)
         sel = loc["select"]
     if "bytes" in sel:
@@ -443,7 +456,7 @@ def expand(matter, loc) -> dict:
     content = state.documents.get(loc["doc"])
     if content is None:
         return loc
-    if "pl" in sel or "label" in sel:
+    if "pl" in sel or "label" in sel or "msg" in sel:
         loc = expand_alias(matter, loc, content)
     if "ptr" in loc.get("select", {}) or "xpath" in loc.get("select", {}):
         loc = expand_pointer(matter, loc, content)

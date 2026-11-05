@@ -1,6 +1,9 @@
 """The threads index: each email's Message-ID, In-Reply-To, References and
-normalized subject, from its metadata. Threads are built from these at query
-time (see analysis.threads), so the index stays a plain table.
+normalized subject, from its metadata. A chat day is a row too: its
+``message_id`` is the conversation and day, and its one reference is the
+conversation (``chat:…``), which joins a conversation's days into a
+thread. Threads are built from these at query time (see
+analysis.threads), so the index stays a plain table.
 
 Schema::
 
@@ -39,6 +42,11 @@ class ThreadsIndex(Index):
         op = ev["op"]
         if op == "set-metadata":
             meta = self.m.objects.get_object(ev["metadata"])
+            if meta.get("kind") == "chat":
+                self.db.execute("INSERT OR REPLACE INTO emails VALUES(?,?,?,?,?,?)",
+                                (ev["doc"], meta.get("message_id"), None, json.dumps([meta.get("thread_key")]),
+                                 None, meta.get("date")))
+                return
             if meta.get("kind") != "email":
                 return
             self.db.execute("INSERT OR REPLACE INTO emails VALUES(?,?,?,?,?,?)",

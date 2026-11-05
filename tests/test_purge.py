@@ -20,7 +20,7 @@ def a_zip(m, name, files):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         for n, body in files.items():
-            z.writestr(n, body)
+            z.writestr(zipfile.ZipInfo(n, date_time=(2026, 1, 1, 0, 0, 0)), body)   # the same bytes each time
     return ingest_bytes(m, buf.getvalue(), name, {"custodian": "cust:x", "source": {"collection": "c", "path": name}})
 
 

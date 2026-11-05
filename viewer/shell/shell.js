@@ -611,6 +611,7 @@ header.doc-head .t { font-weight: bold; font-size: 13pt; }
 header.doc-head .m { color: #666; font-size: 9pt; }
 .adhoc-flow p { margin: 0 0 2pt; }
 .adhoc-flow p.header { font-weight: bold; }
+.adhoc-flow p.chat-note, .adhoc-flow p.attachment { font-size: 9pt; color: #555; }
 .adhoc-flow p.quoted { color: #555; border-left: 2pt solid #ccc; padding-left: 6pt; }
 .adhoc-flow p.footnote, .adhoc-flow p.endnote, .adhoc-flow p.comment, .adhoc-flow p.header-footer { font-size: 9pt; color: #444; }
 .adhoc-flow.plain p { font-family: Courier, monospace; font-size: 9pt; white-space: pre-wrap; margin: 0; }
@@ -665,7 +666,8 @@ class DocumentPane {
     await this.render();
     if (top && this.pageEls?.[top - 1]) this.body.scrollTop = this.pageTop(this.pageEls[top - 1]) - 8;
   }
-  title() { return this.info ? (this.info.meta.name || short(this.info.doc)) : "(empty)"; }
+  // a chat day is known by its conversation and day ("#shipping, 2024-01-15"), not its file name
+  title() { return this.info ? ((this.info.meta.kind === "chat" && this.info.meta.title) || this.info.meta.name || short(this.info.doc)) : "(empty)"; }
   // the modes this document and layer can be shown in, the default first
   modes() {
     const info = this.info, layer = this.currentLayer();

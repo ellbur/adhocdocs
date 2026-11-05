@@ -41,7 +41,7 @@ needs, so a new kind of metadocument costs a function, not a re-index.
 | Grain | A unit is | From |
 |---|---|---|
 | `family` | a document with its parent and attachments | the store's parent links |
-| `thread` | an email conversation, with copies | threading headers |
+| `thread` | an email conversation, with copies; or a chat conversation, every day of it | threading headers; the conversation ([CHATS.md](CHATS.md)) |
 | `copies` | one item, however many copies: duplicates, the same text in another format, the same message from several custodians | content hashes, text hashes, Message-IDs |
 | `versions` | every draft, revision and copy of a text | near-duplicates (estimated: [GRAPH.md](GRAPH.md#how-documents-relate)) |
 | `new` | what one document adds: a message's text without the part it quotes; a revision's changes over the version before it | the email extractor's `quoted` segments; the versions, compared word by word as `analyze redline` does |
