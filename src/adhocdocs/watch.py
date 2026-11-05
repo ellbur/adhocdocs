@@ -1,4 +1,4 @@
-"""Syncing as soon as something changes (SYNC.md).
+"""Syncing as soon as something changes (docs/SYNC.md).
 
 A watcher runs beside a matter on the host (``adhoc sync watch``; ``adhoc
 sync serve`` runs one too, and ``adhoc open`` starts one when the matter

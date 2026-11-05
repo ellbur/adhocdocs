@@ -53,7 +53,7 @@ annotations and membership live outside it and sync on their own, with no
 step from anyone.
 
 So work product crosses over by **publishing**
-([`work.py`](src/adhocdocs/work.py)): `work publish memo.md` (from Claude,
+([`work.py`](../src/adhocdocs/work.py)): `work publish memo.md` (from Claude,
 through the annotation API, which stamps authorship), or `adhoc publish
 memo.md --user <id>` (from the user, on the host). A publication is a
 snapshot of a file or directory, stored by hash in the store, recorded as an
@@ -152,7 +152,7 @@ every installation that has the same events reaches the same state.
   from several processes' clocks) keep their file order, and every
   installation still picks the same order. The viewer merges the same way.
 - **The rules are checked again on replay** (`Annotations.replay` in
-  [`annotations.py`](src/adhocdocs/annotations.py)). An event that was valid
+  [`annotations.py`](../src/adhocdocs/annotations.py)). An event that was valid
   where it was written can conflict with one written concurrently
   elsewhere: the same tag defined twice, an untag of a tag
   someone else just applied. Replaying in the common order, each event is
@@ -203,7 +203,7 @@ every installation that has the same events reaches the same state.
   arrives. A document's `add-document` can arrive after its `withdraw`, so
   an index checks each event against the replayed state and skips one that
   later events have overtaken (`still_true` in
-  [`index/base.py`](src/adhocdocs/index/base.py)). Custom indexes get such
+  [`index/base.py`](../src/adhocdocs/index/base.py)). Custom indexes get such
   events marked `stale`.
 
 ### Authorship and the rules across installations
@@ -211,7 +211,7 @@ every installation that has the same events reaches the same state.
 The annotation rules (Claude can't change a person's work; only a person
 makes privilege calls) still hold, for every person in the pool.
 
-- **People belong to installations** ([`pool.py`](src/adhocdocs/pool.py)).
+- **People belong to installations** ([`pool.py`](../src/adhocdocs/pool.py)).
   An event authored `user:alice` (a tag, a note, a publication) counts only
   if it comes from an installation that writes for Alice; from anywhere
   else it has no effect, and is reported. An installation comes to write
@@ -247,7 +247,7 @@ other feed:
 
 - `add-member` (an origin's certificate, a name, its role (`member` or
   `hub`), the addresses where it listens), `remove-member`, `set-addresses`
-  ([`pool.py`](src/adhocdocs/pool.py)). Each is signed by a member.
+  ([`pool.py`](../src/adhocdocs/pool.py)). Each is signed by a member.
 - **Who counts as a member:** the founder (in `matter.toml`, and in every
   invitation), by its own `add-member`; after that, an event counts only if
   its installation is a member when it's replayed. So everyone agrees on
@@ -260,7 +260,7 @@ other feed:
   joining the pool. Every member learns of every other, and connects to
   whoever it can reach.
 
-**Joining** ([`invite.py`](src/adhocdocs/invite.py)). A member makes an
+**Joining** ([`invite.py`](../src/adhocdocs/invite.py)). A member makes an
 invitation: `adhoc sync invite` prints a code holding the matter ID, its
 founder, the inviting origin, addresses to try and a one-time secret (kept
 on the inviter only as a hash, for three days by default). On the new
@@ -269,7 +269,7 @@ machine, `adhoc sync join <code> <dir>` creates an empty matter, connects
 is added by the inviter, in the name of the person who invited it. Then it
 syncs everything.
 
-**Pushing to a hub** ([`hub.py`](src/adhocdocs/hub.py)). The hub's
+**Pushing to a hub** ([`hub.py`](../src/adhocdocs/hub.py)). The hub's
 administrator enrolls people (`adhoc hub enroll --person alice`), which
 prints a hub code: the hub's addresses, the hash of its key, and a token.
 On a member, `adhoc sync push <code>` founds the pool if there isn't one,
@@ -279,7 +279,7 @@ the hub to the pool with the role `hub`, and syncs everything to it. No one
 does anything per matter on the hub. Revoking a person stops their code;
 matters already on the hub are governed by their own pools.
 
-**A hub can't read what it holds** ([`seal.py`](src/adhocdocs/seal.py)).
+**A hub can't read what it holds** ([`seal.py`](../src/adhocdocs/seal.py)).
 A matter has a key, made when its pool is founded, kept in each
 installation's `sync/` (never mounted, never in a log) and carried to new
 members inside their invitation code; a hub never gets it. Members send a
@@ -369,7 +369,7 @@ so a limited copy loses less than it might seem:
 
 **Someone must hold everything.** Nothing would stop every installation
 from being limited, so the pool doesn't allow it
-([`pool.py`](src/adhocdocs/pool.py)):
+([`pool.py`](../src/adhocdocs/pool.py)):
 
 - Each member is a **full** or **limited** copy, in the pool log
   (`add-member` with `copy`, or `set-copy`). A member becoming limited
@@ -385,7 +385,7 @@ from being limited, so the pool doesn't allow it
 - **Back to full**: `adhoc sync copy full` fetches the originals the copy
   lacks as it next syncs (`filled`), until none are missing.
 
-**Syncing** ([`peer.py`](src/adhocdocs/peer.py)) still sends every event.
+**Syncing** ([`peer.py`](../src/adhocdocs/peer.py)) still sends every event.
 A limited copy just isn't sent the original a new document adds, nor does
 it fetch one (it still fetches the same bytes when something else needs
 them, such as a text file whose layer text *is* its bytes). What it ingests
@@ -396,7 +396,7 @@ rest from a member that has the original. Both directions do this, and the
 result lists it under `later`, not as a refusal. `adhoc sync status` says
 which copy this is and how many originals it lacks.
 
-**Originals on demand** ([`fetch.py`](src/adhocdocs/fetch.py)). Every
+**Originals on demand** ([`fetch.py`](../src/adhocdocs/fetch.py)). Every
 reader in Python goes through the matter's object store, so the store does
 the fetching. Asked for an original it lacks, on a limited copy, it fetches
 it from a full member (hubs first; a sealed hub's copy is opened and checked
@@ -446,7 +446,7 @@ indexes there can be.
 ### Bates and exhibit numbers
 
 Bates numbers and exhibit numbers must not repeat across installations
-([`numbers.py`](src/adhocdocs/numbers.py)). So a production takes the range
+([`numbers.py`](../src/adhocdocs/numbers.py)). So a production takes the range
 it needs before stamping it: it makes the pages, reserves exactly that many
 numbers (a `reserve-numbers` event in the annotation feed, which syncs),
 then stamps them. Exhibit sets do the same. Without `--start`, a
@@ -476,7 +476,7 @@ numbers back.
 
 Sometimes documents must go for good: clawed back after a production made
 in error, or destroyed under a protective order when the case ends
-([`purge.py`](src/adhocdocs/purge.py)). `adhoc purge <doc> --user me
+([`purge.py`](../src/adhocdocs/purge.py)). `adhoc purge <doc> --user me
 --reason "…"` (a person, on the host; never Claude) records a signed
 `purge` event naming the documents. It counts only if made by a person an
 installation has claimed, from one of theirs.
@@ -488,7 +488,7 @@ holds, so a purge can't be made to delete anything but those documents:
   metadata, layers made from them in the workspace, with their
   attachments), keeping whatever a document that isn't purged still uses;
 - it redacts what the annotation events say about them. **Events are
-  signed over a tree of hashes** ([`signing.py`](src/adhocdocs/signing.py)),
+  signed over a tree of hashes** ([`signing.py`](../src/adhocdocs/signing.py)),
   so parts of one can be hidden and its signature, hash and place in the
   chain still check. A tag or note on a purged document keeps only what
   places it, who made it, and which document; an entity keeps everything
@@ -535,8 +535,8 @@ control, like opening a session:
 
 ## Transport
 
-Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
-[`signing.py`](src/adhocdocs/signing.py).
+Built in [`peer.py`](../src/adhocdocs/peer.py), with the signed logs in
+[`signing.py`](../src/adhocdocs/signing.py).
 
 - **TLS 1.3, pinned to the origin.** Each installation serves with a
   certificate for its origin key. A client doesn't check it against any
@@ -574,7 +574,7 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
   reported under `refused`, and the other logs still sync.
 - **Discovery:** the addresses members record in the pool log (`adhoc sync
   serve --advertise`), and the local network
-  ([`lan.py`](src/adhocdocs/lan.py)). No public discovery servers: they
+  ([`lan.py`](../src/adhocdocs/lan.py)). No public discovery servers: they
   would tell a third party which machines share a matter. An installation
   that serves broadcasts a small packet on the local network every half
   minute: its port, and a tag that changes every ten minutes and names
@@ -591,7 +591,7 @@ Built in [`peer.py`](src/adhocdocs/peer.py), with the signed logs in
 - **Relaying:** when two members can't reach each other, they don't need
   to; the logs reach each one through anyone they can reach (usually the
   hub).
-- **As soon as something changes** ([`watch.py`](src/adhocdocs/watch.py)).
+- **As soon as something changes** ([`watch.py`](../src/adhocdocs/watch.py)).
   A watcher runs beside the matter on the host: `adhoc open` starts one
   when the matter has a pool, `adhoc sync serve` runs one, and `adhoc sync
   watch` runs one alone (for a laptop that doesn't listen). When this
@@ -657,14 +657,14 @@ through the annotation API, stamped `claude`), `ann log --cursor`, and
 1. Per-origin logs, HLC IDs, the matter ID and vector cursors, with no
    network. Test by copying logs between two matter directories by hand: two
    installations that exchange logs must end in the same state. *Built;
-   tests in [`test_sync.py`](tests/test_sync.py).*
+   tests in [`test_sync.py`](../tests/test_sync.py).*
 2. Replay rules and `adhoc sync conflicts`. *Built; tests in
-   [`test_sync.py`](tests/test_sync.py).*
-3. Publishing work product. *Built; tests in [`test_work.py`](tests/test_work.py).*
+   [`test_sync.py`](../tests/test_sync.py).*
+3. Publishing work product. *Built; tests in [`test_work.py`](../tests/test_work.py).*
 4. Signing, the pool log, and sync between two members on a LAN. *Built;
-   tests in [`test_peer.py`](tests/test_peer.py), over TLS on localhost.*
+   tests in [`test_peer.py`](../tests/test_peer.py), over TLS on localhost.*
 5. The hub, push and invitations through it. *Built; tests in
-   [`test_hub.py`](tests/test_hub.py).*
+   [`test_hub.py`](../tests/test_hub.py).*
 
 ## Open questions
 

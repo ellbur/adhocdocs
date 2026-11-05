@@ -1,4 +1,4 @@
-"""Invitations: how an installation joins a matter's pool (SYNC.md).
+"""Invitations: how an installation joins a matter's pool (docs/SYNC.md).
 
 ``adhoc sync invite`` (on a member) makes a code: the matter's ID, its
 founder, the origin to join through, where it listens, the role offered,
@@ -184,7 +184,7 @@ def accept(m: Matter, req: dict) -> dict:
 def join(code: str, path, name: str | None = None, addresses=(), copy: str = "full") -> dict:
     """Join a matter's pool with an invitation, in a new matter at ``path``,
     then sync with the inviter. ``copy="limited"``: hold everything but the
-    originals, and fetch those when needed (SYNC.md)."""
+    originals, and fetch those when needed (docs/SYNC.md)."""
     from .peer import Peer, SyncError, sync_with
     inv = parse(code)
     path = Path(path)

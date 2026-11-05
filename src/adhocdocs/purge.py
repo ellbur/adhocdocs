@@ -1,4 +1,4 @@
-"""Purging documents from a matter, on every installation (SYNC.md).
+"""Purging documents from a matter, on every installation (docs/SYNC.md).
 
 Sometimes documents must go: clawed back after being produced by mistake,
 or destroyed under a protective order when the case ends. Withdrawing hides

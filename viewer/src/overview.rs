@@ -140,7 +140,7 @@ fn documents(m: &Matter) -> (Value, Value) {
 /// Literate pages (`*.md`) and list files (`*.list.jsonl`) in the
 /// workspace, newest first, skipping hidden directories.
 /// Work product published from any installation (work/, laid out from the
-/// work feed: SYNC.md), and how many names have forks waiting to be merged.
+/// work feed: docs/SYNC.md), and how many names have forks waiting to be merged.
 fn published(work: &Path) -> Value {
     let (pages, lists) = workspace_files(work);
     let forks = fs::read_dir(work.join(".forks")).map(|d| d.count()).unwrap_or(0);

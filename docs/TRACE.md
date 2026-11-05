@@ -1,6 +1,6 @@
 # Tracing a fact
 
-*Status: implemented in [`trace.py`](src/adhocdocs/trace.py) (its docstring
+*Status: implemented in [`trace.py`](../src/adhocdocs/trace.py) (its docstring
 is the spec) as `analyze trace`.*
 
 In litigation, *when did they know* often decides the case: when the

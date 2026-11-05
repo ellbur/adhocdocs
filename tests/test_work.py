@@ -1,4 +1,4 @@
-"""Publishing work product (SYNC.md, adhocdocs.work): the workspace is
+"""Publishing work product (docs/SYNC.md, adhocdocs.work): the workspace is
 private, and what's published is shared with the matter's other
 installations."""
 

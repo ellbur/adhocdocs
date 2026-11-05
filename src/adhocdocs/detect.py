@@ -1,6 +1,6 @@
 """Entity detection: spans of a text that look like entities, by rules.
 
-This is the entity layer's *suggestions* (see ENTITIES.md). It runs in the
+This is the entity layer's *suggestions* (see docs/ENTITIES.md). It runs in the
 ``entities`` index, once per layer text, at about a megabyte of text a
 second, so it is done long before anyone hovers over a word. Nothing is
 decided here: a detection only lets the user point at the span, and tells

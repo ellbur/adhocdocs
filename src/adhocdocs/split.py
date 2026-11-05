@@ -5,7 +5,7 @@ document to the store and several to a reader. Where the pieces are isn't
 a fact: a letter with its enclosures is one thing or three, a contract
 with exhibits one or many, a fax cover sheet a piece or part of what it
 covers. So there is no "correct" split, only splits that suit a purpose,
-and a split is a metadocument (METADOCS.md): recorded, if someone wants to
+and a split is a metadocument (docs/METADOCS.md): recorded, if someone wants to
 keep it, as bundles of page ranges, one per piece, beside the document.
 
 What this module does is propose. For each page after the first it

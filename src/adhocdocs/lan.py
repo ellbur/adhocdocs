@@ -1,4 +1,4 @@
-"""Finding a matter's members on the local network (SYNC.md).
+"""Finding a matter's members on the local network (docs/SYNC.md).
 
 No public discovery servers: they would tell a third party which machines
 share a matter. Instead, an installation that serves (``adhoc sync serve``)

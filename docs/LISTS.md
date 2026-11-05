@@ -1,9 +1,9 @@
 # Document Lists
 
 *Status: built. List files and the `list` CLI are in
-[`lists.py`](src/adhocdocs/lists.py) (the format is in its docstring), and
+[`lists.py`](../src/adhocdocs/lists.py) (the format is in its docstring), and
 `search --list` writes them. `view list` shows one in the viewer
-([`view.py`](src/adhocdocs/view.py)).*
+([`view.py`](../src/adhocdocs/view.py)).*
 
 A **list** is an ordered set of documents or locators with columns. The
 **list display** shows one in a viewer pane and is the usual way to browse
@@ -21,7 +21,7 @@ quickly.
 Asked for the documents about something, a user rarely wants all of them:
 most repeat the others. A **key set** is the few documents that explain it,
 with every other candidate accounted for. It's a list file with a
-convention ([`sets.py`](src/adhocdocs/sets.py) has the details):
+convention ([`sets.py`](../src/adhocdocs/sets.py) has the details):
 
 - **Items are representatives**, each with a `why` field: what it
   establishes.
@@ -114,7 +114,7 @@ new list of the ones I've selected, sorted by recipient").
 ## The timeline display
 
 `view timeline <file>` shows the same list file by date
-([`timeline.py`](src/adhocdocs/timeline.py)), in a pane that works like the
+([`timeline.py`](../src/adhocdocs/timeline.py)), in a pane that works like the
 list display: a linked preview pane, selecting, tagging, and `j`/`k` or
 `]`/`[` stepping through the items in date order.
 

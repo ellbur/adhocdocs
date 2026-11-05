@@ -1,6 +1,6 @@
 """The dates index: the dates written in each layer text
 (:func:`adhocdocs.dates.detect`), and each email's thread, for the viewer's
-date cards (DATES.md).
+date cards (docs/DATES.md).
 
 Like the entities index, it keeps plain files the viewer reads without
 Python:

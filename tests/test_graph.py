@@ -1,4 +1,4 @@
-"""Links between entities, facets, and the matter as a graph (GRAPH.md)."""
+"""Links between entities, facets, and the matter as a graph (docs/GRAPH.md)."""
 
 import base64
 

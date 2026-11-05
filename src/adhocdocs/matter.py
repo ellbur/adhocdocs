@@ -24,7 +24,7 @@ including removals (``withdraw``) and corrections (``supersede``).
 logs, one per installation (an *origin*, :mod:`adhocdocs.origin`), and each
 installation appends only to its own. A feed is read as all its logs
 merged in one order every installation agrees on, so installations holding
-the same logs reach the same state, however the logs got to them (SYNC.md).
+the same logs reach the same state, however the logs got to them (docs/SYNC.md).
 
 - **Event IDs are ULIDs from a hybrid logical clock**: an installation never
   stamps an event below the newest one it holds in that feed, whatever its
@@ -340,7 +340,7 @@ def read_toml(path: Path) -> dict:
 def write_toml(path: Path, data: dict):
     lines = [f"{k} = {json.dumps(v)}" for k, v in data.items() if isinstance(v, (str, int, bool))]
     tmp = path.with_suffix(".tmp")
-    tmp.write_text("# This matter's identity. Written by adhocdocs; see SYNC.md.\n" + "\n".join(lines) + "\n",
+    tmp.write_text("# This matter's identity. Written by adhocdocs; see docs/SYNC.md.\n" + "\n".join(lines) + "\n",
                    encoding="utf-8", newline="\n")
     tmp.replace(path)
 

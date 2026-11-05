@@ -1,4 +1,4 @@
-"""Reserving Bates and exhibit numbers across installations (SYNC.md,
+"""Reserving Bates and exhibit numbers across installations (docs/SYNC.md,
 adhocdocs.numbers)."""
 
 import json

@@ -1,8 +1,8 @@
 # Text Layers
 
 *Status: implemented for PDF (native and OCR), images, email, .docx, .xlsx,
-CSV, HTML and plain text, Outlook .msg, and for zip, mbox and PST containers, in [`extract/`](src/adhocdocs/extract) and
-[`ingest.py`](src/adhocdocs/ingest.py). Formats and per-format conventions
+CSV, HTML and plain text, Outlook .msg, and for zip, mbox and PST containers, in [`extract/`](../src/adhocdocs/extract) and
+[`ingest.py`](../src/adhocdocs/ingest.py). Formats and per-format conventions
 are in those docstrings.*
 
 A **text layer** is one extracted text of a document's content, plus what
@@ -68,7 +68,7 @@ passes, a .docx with tracked changes accepted and with them shown.
   for attachments. The container's own layer is empty: extracted, no text.
 - Outlook messages (in a PST, or a .msg file) are converted to RFC 822
   email and extracted as email, so threading, people and productions treat
-  them like any other ([`extract/mapi.py`](src/adhocdocs/extract/mapi.py)
+  them like any other ([`extract/mapi.py`](../src/adhocdocs/extract/mapi.py)
   says what the conversion keeps). A PST's messages are child documents
   whose `part` is the folder path and position (`Inbox/Vendors/3`); a .msg
   is itself an `email`. The converted bytes are stored as the child's
@@ -111,7 +111,7 @@ passes, a .docx with tracked changes accepted and with them shown.
   by search and can be quoted, and `search --in body` leaves them out.
   Note numbers are in the text where Word shows them; a comment's author
   and date are segment attributes, since they aren't the comment's words.
-  [`extract/docx.py`](src/adhocdocs/extract/docx.py) has the details.
+  [`extract/docx.py`](../src/adhocdocs/extract/docx.py) has the details.
 - JSON, JSON Lines and XML (by name, or by content: text that parses as
   one) are kinds `json`, `ndjson` and `xml`. Their layer is their literal
   text, as for any text file; metadata adds `format`, `valid`, `shape` and

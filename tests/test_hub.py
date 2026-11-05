@@ -1,4 +1,4 @@
-"""The hub (SYNC.md step 5): pushing a matter to it, invitations through
+"""The hub (docs/SYNC.md step 5): pushing a matter to it, invitations through
 it, and members syncing through it while each other's machines are off."""
 
 import pytest

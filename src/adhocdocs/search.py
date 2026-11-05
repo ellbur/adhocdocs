@@ -510,7 +510,7 @@ def start_background_update(m: Matter, name: str):
 
 
 def to_list(header: dict, items: list, by: str) -> list[dict]:
-    """Search results as a list file (LISTS.md)."""
+    """Search results as a list file (docs/LISTS.md)."""
     listing = header.get("index") == "all"
     head = {"type": "list", "v": 1, "title": header["query"],
             "columns": ["name", "date", "kind", "custodian"] if listing else ["name", "date", "kind", "score", "snippet"],

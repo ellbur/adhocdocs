@@ -1050,7 +1050,7 @@ class DocumentPane {
     const layer = this.currentLayer();
     if (layer?.geometry) {
       // The viewer answers one request at a time: ask for the words only once the first
-      // page is showing, or they would be answered first and the page would wait (VIEWER.md)
+      // page is showing, or they would be answered first and the page would wait (docs/VIEWER.md)
       if (!cache.geometry[layer.id]) await Promise.race([this.firstPage, new Promise((r) => setTimeout(r, 1500))]);
       if (gen !== this.pagesGen) return;
       const [geo, t] = await Promise.all([geometry(layer.id), layerText(layer.id)]);
@@ -1479,7 +1479,7 @@ class DocumentPane {
   }
 
   // hex mode: the original's bytes, sixteen to a row: offset, hex, and the
-  // printable ASCII among them (the display rule for bytes, DATA.md). Rows
+  // printable ASCII among them (the display rule for bytes, docs/DATA.md). Rows
   // are drawn only around what's in view, from chunks fetched as needed, so
   // a large file is never read whole. A drag selects bytes: a bytes=a,b
   // locator, fingerprinted by whoever resolves it.
@@ -2431,7 +2431,7 @@ class HomePane {
       this.more(lists.length, RECENT_ROWS, "list", "List the saved lists and key sets"));
   }
 
-  // work product published from any installation of this matter (SYNC.md)
+  // work product published from any installation of this matter (docs/SYNC.md)
   published(p) {
     if (!p) return "";
     const items = [...p.pages.map((x) => ({ ...x, what: "page" })), ...p.lists.map((x) => ({ ...x, what: "list" }))]
@@ -2635,7 +2635,7 @@ $("#menu-btn").addEventListener("click", (ev) => showMenu(ev.currentTarget, [
 // Open a locator from a pane. A list's preview follows it (its linked pane);
 // anything else opens beside the pane, as a new tab among the documents it has
 // opened, or in the tab already showing that document.
-// Tags and notes copied from a document a replacement volume superseded (RECEIVED.md)
+// Tags and notes copied from a document a replacement volume superseded (docs/RECEIVED.md)
 function carriedNote(c) {
   const whose = c.by && c.by !== adhoc.user ? ` (${c.by}'s)` : "";
   return `Carried over${whose} from the version this document replaced` + (c.reason ? ` (${c.reason}). ` : ". ") +
@@ -3096,7 +3096,7 @@ const entityCard = {
 // thread, how many documents are dated near it, the email a quoted header
 // names, and the nearest events someone already marked as mattering
 // (chronology entries, dated events in the entity list, key sets, pages'
-// citations, documents tagged hot or key). DATES.md has why.
+// citations, documents tagged hot or key). docs/DATES.md has why.
 
 const DATE_SOURCE = { sent: "Sent", attached: "Attached to an email sent", created: "Created", modified: "Last modified", metadata: "Dated" };
 function markClass(x) {

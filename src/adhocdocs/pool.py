@@ -1,4 +1,4 @@
-"""The pool: the installations a matter syncs among (SYNC.md).
+"""The pool: the installations a matter syncs among (docs/SYNC.md).
 
 Membership is a feed like the others (``pool/logs/<origin>.jsonl``), so
 joining through any member is joining the pool: every member learns of
@@ -46,7 +46,7 @@ carried in every invitation) is the first member, by its own
 wrote it is a member when the event is replayed, in the merge order every
 installation shares. So everyone agrees on the members, and an
 installation that was removed can't add itself back. Any member can add or
-remove any other (SYNC.md, open questions).
+remove any other (docs/SYNC.md, open questions).
 
 **Full and limited copies.** A *full* copy holds every original; a
 *limited* one holds everything else (the logs, metadata, text layers) and
@@ -415,7 +415,7 @@ def _can_be_limited(p: Pool, origin: str, role: str):
 
 
 def set_copy(m: Matter, author: str, copy: str) -> dict | None:
-    """Make this installation a full or a limited copy (SYNC.md). Becoming
+    """Make this installation a full or a limited copy (docs/SYNC.md). Becoming
     full, it fetches the originals it lacks as it next syncs. Host only."""
     p = Pool.load(m)
     if not p.is_member(m.origin):

@@ -1,4 +1,4 @@
-"""Limited copies (SYNC.md): an installation that holds everything but the
+"""Limited copies (docs/SYNC.md): an installation that holds everything but the
 originals, which a full member always holds."""
 
 import pytest

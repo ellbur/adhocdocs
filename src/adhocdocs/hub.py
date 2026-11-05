@@ -1,4 +1,4 @@
-"""The hub: an always-on member with a stable address (SYNC.md).
+"""The hub: an always-on member with a stable address (docs/SYNC.md).
 
 A hub holds replicas of many matters and serves them, so members can sync
 through it while each other's laptops are closed, and invitations can name

@@ -1,5 +1,5 @@
 """Trace a fact: where a passage appears across the matter, how it got
-from one place to the next, and who had it when (TRACE.md).
+from one place to the next, and who had it when (docs/TRACE.md).
 
 The seed is a passage (a locator with a char range, or text). Its
 **appearances** are found by aligning words: candidates from the keyword
@@ -621,7 +621,7 @@ def _route_words(r: dict, people: People) -> str:
 # -- as a list -------------------------------------------------------------------------------
 
 def to_list(result: dict, query=None, include=(), exclude=()) -> tuple[dict, list[dict]]:
-    """A trace as a list file (LISTS.md): its appearances in date order (a
+    """A trace as a list file (docs/LISTS.md): its appearances in date order (a
     document's other passages under its first), and in the header what
     makes it again (``trace``: ``analyze trace --again``), who had it when
     (``people``) and the gaps."""

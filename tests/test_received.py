@@ -1,4 +1,4 @@
-"""Received productions (RECEIVED.md): load files in, Bates and control numbers out."""
+"""Received productions (docs/RECEIVED.md): load files in, Bates and control numbers out."""
 
 import hashlib
 from pathlib import Path

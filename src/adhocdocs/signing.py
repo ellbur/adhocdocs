@@ -1,5 +1,5 @@
 """Signed, chained logs: what lets any installation pass on any other's
-events, and the receiver check them (SYNC.md).
+events, and the receiver check them (docs/SYNC.md).
 
 Every event an installation appends to a synced feed carries:
 

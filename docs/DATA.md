@@ -1,8 +1,8 @@
 # Unknown Formats and Schemas
 
-*Status: a first version is built: [`raw.py`](src/adhocdocs/raw.py) (bytes),
-[`structured.py`](src/adhocdocs/structured.py) (JSON pointers and schemas),
-[`interp.py`](src/adhocdocs/interp.py) (interpretations), the `raw` and
+*Status: a first version is built: [`raw.py`](../src/adhocdocs/raw.py) (bytes),
+[`structured.py`](../src/adhocdocs/structured.py) (JSON pointers and schemas),
+[`interp.py`](../src/adhocdocs/interp.py) (interpretations), the `raw` and
 `interp` CLIs (`--help` has the usage), and `:interp` in pages
 ([PAGES.md](PAGES.md)).*
 

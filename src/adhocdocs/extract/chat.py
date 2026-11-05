@@ -2,7 +2,7 @@
 
 An export is a container, like a mailbox. Its children are **chat days**:
 one document per conversation per day, each made from the export the way
-a PST's messages are made into emails (see CHATS.md). A chat day is a small
+a PST's messages are made into emails (see docs/CHATS.md). A chat day is a small
 JSON file (``<day>.chat.json``, format ``adhocdocs-chat-day``) holding the
 conversation (its name, platform and members) and that day's messages, with
 the attachments the export has, base64, so a day is self-contained: it
@@ -24,7 +24,7 @@ inside it, ``sender`` is the time and name, ``message-text`` what was
 written, and ``chat-note`` what the platform says about it (edited,
 deleted, reactions); ``attachment`` names a file. The time and name, the
 arrow and the notes are ours, as an email's header lines are; what was
-written is literal. ``msg=<id>`` locators name messages (LOCATORS.md).
+written is literal. ``msg=<id>`` locators name messages (docs/LOCATORS.md).
 
 Readers:
 

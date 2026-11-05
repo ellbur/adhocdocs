@@ -1,4 +1,4 @@
-"""Chat messages (CHATS.md): Slack exports, WhatsApp exports and RSMF read
+"""Chat messages (docs/CHATS.md): Slack exports, WhatsApp exports and RSMF read
 into a document per conversation per day, messages citable by msg=."""
 
 import email.message

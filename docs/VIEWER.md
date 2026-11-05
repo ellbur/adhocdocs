@@ -1,7 +1,7 @@
 # Document Viewer
 
-*Status: a first version is built: [`viewer/`](viewer) (Rust) and the `view`
-CLI ([`view.py`](src/adhocdocs/view.py); `view --help` has usage and keys).
+*Status: a first version is built: [`viewer/`](../viewer) (Rust) and the `view`
+CLI ([`view.py`](../src/adhocdocs/view.py); `view --help` has usage and keys).
 See [Not built yet](#not-built-yet).*
 
 The viewer shows documents to the user. Its displays are for viewing,
@@ -24,7 +24,7 @@ the user points at can be read by Claude, which can drive it from code
 ## How it is built
 
 A native Rust program on the host, outside the container. Each of its
-windows is one `wry` web view running the viewer's own code ([`shell/`](viewer/shell),
+windows is one `wry` web view running the viewer's own code ([`shell/`](../viewer/shell),
 compiled into the binary). Everything it loads comes from an `adhoc:`
 protocol served by the program itself, never from the network.
 
@@ -102,7 +102,7 @@ questions about the documents in general. Clicking a suggestion copies it
 for pasting into Claude's prompt: the viewer still starts nothing.
 Documents can't be added by Claude, so an empty matter points to `adhoc
 ingest` instead. The data comes from `/api/overview` (built in
-[`overview.rs`](viewer/src/overview.rs)) and is read again every few
+[`overview.rs`](../viewer/src/overview.rs)) and is read again every few
 seconds while the overview is showing.
 
 **Tabs and splits:** a window's panes are arranged in a tree of tabs and
@@ -229,7 +229,7 @@ never overwriting a file there:
 
 Only the user can ask for one: it is an IPC message from the shell
 (`export`), carried out by the worker that owns MuPDF
-([`export.rs`](viewer/src/export.rs)); the API Claude reaches has no way
+([`export.rs`](../viewer/src/export.rs)); the API Claude reaches has no way
 to write a file on the host. For pages the shell sends each annotation's
 boxes from the layer geometry. For a laid-out document it sends the HTML,
 each annotation's text colored with a near-black color that stands for
@@ -317,10 +317,10 @@ Claude Code needs a terminal. Started from one (`adhoc open`), it stays
 there and the viewer only shows documents. Started without one, from the
 launcher (`adhoc gui`) or with `adhoc open --terminal beside|window`, the
 viewer is its terminal: it runs the session's `podman run -it …` on a
-pseudo-terminal of its own ([`term.rs`](viewer/src/term.rs)) and shows it
+pseudo-terminal of its own ([`term.rs`](../viewer/src/term.rs)) and shows it
 with [xterm.js](https://xtermjs.org), the terminal emulator VS Code uses
-([`shell/term.js`](viewer/shell/term.js), vendored under
-[`shell/vendor/`](viewer/shell/vendor)). It is an ordinary terminal, not a
+([`shell/term.js`](../viewer/shell/term.js), vendored under
+[`shell/vendor/`](../viewer/shell/vendor)). It is an ordinary terminal, not a
 reformatting of Claude Code's output: what Claude Code draws is what shows,
 keys typed in it go to Claude Code (the viewer's own keys don't apply
 there), and Ctrl+Shift+C and Ctrl+Shift+V copy and paste.
@@ -375,7 +375,7 @@ flow and text modes. Hovering one shows a card (summary, recap, links,
 evidence), and clicking one selects it. `e` adds the selection to the
 entity list or edits the entity, and `E` (or the header counter) shows all,
 known only, or none. The viewer matches aliases itself
-([`entities.js`](viewer/shell/entities.js)) so the list's changes show at
+([`entities.js`](../viewer/shell/entities.js)) so the list's changes show at
 once, and reads suggestions from the `entities` index's files. See
 [ENTITIES.md](ENTITIES.md).
 
@@ -387,7 +387,7 @@ dashed underline. Hovering either one shows a date card: the document's
 thread, how many documents are near the date, and the nearest events
 before and after, from chronologies, dated entities, key sets, pages'
 citations and hot tags. The card's data comes from `/api/around`
-([`chrono.rs`](viewer/src/chrono.rs)). See [DATES.md](DATES.md).
+([`chrono.rs`](../viewer/src/chrono.rs)). See [DATES.md](DATES.md).
 
 ## On a limited copy
 
@@ -478,7 +478,7 @@ desktop, but what it shows is the same.
     whose words would hold up a page the user asks for meanwhile.
 
   A cache holds the last 64 rendered pages. `ADHOC_VIEWER_DEBUG=1` logs
-  each request's time, and [`tools/viewer_bench.py`](tools/viewer_bench.py)
+  each request's time, and [`tools/viewer_bench.py`](../tools/viewer_bench.py)
   repeats the measurement on any matter.
 - Builds and tests have been on Linux (WebKitGTK) only. The terminal and
   the launcher use portable-pty (ConPTY on Windows) and, for file dialogs

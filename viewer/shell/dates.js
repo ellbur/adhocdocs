@@ -1,4 +1,4 @@
-// Dates for the date cards (DATES.md): placing a date mention ("March 9",
+// Dates for the date cards (docs/DATES.md): placing a date mention ("March 9",
 // "last Friday") by the document's own date, and day arithmetic. The same
 // rules as resolve() in src/adhocdocs/dates.py; tests/date_cases.json holds
 // both to them.

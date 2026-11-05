@@ -1,9 +1,9 @@
 # Literate Pages
 
-*Status: built: [`literate.py`](src/adhocdocs/literate.py) has the format
+*Status: built: [`literate.py`](../src/adhocdocs/literate.py) has the format
 (directives, `refs` block, alterations, `as=`),
-[`pages.py`](src/adhocdocs/pages.py) rendering, citations and export,
-[`quoting.py`](src/adhocdocs/quoting.py) formatting and pictures of pages,
+[`pages.py`](../src/adhocdocs/pages.py) rendering, citations and export,
+[`quoting.py`](../src/adhocdocs/quoting.py) formatting and pictures of pages,
 and `page --help` the usage. `page view` shows a page in the viewer.*
 
 A **page** is written work product (a memo, a chronology, a draft brief
@@ -128,6 +128,6 @@ through to its source.
 - A single file with a trailing `refs` block.
 - Directive syntax (CommonMark generic directives proposal).
 - Hyphen joins as explicit alterations. (Search joins them on its own, in
-  [`textnorm.py`](src/adhocdocs/textnorm.py).)
+  [`textnorm.py`](../src/adhocdocs/textnorm.py).)
 - The unbacked-quote lint as a warning only.
 - Cite-as names as a workspace file, and cite styles as Python files.

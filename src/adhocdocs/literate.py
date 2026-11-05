@@ -40,7 +40,7 @@ An interpretation reference has ``interp`` (its name), ``output`` (the
 output's sha256, so a changed interpretation breaks the reference) and
 optionally ``ptr`` (a JSON pointer into the output); it can only be shown
 with ``:interp``/``::interp`` (``as=table|tree|value|text|image``), never
-quoted. A metadocument reference (METADOCS.md) has ``meta``
+quoted. A metadocument reference (docs/METADOCS.md) has ``meta``
 (``thread:<doc>``, ``family:<doc>``, ``bundle:<id>``…) and ``docs``, the
 documents it held when cited; it can be cited (``:cite``) or linked, never
 quoted, and when its documents change (a reply arrives, a bundle is

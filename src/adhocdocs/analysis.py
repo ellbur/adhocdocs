@@ -18,9 +18,9 @@ the documents that name someone, each mention a child row.
 Document relations (``related``): replies, quotations within a thread,
 versions (near-duplicates, or one text mostly inside another) and copies,
 for every document. The near-duplicate index keeps them in
-``links.json`` for the viewer and the graph (GRAPH.md).
+``links.json`` for the viewer and the graph (docs/GRAPH.md).
 
-Dates (DATES.md): ``dates DOC`` gives a document's own date, where it came
+Dates (docs/DATES.md): ``dates DOC`` gives a document's own date, where it came
 from (sent, attached, created, modified), and the dates written in it,
 resolved ("yesterday" in an email is the day before it was sent).
 ``around DATE`` lists what is near a date: documents, events with dates in

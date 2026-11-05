@@ -1,10 +1,10 @@
 # The Entity Layer
 
 *Status: built. The entity list is in the annotation log
-([`annotations.py`](src/adhocdocs/annotations.py)), aliases are matched by
-[`entities.py`](src/adhocdocs/entities.py) and
-[`viewer/shell/entities.js`](viewer/shell/entities.js), suggestions are
-detected by [`detect.py`](src/adhocdocs/detect.py) in the `entities`
+([`annotations.py`](../src/adhocdocs/annotations.py)), aliases are matched by
+[`entities.py`](../src/adhocdocs/entities.py) and
+[`viewer/shell/entities.js`](../viewer/shell/entities.js), suggestions are
+detected by [`detect.py`](../src/adhocdocs/detect.py) in the `entities`
 index, and the viewer shows all of it.*
 
 Reading a document, you meet people, companies, defined terms and invoice
@@ -59,7 +59,7 @@ whether to trust a suggestion. What they find:
 
 | Kind | Rule | Example |
 |---|---|---|
-| person | a name with evidence ([`names.py`](src/adhocdocs/names.py)): a title, an initial, a role, a signature, "By:" | "R. Ames, driver" |
+| person | a name with evidence ([`names.py`](../src/adhocdocs/names.py)): a title, an initial, a role, a signature, "By:" | "R. Ames, driver" |
 | organization | capitalized words ending in a company form | "Harrowgate Fastener Supply Co." |
 | defined term | `(“Seller”)` after a name, or `“Delivery” means …`, and every later use in the same document, with what it means | "Seller": Harrowgate Fastener Supply Co., an Ohio corporation |
 | number | letters, a hyphen, and digits | "INV-2026-0347" (and "INV-2026/0347"), "PO-BMS-26-0112" |
@@ -124,7 +124,7 @@ from the layer.
 
 The same rules in Python (`ann entity --mentions`, `ann entities --doc`) and
 in the viewer, held together by
-[`tests/entity_match_cases.json`](tests/entity_match_cases.json):
+[`tests/entity_match_cases.json`](../tests/entity_match_cases.json):
 case and diacritics are folded, whitespace matches any whitespace (names
 wrap across lines), matches start and end at word boundaries, an alias with
 a capital in it needs a capital in the text ("Brown" isn't "brown"), and

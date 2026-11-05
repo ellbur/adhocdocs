@@ -1,8 +1,8 @@
 # Indexing and Search
 
-*Status: implemented: [`index/`](src/adhocdocs/index),
-[`search.py`](src/adhocdocs/search.py),
-[`query.py`](src/adhocdocs/query.py) (query language), CLIs `idx` and
+*Status: implemented: [`index/`](../src/adhocdocs/index),
+[`search.py`](../src/adhocdocs/search.py),
+[`query.py`](../src/adhocdocs/query.py) (query language), CLIs `idx` and
 `search` (`--help` has the usage). Schemas are in the index modules'
 docstrings.*
 
@@ -31,7 +31,7 @@ docstrings.*
   stale.
 - **`keyword`**: one FTS5 row per layer text, holding normalized tokens and
   each token's layer offsets. Normalization (in
-  [`textnorm.py`](src/adhocdocs/textnorm.py)) folds case, compatibility
+  [`textnorm.py`](../src/adhocdocs/textnorm.py)) folds case, compatibility
   forms and diacritics, and joins line-end hyphens. **No stemming**: in legal
   search `ship` must not quietly match `shipping`. FTS5 only proposes
   candidate texts; matches are confirmed and positioned by scanning the

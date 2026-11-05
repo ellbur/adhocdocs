@@ -2,7 +2,7 @@
 children (attachments, archive members).
 
 Each extractor returns an :class:`Extraction`. The layer text it builds
-follows TEXTLAYERS.md: NFC, ``\\n`` line endings, form feeds only as page
+follows docs/TEXTLAYERS.md: NFC, ``\\n`` line endings, form feeds only as page
 breaks, otherwise literal.
 """
 

@@ -1,4 +1,4 @@
-"""Sealing: what a hub holds, it can't read (SYNC.md).
+"""Sealing: what a hub holds, it can't read (docs/SYNC.md).
 
 A matter has a **key**, made when its pool is founded, kept in each
 installation's ``sync/matter.key`` (host only, never mounted, never in a

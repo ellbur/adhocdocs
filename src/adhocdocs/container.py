@@ -25,7 +25,7 @@ Inside the session:
 
 ``<matter>/audit`` is not mounted: the host writes the session's audit log
 there (:mod:`adhocdocs.audit`). Nor is ``<matter>/sync``, this
-installation's keys and sync state (:mod:`adhocdocs.origin`, SYNC.md).
+installation's keys and sync state (:mod:`adhocdocs.origin`, docs/SYNC.md).
 
 adhocdocs never reads, copies or sends what Claude Code writes in
 ``claude-home``; it only provides the directory.

@@ -1,8 +1,8 @@
 # Chat messages
 
-*Status: implemented in [`extract/chat.py`](src/adhocdocs/extract/chat.py)
+*Status: implemented in [`extract/chat.py`](../src/adhocdocs/extract/chat.py)
 (reading exports, making chat days) and
-[`locators.py`](src/adhocdocs/locators.py) (`msg=`).*
+[`locators.py`](../src/adhocdocs/locators.py) (`msg=`).*
 
 Chats are a large part of most collections now, and they don't fit the
 document model as they come: a Slack channel can run for years in one

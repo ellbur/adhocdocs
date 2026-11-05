@@ -75,7 +75,7 @@ def test_view_not_running(m, monkeypatch, tmp_path):
 
 
 def test_window_commands(m, monkeypatch, capsys):
-    """What the view CLI sends for windows (the viewer itself is tested by hand: VIEWER.md)."""
+    """What the view CLI sends for windows (the viewer itself is tested by hand: docs/VIEWER.md)."""
     from adhocdocs import cli
     sent = []
     monkeypatch.setattr(view, "command", lambda _m, c: sent.append(c) or {})
