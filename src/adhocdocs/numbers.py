@@ -1,4 +1,4 @@
-"""Reserving Bates and exhibit numbers before they're used (SYNC.md).
+"""Reserving Bates and exhibit numbers before they're used (docs/SYNC.md).
 
 Productions and exhibit sets number documents in series (``bates:HFS``,
 ``exhibit:Exhibit ``) that must not repeat across a matter's installations.

@@ -2,7 +2,7 @@
 
 An **origin** is one installation of one matter. It is the only writer of
 its own logs (``store/logs/<origin>.jsonl``, ``annotations/logs/<origin>.jsonl``),
-so logs from different installations never conflict as files (SYNC.md).
+so logs from different installations never conflict as files (docs/SYNC.md).
 
 Kept in ``<matter>/sync/``, on the host only and never mounted into a session::
 

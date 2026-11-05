@@ -1,10 +1,10 @@
 # The Matter as a Graph
 
 *Status: built. Links and facets are in the annotation log
-([`annotations.py`](src/adhocdocs/annotations.py)), the graph is built and
-queried by [`graph.py`](src/adhocdocs/graph.py) (`graph` and `view graph`),
+([`annotations.py`](../src/adhocdocs/annotations.py)), the graph is built and
+queried by [`graph.py`](../src/adhocdocs/graph.py) (`graph` and `view graph`),
 and the viewer's entity cards, side panel and facet picker show it
-([`viewer/shell/shell.js`](viewer/shell/shell.js)).*
+([`viewer/shell/shell.js`](../viewer/shell/shell.js)).*
 
 The entity layer ([ENTITIES.md](ENTITIES.md)) answers "who is this?" one
 name at a time. A case is rarely about one name. It is about who did what
@@ -111,7 +111,7 @@ its date, in a lane for the entity at its other end (`--by rel`: a lane
 per relation). Clicking one previews its first piece of evidence, so
 stepping through the chips walks the entity's story document by document.
 `graph timeline REF` writes the same thing as a list file
-([`graph.timeline_list`](src/adhocdocs/graph.py)), to keep, edit, or show
+([`graph.timeline_list`](../src/adhocdocs/graph.py)), to keep, edit, or show
 with `view timeline FILE`; a list in the workspace also puts its entries on
 the date cards ([DATES.md](DATES.md)).
 
@@ -187,7 +187,7 @@ under one shouldn't touch a production.
 ## How documents relate
 
 Documents are joined to each other, not only to entities. Each index
-update works out, for every document ([`analysis.doc_links`](src/adhocdocs/analysis.py)):
+update works out, for every document ([`analysis.doc_links`](../src/adhocdocs/analysis.py)):
 
 | Relation | From | |
 |---|---|---|

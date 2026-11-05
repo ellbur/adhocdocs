@@ -1,9 +1,9 @@
 # Documents and Metadocuments
 
 *Status: built. Grains and units are in
-[`metadocs.py`](src/adhocdocs/metadocs.py), splitting merged PDFs in
-[`split.py`](src/adhocdocs/split.py), bundles in the annotation log
-([`annotations.py`](src/adhocdocs/annotations.py)), and they reach search
+[`metadocs.py`](../src/adhocdocs/metadocs.py), splitting merged PDFs in
+[`split.py`](../src/adhocdocs/split.py), bundles in the annotation log
+([`annotations.py`](../src/adhocdocs/annotations.py)), and they reach search
 (`--grain`), the graph (`--grain`), pages (metadocument references), tags
 and notes (bundle targets), the `meta` tool, and the viewer's side panel.*
 
@@ -186,7 +186,7 @@ one per piece. A document can have several splits side by side ("letters",
 "exhibits"), each named.
 
 Finding the cuts by hand is slow, so `meta split DOC`
-([`split.py`](src/adhocdocs/split.py)) proposes one. But the detector
+([`split.py`](../src/adhocdocs/split.py)) proposes one. But the detector
 advises; Claude decides, and the user's word beats both. Claude can
 take any split as it comes, adjust it, or make its own (see *Claude's
 judgment* below).

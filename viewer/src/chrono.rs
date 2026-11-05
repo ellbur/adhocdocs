@@ -1,4 +1,4 @@
-//! Dates, for the date strip and the date cards (DATES.md): a document's own
+//! Dates, for the date strip and the date cards (docs/DATES.md): a document's own
 //! date and where it came from, and what is around a date in the matter.
 //!
 //! A card has two parts. The context needs no judgment and is always there:
@@ -256,7 +256,7 @@ impl Chrono {
         let resolve = |s: Option<String>| s.and_then(|d| m.resolve_doc(&d)).filter(|d| m.live(d));
 
         // chronologies, key sets and pages in the workspace, and those published
-        // from any installation (work/: SYNC.md)
+        // from any installation (work/: docs/SYNC.md)
         let mut files = vec![];
         for dir in [m.root.join("workspace"), m.root.join("work")] {
             walk(&dir, &dir, 0, &mut files);

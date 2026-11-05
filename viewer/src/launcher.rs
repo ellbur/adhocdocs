@@ -6,7 +6,7 @@
 //! native file dialogs, and a terminal (term.rs) for `adhoc setup`.
 //!
 //! None of this is reachable from a session: the launcher has no API socket,
-//! and the matters and documents it connects are the user's choice (DESIGN.md,
+//! and the matters and documents it connects are the user's choice (docs/DESIGN.md,
 //! principle 2).
 
 use crate::term::Term;

@@ -1,7 +1,7 @@
 """Published work product: pages, chronologies, key sets, lists and other
 files made in the workspace, shared with the matter's other installations.
 
-The workspace is private and isn't synced (SYNC.md). Work crosses over by
+The workspace is private and isn't synced (docs/SYNC.md). Work crosses over by
 **publishing**: a snapshot of files, stored by hash in the store, recorded
 as an event in the ``work`` feed (``work/logs/<origin>.jsonl``, one log per
 installation like the others), and laid out in ``<matter>/work/`` on every

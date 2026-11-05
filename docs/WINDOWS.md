@@ -3,7 +3,7 @@
 *Status: in progress. The host code is portable and the bridge is built,
 but none of it has run on Windows yet. Everything was checked on Linux, in
 the ways listed under "Checked so far". Next: run
-[`tools/windows/probe.py`](tools/windows/probe.py) on a Windows machine,
+[`tools/windows/probe.py`](../tools/windows/probe.py) on a Windows machine,
 then follow the test plan at the end.*
 
 adhocdocs has two halves. The session is a Linux container, and stays one:
@@ -25,8 +25,8 @@ twice over:
 
 ### Design: the host dials in
 
-([`endpoint.py`](src/adhocdocs/endpoint.py), [`bridge.py`](src/adhocdocs/bridge.py),
-[`viewer/src/endpoint.rs`](viewer/src/endpoint.rs))
+([`endpoint.py`](../src/adhocdocs/endpoint.py), [`bridge.py`](../src/adhocdocs/bridge.py),
+[`viewer/src/endpoint.rs`](../viewer/src/endpoint.rs))
 
 ```
  Windows host                                │ Podman VM
@@ -94,7 +94,7 @@ Done on this branch:
   matter's logs written on the host would not read back in the session,
   and hashes would differ. `tests/test_portable.py` finds any open that
   doesn't name an encoding.
-- **Locks** ([`portable.py`](src/adhocdocs/portable.py)): `flock` on POSIX,
+- **Locks** ([`portable.py`](../src/adhocdocs/portable.py)): `flock` on POSIX,
   `msvcrt.locking` on Windows. Windows locks are mandatory, so the lock
   covers one byte far past the end of the file. Readers aren't blocked,
   and appends still land at the end.
@@ -104,7 +104,7 @@ Done on this branch:
 - **Runtime directory**: `%LOCALAPPDATA%\adhocdocs\run` instead of
   `$XDG_RUNTIME_DIR` or `/tmp/adhocdocs-$UID`. Python and Rust share the
   rule.
-- **Line endings in git** ([`.gitattributes`](.gitattributes)): LF in every
+- **Line endings in git** ([`.gitattributes`](../.gitattributes)): LF in every
   checkout. Otherwise Git for Windows would turn `container/adhoc-session`
   into CRLF and break the image. The sample documents are `-text`: many of
   the emails are CRLF, and they must arrive byte for byte.

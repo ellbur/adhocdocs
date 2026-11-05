@@ -711,7 +711,7 @@ def _edge_tip(g: Graph, e: dict) -> str:
 # -- an entity's page ------------------------------------------------------------------------------
 
 def dossier(m: Matter, ref: str, mentions_limit: int = 15) -> str:
-    """A literate page (PAGES.md) about one entity: what it is, how it is
+    """A literate page (docs/PAGES.md) about one entity: what it is, how it is
     connected, on what evidence, in date order, and where it is named. The
     evidence is quoted by reference, so every quotation is checked and
     opens the document; links with no evidence say so. Summaries are the
@@ -813,7 +813,7 @@ def dossier(m: Matter, ref: str, mentions_limit: int = 15) -> str:
 
 def timeline_list(m: Matter, refs, facet=None, lanes="other", doc_dates=False,
                   ann: Annotations | None = None) -> tuple[dict, list[dict], dict]:
-    """(header, items, summary): a list file (LISTS.md) of the dated links of
+    """(header, items, summary): a list file (docs/LISTS.md) of the dated links of
     the entities ``refs`` name, for ``view timeline``. One item a link, at
     its first piece of evidence, with fields ``date``, ``event`` (the link
     as a sentence), ``rel``, ``link``, ``other`` and ``evidence`` (how
@@ -1014,7 +1014,7 @@ def add_correspondence(m: Matter, g: Graph, docs=True) -> Graph:
 
 def regrain(m: Matter, g: Graph, grain: str, ann: Annotations | None = None) -> Graph:
     """``g`` with its documents gathered into metadocuments at ``grain``
-    (METADOCS.md): each thread, family, item however many copies, text
+    (docs/METADOCS.md): each thread, family, item however many copies, text
     however many drafts, or bundle becomes one node (``unit:<ref>``), so a
     diagram shows "the thread" with the facts resting on it rather than
     eleven emails. Edges between documents of one unit go; parallel edges

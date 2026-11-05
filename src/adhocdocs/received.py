@@ -1,6 +1,6 @@
 """Received productions: a volume of load files, page images, natives and
 text that another party produced, ingested one document per load-file
-record, with its Bates numbers and control number as names (RECEIVED.md).
+record, with its Bates numbers and control number as names (docs/RECEIVED.md).
 
 :func:`check` reads a volume and says what it would do and what's wrong;
 :func:`ingest` does it. :func:`resolve_bates` and :func:`resolve_control`

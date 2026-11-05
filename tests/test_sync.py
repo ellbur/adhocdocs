@@ -1,4 +1,4 @@
-"""Syncing a matter across installations (SYNC.md).
+"""Syncing a matter across installations (docs/SYNC.md).
 
 Step 1, with no network: every installation appends only to its own logs,
 and installations that hold the same logs agree on the matter, however and

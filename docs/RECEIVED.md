@@ -1,6 +1,6 @@
 # Received productions
 
-*Status: built ([`received.py`](src/adhocdocs/received.py); `adhoc
+*Status: built ([`received.py`](../src/adhocdocs/received.py); `adhoc
 ingest-production --help`, `adhoc overlay-production --help`), with
 overlays and replacement volumes. See [Not built yet](#not-built-yet).*
 

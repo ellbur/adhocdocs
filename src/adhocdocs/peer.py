@@ -1,4 +1,4 @@
-"""Sync between members of a matter's pool: the protocol (SYNC.md).
+"""Sync between members of a matter's pool: the protocol (docs/SYNC.md).
 
 **Transport.** HTTPS (TLS 1.3) on one port, which can serve several matters:
 the client names the matter, by its ID and its pool's founder

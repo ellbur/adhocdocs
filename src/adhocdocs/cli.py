@@ -128,7 +128,7 @@ def adhoc(argv=None):
                                    "from an Opticon .opt or IPRO .lfp; "
                                    "named by its Bates numbers (bates:) and control number (ctl:). Run with --check "
                                    "first: it reports the columns found and every problem, and ingests nothing. "
-                                   "See RECEIVED.md.")
+                                   "See docs/RECEIVED.md.")
     s.add_argument("volume", help="the volume's folder")
     s.add_argument("--party", help="who produced it, e.g. \"Acme Corp.\" (required, except with --check)")
     s.add_argument("--name", help="the volume's name (default: the folder's)")
@@ -148,7 +148,7 @@ def adhoc(argv=None):
                        description="Apply an overlay load file to documents already received: each record is "
                                    "matched by its begin Bates number (else its control number), and its non-blank "
                                    "fields replace or add to the document's. Files, families and custodians aren't "
-                                   "changed. Run with --check first. See RECEIVED.md.")
+                                   "changed. Run with --check first. See docs/RECEIVED.md.")
     s.add_argument("dat", help="the overlay load file (.dat, .csv or tab-separated)")
     s.add_argument("--volume", help="the received volume it is for (needed only when two volumes have the same numbers)")
     s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
@@ -220,7 +220,7 @@ def adhoc(argv=None):
     s = sub.add_parser("purges", help="purges this installation has carried out, and what they leave for you to do")
     s.add_argument("--ack", metavar="PURGE", help="mark a purge's notice as dealt with")
     s.add_argument("--user")
-    s = sub.add_parser("sync", help="syncing with this matter's other installations (SYNC.md)",
+    s = sub.add_parser("sync", help="syncing with this matter's other installations (docs/SYNC.md)",
                        description=SYNC_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     ss = s.add_subparsers(dest="action", required=True)
     ss.add_parser("status", help="this matter's ID, this installation's origin, the members, and the events held "
@@ -271,7 +271,7 @@ def adhoc(argv=None):
     x = ss.add_parser("remove", help="remove a member: no one syncs with it again (it keeps what it has)")
     x.add_argument("origin")
     x.add_argument("--user", required=True)
-    s = sub.add_parser("hub", help="run a hub: an always-on member that holds many matters (SYNC.md)",
+    s = sub.add_parser("hub", help="run a hub: an always-on member that holds many matters (docs/SYNC.md)",
                        description=HUB_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     hs = s.add_subparsers(dest="action", required=True)
     x = hs.add_parser("init", help="make a hub in a directory")
@@ -512,7 +512,7 @@ Sync this matter with its other installations: laptops, desktops, a hub.
 Every installation keeps a full copy and works offline, unless it's a
 limited copy: then it holds everything but the originals, and fetches those
 from a member that holds them all. Documents, tags,
-notes, entities and published work sync; the workspace doesn't. See SYNC.md.
+notes, entities and published work sync; the workspace doesn't. See docs/SYNC.md.
 
   adhoc sync invite --user me --address myhost:7480   (on a member) prints a code
   adhoc sync serve --listen 0.0.0.0:7480              (on a member) to be reached
@@ -757,7 +757,7 @@ def text(argv=None):
 RAW_HELP = """\
 Originals as bytes, and structured data as structure: for files no
 extractor reads (kind "other"), and for JSON, JSON Lines and XML whose
-schema no one has told us. See DATA.md.
+schema no one has told us. See docs/DATA.md.
 
   raw info <doc>                     size, hash, signature, entropy, text-likeness, format
   raw hex <doc|locator> [--start N] [--length N]
@@ -887,7 +887,7 @@ def raw(argv=None):
 
 INTERP_HELP = """\
 Interpretations: your own readings of documents whose format or schema
-adhocdocs doesn't know, kept apart from the documents' own text. See DATA.md.
+adhocdocs doesn't know, kept apart from the documents' own text. See docs/DATA.md.
 
   interp run <doc>... --name N --title T [--about A] [--type T] [--replace] -- <command> [args...]
         run a decoder you wrote on the originals and record what it prints:
@@ -1087,7 +1087,7 @@ search all [--where "custodian:smith-j"] [--tag …]   every document (no text m
 search "<query>" --grain new|thread|family|copies|versions|bundle
                                                      results on metadocuments, not documents
 
---grain re-reads the results at another scale (METADOCS.md): one line per
+--grain re-reads the results at another scale (docs/METADOCS.md): one line per
 thread, family, item however many copies, or text however many drafts, or
 bundle. --grain new is one line per thing someone wrote: copies count once,
 and a hit in quoted text counts for the message that wrote it (quoted_in
@@ -1377,13 +1377,13 @@ Tags must be defined (define-tag) before use. A tag in an exclusive --group
 replaces the group's other tag on the same target.
 
 Tags and notes on a document a replacement volume superseded are carried
-over to the replacement, marked ``carried`` (RECEIVED.md): they were about
+over to the replacement, marked ``carried`` (docs/RECEIVED.md): they were about
 the old document, and the replacement may differ. List them with
 ``ann carried``; once you've checked one still holds, and it was yours,
 ``ann confirm-carried TAG LOCATOR`` (or ``--note ID``). The user's are the
 user's to confirm.
 
-Entities (the entity layer; ENTITIES.md): people, organizations, defined
+Entities (the entity layer; docs/ENTITIES.md): people, organizations, defined
 terms, contracts, events, numbers... that the user can hover over in the
 viewer to be reminded what they are.
 
@@ -1408,7 +1408,7 @@ paraphrase: point at the words with --see, don't type quotations. Say in a
 line that you did it. After an analysis that names the key players (a cast,
 a chronology), add the ten or so that matter, not every suggestion.
 
-Events with a --date go on the viewer's date cards (DATES.md): hovering a
+Events with a --date go on the viewer's date cards (docs/DATES.md): hovering a
 date in a document shows the nearest events before and after it. Add the
 events that turn the story (a dozen or so, not every document) when you
 write a chronology, or when the user asks what matters when.
@@ -1432,7 +1432,7 @@ Add the people who matter to the matter, not everyone in the To line; then
 The summary they get is the counts and roles; write a real one with
 edit-entity when you know who they are.
 
-Links (GRAPH.md): how two entities are connected, and on what evidence. They
+Links (docs/GRAPH.md): how two entities are connected, and on what evidence. They
 make the entity list a graph: the viewer's cards show them and move from
 one entity to the next, `graph` queries them, and `view graph` draws them.
 
@@ -1463,7 +1463,7 @@ Filing doesn't change the thing filed, so you can file the user's notes;
 you can't unfile what the user filed. A reply is filed with its thread, and
 a tag's applications with the tag.
 
-Bundles (METADOCS.md): documents, or parts of them, treated as one thing:
+Bundles (docs/METADOCS.md): documents, or parts of them, treated as one thing:
 "the Q3 board pack", the pages of a merged PDF that were one letter, the
 reply above the quoted text, a thread. A tag or note on a bundle is on it as
 a whole, once; filters (search --tag, ann find) count it for every
@@ -2146,7 +2146,7 @@ regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
 by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
 
-A reference can also be a metadocument (METADOCS.md): `page ref add page.md
+A reference can also be a metadocument (docs/METADOCS.md): `page ref add page.md
 chase thread:<doc>` (or family:, copies:, versions:, new:, bundle:) cites
 the whole thread, so the reader knows the scope is the conversation, not
 one email. Use it with :cite{#chase} or [the thread](ref:chase); it can't
@@ -2459,7 +2459,7 @@ def view(argv=None):
     _graph_opts(s)
     where(s)
     s = sub.add_parser("trace", help="draw a fact's trace (analyze trace --list) as a time DAG: events joined by "
-                                     "how each came from the last, unrelated strands apart (TRACE.md)")
+                                     "how each came from the last, unrelated strands apart (docs/TRACE.md)")
     s.add_argument("file", help="a list file written by analyze trace --list")
     s.add_argument("--title")
     s.add_argument("--pane", help="replace this pane's content")
@@ -2665,7 +2665,7 @@ from the headers and the text who aren't entities, and `ann add-people`
 adds them with their addresses.
 
 --grain thread|family|copies|versions|bundle gathers documents into
-metadocuments (METADOCS.md): a thread is one node with the facts that rest
+metadocuments (docs/METADOCS.md): a thread is one node with the facts that rest
 on any of its messages, a bundle one node for its documents.
 
 Options shared by all: --mentions adds every document an entity is named in;
@@ -2861,7 +2861,7 @@ def graph(argv=None):
 # -- meta ------------------------------------------------------------------------------------
 
 META_HELP = """\
-Metadocuments (METADOCS.md): content at another scale than the documents
+Metadocuments (docs/METADOCS.md): content at another scale than the documents
 ingestion made. Documents are the atoms; a metadocument is any other
 boundary: a family, a thread, every copy of an item, every draft of a text,
 what one message adds without what it quotes, or a bundle someone recorded
@@ -3145,7 +3145,7 @@ def analyze(argv=None):
     s = sub.add_parser("dates", help="a document's own date (and where it came from) and the dates in its text, resolved")
     s.add_argument("doc")
     s = sub.add_parser("trace", help="trace a fact: where a passage (or what a query finds) appears, how it got "
-                                     "from one place to the next, and who had it when (TRACE.md)")
+                                     "from one place to the next, and who had it when (docs/TRACE.md)")
     s.add_argument("seed", nargs="?", help="a passage: a locator with a char range (or msg=)")
     s.add_argument("--text", help="the passage's text, instead of a locator")
     s.add_argument("--query", help="a keyword query describing the fact (search's query language): "

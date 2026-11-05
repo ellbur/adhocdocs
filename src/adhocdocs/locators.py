@@ -308,7 +308,7 @@ def expand_alias(matter, loc: dict, content: str) -> dict:
 
 def resolve(matter, loc) -> Resolution:
     """Check a locator against the store, following the steps in
-    LOCATORS.md: exact, re-anchored (same text hash, or the quote found once
+    docs/LOCATORS.md: exact, re-anchored (same text hash, or the quote found once
     in the primary layer), or broken. Never falls back to whatever text is
     now at the old offsets."""
     loc = parse(loc, matter.objects)

@@ -1,8 +1,8 @@
 # The Container
 
-*Status: built: [`container/`](container) (the image),
-[`container.py`](src/adhocdocs/container.py) (`adhoc open`, `adhoc image
-build`, `adhoc status`) and [`proxy.py`](src/adhocdocs/proxy.py). The mounts
+*Status: built: [`container/`](../container) (the image),
+[`container.py`](../src/adhocdocs/container.py) (`adhoc open`, `adhoc image
+build`, `adhoc status`) and [`proxy.py`](../src/adhocdocs/proxy.py). The mounts
 are listed in `container.py`'s docstring.*
 
 Claude Code can run any code, so the only way to be sure it sees one
@@ -80,7 +80,7 @@ on a subscription.
   installs Claude Code with Anthropic's official installer. Claude Code runs
   as published, with normal auto-update.
 - **Claude learns the tools from a managed `CLAUDE.md`**
-  ([`container/CLAUDE.md`](container/CLAUDE.md), installed at
+  ([`container/CLAUDE.md`](../container/CLAUDE.md), installed at
   `/etc/claude-code/CLAUDE.md`). It's kept short, and points at `--help`.
 
 **Mounts:** the store and annotation log read-only (originals can't change,
@@ -159,7 +159,7 @@ Signing in has to be done by a person, so it hasn't been tested yet.
 - Keeping Claude Code current: its auto-update writes into the container, which is discarded after each session. `adhoc setup --no-cache` (or `adhoc image build --no-cache`) gets the latest.
 
 **Audit log:** the host records each session in `<matter>/audit/`, which is
-never mounted ([`audit.py`](src/adhocdocs/audit.py); `adhoc audit sessions |
+never mounted ([`audit.py`](../src/adhocdocs/audit.py); `adhoc audit sessions |
 show | verify`). Three host processes write it:
 - The launcher records the session's start (who opened it, image ID, `podman run` arguments) and its end (exit status).
 - The proxy records each connection, allowed or refused, with the bytes each way.

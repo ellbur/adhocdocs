@@ -53,19 +53,19 @@ read merged: see :mod:`adhocdocs.matter`) is an event with ``id``, ``at``,
                    given back
 =================  =========================================================
 
-Entities are the entity layer's known entities (ENTITIES.md). Each field
+Entities are the entity layer's known entities (docs/ENTITIES.md). Each field
 remembers who set it last: Claude can't change a field, remove an alias or
 delete an entity the user set, made or added.
 
 Links join two entities with a relation and its evidence, so the entity
-list is a graph (GRAPH.md, :mod:`adhocdocs.graph`). They follow the
+list is a graph (docs/GRAPH.md, :mod:`adhocdocs.graph`). They follow the
 entities' rules, field by field. Facets are named issues; filing an entity,
 link, note or tag under one lets the viewer and the tools show only what
 bears on the issue at hand. Filings are like tags: Claude can't unfile what
 the user filed, and filing never changes the thing filed, so Claude can
 file the user's notes.
 
-A bundle is a recorded metadocument (METADOCS.md, :mod:`adhocdocs.metadocs`):
+A bundle is a recorded metadocument (docs/METADOCS.md, :mod:`adhocdocs.metadocs`):
 documents, or parts of them, treated as one thing. A tag or note's
 ``target`` can be ``{"bundle": ID}``: on the bundle as a whole, not on
 each part. For filters a document has the tags of the bundles it is in.
@@ -851,7 +851,7 @@ def item_key(item) -> str:
     return f"{k}:{v}" if k in ITEM_KINDS and isinstance(v, str) and v else "?"
 
 
-# an event's date: a day, a month or a year (DATES.md)
+# an event's date: a day, a month or a year (docs/DATES.md)
 ENTITY_DATE = re.compile(r"\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?")
 
 
@@ -1141,7 +1141,7 @@ def carry_over(m: Matter, pairs: list[tuple[str, str]], person: str, reason: str
     own people write from it; ``carried.by`` keeps whose it was. Claude's
     are carried as Claude's, so a flag stays a flag. A range moves where
     its quote is found in the replacement (as references follow a
-    supersede: LOCATORS.md). A tagged range that can't be found isn't
+    supersede: docs/LOCATORS.md). A tagged range that can't be found isn't
     carried; a note on one goes on the whole document, ``unplaced``.
     Returns ``{"carried": [...], "not_carried": [...]}``."""
     from . import pool as poolmod

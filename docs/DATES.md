@@ -1,10 +1,10 @@
 # Dates
 
 *Status: built. Dates in text and a document's own date are in
-[`dates.py`](src/adhocdocs/dates.py), found ahead of time by the `dates`
-index ([`index/dates.py`](src/adhocdocs/index/dates.py)). The viewer's strip
-and cards are in [`chrono.rs`](viewer/src/chrono.rs),
-[`dates.js`](viewer/shell/dates.js) and [`shell.js`](viewer/shell/shell.js).
+[`dates.py`](../src/adhocdocs/dates.py), found ahead of time by the `dates`
+index ([`index/dates.py`](../src/adhocdocs/index/dates.py)). The viewer's strip
+and cards are in [`chrono.rs`](../viewer/src/chrono.rs),
+[`dates.js`](../viewer/shell/dates.js) and [`shell.js`](../viewer/shell/shell.js).
 Dated events are entities ([ENTITIES.md](ENTITIES.md)).*
 
 Most documents reflect a moment: when an email was sent, when a contract
@@ -134,7 +134,7 @@ Some rules are about mistakes the user can't see:
 Dates without a year and relative dates are stored unplaced, because one
 text can belong to documents with different dates. The viewer places them
 using the document it is showing. Python and the viewer use the same rules,
-and [`tests/date_cases.json`](tests/date_cases.json) keeps them in step.
+and [`tests/date_cases.json`](../tests/date_cases.json) keeps them in step.
 
 ## Decided
 

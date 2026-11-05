@@ -1,4 +1,4 @@
-"""Originals on demand, for a limited copy (SYNC.md, limited copies).
+"""Originals on demand, for a limited copy (docs/SYNC.md, limited copies).
 
 A limited copy holds every log, metadata object and text layer, but not
 the originals: it fetches one when something reads it, from a member that

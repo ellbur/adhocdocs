@@ -1,4 +1,4 @@
-"""Dates (DATES.md): finding dates in text, placing relative ones, a
+"""Dates (docs/DATES.md): finding dates in text, placing relative ones, a
 document's own date, the dates index, event entities, and `analyze around`."""
 
 import json

@@ -129,7 +129,7 @@ them.
 
 ## Analysis
 
-*Built:* `analyze` ([`analysis.py`](src/adhocdocs/analysis.py) has the
+*Built:* `analyze` ([`analysis.py`](../src/adhocdocs/analysis.py) has the
 details).
 - **Email threading** from Message-ID, In-Reply-To and References. Copies
   from different custodians are one message, and missing parents are
@@ -148,7 +148,7 @@ details).
   join a known person, and names with evidence that they are a person (a
   title, an initial, a role beside them, a signature, "By:") that fit no
   one become people of their own, with the roles found beside them and
-  every mention as a locator ([`names.py`](src/adhocdocs/names.py) has the
+  every mention as a locator ([`names.py`](../src/adhocdocs/names.py) has the
   rules). Rules, not a model: each mention says why it was taken.
 
 Organizations, defined terms and document numbers are detected for the
@@ -159,7 +159,7 @@ entity layer ([ENTITIES.md](ENTITIES.md)). *Proposed:* first names alone
 
 - **Productions.** *Built:* `produce` writes Bates-stamped PDFs (originals'
   pages, or text rendered to pages), a production record, and Concordance
-  and Opticon load files ([`produce.py`](src/adhocdocs/produce.py)).
+  and Opticon load files ([`produce.py`](../src/adhocdocs/produce.py)).
   Families stay together. `bates:` locators resolve through production
   records (ours and received ones), and pages cite produced documents by
   Bates number.

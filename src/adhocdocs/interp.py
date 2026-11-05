@@ -1,5 +1,5 @@
 """Interpretations: Claude's own readings of documents whose format or
-schema nothing in adhocdocs knows (see DATA.md).
+schema nothing in adhocdocs knows (see docs/DATA.md).
 
 A text layer is the document's own text, so it can be quoted. A file of an
 unknown binary format has no such text, and a JSON export's meaning isn't
@@ -659,7 +659,7 @@ def search(m, q: str, only: list[str] | None = None, limit: int | None = None) -
 
 
 def search_list(header: dict, items: list[dict]) -> tuple[dict, list[dict]]:
-    """``interp search`` results as a list file (LISTS.md), one row per hit,
+    """``interp search`` results as a list file (docs/LISTS.md), one row per hit,
     grouped by interpretation. A row's locator is the evidence its record
     points at, so the linked preview opens what can be quoted; a hit with no
     evidence opens the interpretation's first input, and says so. The header

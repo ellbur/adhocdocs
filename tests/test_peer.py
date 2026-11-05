@@ -1,4 +1,4 @@
-"""Sync over the network (SYNC.md step 4): signed logs, the pool, the
+"""Sync over the network (docs/SYNC.md step 4): signed logs, the pool, the
 protocol between members, and invitations. Real TLS on localhost."""
 
 import json

@@ -1,4 +1,4 @@
-"""Metadocuments (METADOCS.md): units at other grains, search results on
+"""Metadocuments (docs/METADOCS.md): units at other grains, search results on
 them, recorded bundles, and graphs of them."""
 
 import json

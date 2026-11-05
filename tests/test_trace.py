@@ -1,4 +1,4 @@
-"""Tracing a fact (TRACE.md) through the story corpus: where a passage
+"""Tracing a fact (docs/TRACE.md) through the story corpus: where a passage
 appears, its routes, who had it when, and the gaps."""
 
 import pytest

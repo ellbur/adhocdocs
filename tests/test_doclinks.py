@@ -1,5 +1,5 @@
 """How documents relate (replies, quotations, versions, copies) and people
-from email headers, in the graph (GRAPH.md)."""
+from email headers, in the graph (docs/GRAPH.md)."""
 
 import json
 from pathlib import Path

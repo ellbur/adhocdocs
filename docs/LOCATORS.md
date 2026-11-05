@@ -1,7 +1,7 @@
 # Locators
 
-*Status: implemented in [`locators.py`](src/adhocdocs/locators.py) (formats,
-resolution) and [`objects.py`](src/adhocdocs/objects.py) (hashing). The
+*Status: implemented in [`locators.py`](../src/adhocdocs/locators.py) (formats,
+resolution) and [`objects.py`](../src/adhocdocs/objects.py) (hashing). The
 docstrings there are the spec; this file keeps the reasons.*
 
 A **locator** names a document, or a place inside one. Search hits, tags,

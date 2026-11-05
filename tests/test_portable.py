@@ -1,4 +1,4 @@
-"""Host code that must also run on Windows (see WINDOWS.md)."""
+"""Host code that must also run on Windows (see docs/WINDOWS.md)."""
 
 import ast
 import subprocess

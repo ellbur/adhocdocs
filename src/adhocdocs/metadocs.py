@@ -698,7 +698,7 @@ def _by_bundle(u: Units, items: list[dict]) -> list[dict]:
 
 
 def to_list(header: dict, units: list[dict]) -> list[dict]:
-    """Results by unit as a list file (LISTS.md): an item per unit (its
+    """Results by unit as a list file (docs/LISTS.md): an item per unit (its
     representative document, or for a bundle its first part), with the
     documents that had hits as children."""
     head = {"type": "list", "v": 1, "title": f"{header['query']} (by {header['grain']})",

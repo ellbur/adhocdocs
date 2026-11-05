@@ -1,5 +1,5 @@
 """Files of unknown format or schema: byte locators, JSON pointers, schemas
-and interpretations (DATA.md)."""
+and interpretations (docs/DATA.md)."""
 
 import json
 import struct

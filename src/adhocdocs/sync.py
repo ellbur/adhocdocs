@@ -1,4 +1,4 @@
-"""Syncing a matter across installations (SYNC.md).
+"""Syncing a matter across installations (docs/SYNC.md).
 
 What's here so far works on one installation's disk: what it holds from
 each origin, and the conflicts that replaying every origin's events turned

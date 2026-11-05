@@ -14,7 +14,7 @@ Claude searches, reads, tags, drafts and builds
 productions. A document viewer on your desktop shows you what Claude points
 at, and sends back what you select.
 
-It runs on Linux for now. Windows is in progress: see [WINDOWS.md](WINDOWS.md).
+It runs on Linux for now. Windows is in progress: see [WINDOWS.md](docs/WINDOWS.md).
 
 **This software is a proof of concept and is not intended or suitable for production use. Using this software with real client documents may violate professional obligations to safeguard client information.**
 
@@ -82,7 +82,7 @@ Adding documents works for these formats:
 - email (`.eml`, `.mbox`, Outlook `.msg` and `.pst`/`.ost`), with attachments
 - chat messages: Slack exports, WhatsApp exports and RSMF (how Teams,
   iMessage and other chats are usually produced), each conversation a
-  document per day ([CHATS.md](CHATS.md))
+  document per day ([CHATS.md](docs/CHATS.md))
 - `.docx` and `.xlsx`
 - CSV, HTML and text
 - JSON, JSON Lines and XML, kept as their text
@@ -91,7 +91,7 @@ Adding documents works for these formats:
 Files in any other format go in too. Nothing extracts text from them, but
 Claude can inspect their bytes, quote them as hex, and work out and show
 its own reading of them, always marked as its reading
-([DATA.md](DATA.md)).
+([DATA.md](docs/DATA.md)).
 
 Originals are kept exactly as given, and identical files are stored once.
 Zip archives, mailboxes (`.mbox`, `.pst`) and chat exports are read a member at a
@@ -105,7 +105,7 @@ custodian is optional.
 A production served on you (a volume of load files, page images, natives
 and text) goes in with `ingest-production`. Each record becomes one
 document, named by its Bates numbers. Run it with `--check` first to see
-how the load file was read ([RECEIVED.md](RECEIVED.md)):
+how the load file was read ([RECEIVED.md](docs/RECEIVED.md)):
 
 ```sh
 uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp." --check
@@ -152,7 +152,7 @@ Claude Code runs in the terminal you started it from. To have the viewer
 show it instead, add `--terminal beside` (in the viewer's window, beside
 the documents) or `--terminal window` (in a window of its own); `--terminal
 app` opens a window of your terminal program
-([VIEWER.md](VIEWER.md#claude-code-in-the-viewer)).
+([VIEWER.md](docs/VIEWER.md#claude-code-in-the-viewer)).
 
 When you leave Claude Code (`/exit` or Ctrl+D), the container and viewer
 close. To pick up an earlier conversation, run `uv run adhoc open
@@ -209,7 +209,7 @@ to try on the sample matter:
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
 - *"Who are the people in this case, and how do they relate to each other?"*
 - *"Who is José Ibáñez? Show me every document that mentions him."*
-- *"Trace the pallet in Q-3: who knew about it, when, and how did each of them hear? Where does it turn up with no record of how it got there?"* ([TRACE.md](TRACE.md))
+- *"Trace the pallet in Q-3: who knew about it, when, and how did each of them hear? Where does it turn up with no record of how it got there?"* ([TRACE.md](docs/TRACE.md))
 - Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
 - *"Add the key people and companies in this dispute to the entities, with a line on each."*
 - *"Record who works for whom, who signed what, and who handled the delivery, as links with their evidence."* Then a hover card lists each entity's connections; click one to go on to the next entity.
@@ -290,7 +290,7 @@ With a hub (an always-on server, which holds matters encrypted so it can't
 read them: `adhoc hub --help`), push the matter to it once with `adhoc sync
 push <code>`. Invitations then go through the hub, and
 everyone syncs through it, whoever else is offline. Treat invitation and hub
-codes as passwords. Details: [SYNC.md](SYNC.md).
+codes as passwords. Details: [SYNC.md](docs/SYNC.md).
 
 ### Afterwards
 
@@ -353,25 +353,25 @@ data system-wide, put `eng.traineddata` in
 
 ## Design
 
-- [DESIGN.md](DESIGN.md): principles
-- [TOOLS.md](TOOLS.md): the tools, and which are built
-- [LOCATORS.md](LOCATORS.md): naming documents and places in them
-- [TEXTLAYERS.md](TEXTLAYERS.md): extracted text and its structure
-- [INDEXING.md](INDEXING.md): indexes, search, keeping indexes up to date
-- [LISTS.md](LISTS.md): document lists and the list display
-- [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
-- [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
-- [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
-- [CHATS.md](CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
-- [TRACE.md](TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
-- [METADOCS.md](METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
-- [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
-- [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after
-- [PAGES.md](PAGES.md): literate pages that quote and cite documents
-- [VIEWER.md](VIEWER.md): the document viewer
-- [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
-- [WINDOWS.md](WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
-- [SYNC.md](SYNC.md): syncing a matter across installations, peer to peer or through a hub
+- [DESIGN.md](docs/DESIGN.md): principles
+- [TOOLS.md](docs/TOOLS.md): the tools, and which are built
+- [LOCATORS.md](docs/LOCATORS.md): naming documents and places in them
+- [TEXTLAYERS.md](docs/TEXTLAYERS.md): extracted text and its structure
+- [INDEXING.md](docs/INDEXING.md): indexes, search, keeping indexes up to date
+- [LISTS.md](docs/LISTS.md): document lists and the list display
+- [ANNOTATIONS.md](docs/ANNOTATIONS.md): tags and notes
+- [ENTITIES.md](docs/ENTITIES.md): the entity layer: hover a name to see who or what it is
+- [GRAPH.md](docs/GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
+- [CHATS.md](docs/CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
+- [TRACE.md](docs/TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
+- [METADOCS.md](docs/METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
+- [RECEIVED.md](docs/RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
+- [DATES.md](docs/DATES.md): the date strip and date cards: hover a date to see what came before and after
+- [PAGES.md](docs/PAGES.md): literate pages that quote and cite documents
+- [VIEWER.md](docs/VIEWER.md): the document viewer
+- [CONTAINER.md](docs/CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
+- [WINDOWS.md](docs/WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
+- [SYNC.md](docs/SYNC.md): syncing a matter across installations, peer to peer or through a hub
 
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.
