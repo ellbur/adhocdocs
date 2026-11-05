@@ -123,15 +123,17 @@ def adhoc(argv=None):
     s.add_argument("--manifest", help="a TOML file of [[collection]] tables (name, custodian, paths), "
                                       "e.g. corpus/manifest.toml; see adhocdocs.ingest.load_manifest")
     s = sub.add_parser("ingest-production", help="add a production another party made: load files, images, natives, text",
-                       description="Ingest a production volume another party served: one document per .dat record, "
+                       description="Ingest a production volume another party served: one document per .dat record "
+                                   "(Concordance or CSV), or per document of an EDRM XML load file, with page images "
+                                   "from an Opticon .opt or IPRO .lfp; "
                                    "named by its Bates numbers (bates:) and control number (ctl:). Run with --check "
                                    "first: it reports the columns found and every problem, and ingests nothing. "
                                    "See RECEIVED.md.")
     s.add_argument("volume", help="the volume's folder")
     s.add_argument("--party", help="who produced it, e.g. \"Acme Corp.\" (required, except with --check)")
     s.add_argument("--name", help="the volume's name (default: the folder's)")
-    s.add_argument("--dat", help="the .dat load file (default: found in the volume)")
-    s.add_argument("--opt", help="the .opt image load file (default: found in the volume)")
+    s.add_argument("--dat", help="the .dat load file, or an EDRM XML one (default: found in the volume)")
+    s.add_argument("--opt", help="the .opt or IPRO .lfp image load file (default: found in the volume)")
     s.add_argument("--map", action="append", default=[], metavar="FIELD=COLUMN",
                    help="which .dat column a field is, when it isn't recognized (e.g. begin=\"Prod Beg\")")
     s.add_argument("--day-first", action="store_true", help="dates like 03/04/2021 are day first (4 March)")

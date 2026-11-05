@@ -400,3 +400,101 @@ def test_a_replacement_carries_tags_and_notes_over_marked(volume, m, tmp_path):
     left = [a for a in an.applications() if a.get("carried")] + [n for n in an.notes.values() if n.get("carried")]
     assert sorted(x.get("tag") or x["body"] for x in left) == ["It matches the invoice.", "The March total.", "key"]
     assert next(a for a in an.applications() if a["tag"] == "hot" and a["target"] == {"doc": rep})["confirmed_by"] == "user:bo"
+
+
+# -- IPRO .lfp and EDRM XML load files ------------------------------------------------------------
+
+def test_an_ipro_lfp_instead_of_an_opt(volume, m):
+    """The same volume with its page images in an IPRO .lfp: the same documents and pages."""
+    (volume / "DATA" / "ACME_VOL001.opt").unlink()
+    lines = ["IM,ACME000001,D,0,@ACME_VOL001;IMAGES\\0001;ACME000001.TIF;2",
+             "IM,ACME000002,,0,@ACME_VOL001;IMAGES\\0001;ACME000002.TIF;2",
+             "IM,ACME000003,,0,@ACME_VOL001;IMAGES\\0001;ACME000003.TIF;2",
+             "IM,ACME000004,C,0,@ACME_VOL001;IMAGES\\0001;ACME000004.TIF;2",     # C: an attachment starts here
+             "IM,ACME000005,,0,@ACME_VOL001;IMAGES\\0001;ACME000005.PNG;4",
+             "IM,ACME000006,D,0,@ACME_VOL001;IMAGES\\0001;ACME000006.TIF;2",
+             "IM,ACME000008,D,0,@ACME_VOL001;IMAGES\\0001;ACME000008.TIF;2",
+             "FT,ACME000008,1,1,@ACME_VOL001;TEXT;ACME000008.txt"]
+    (volume / "DATA" / "ACME_VOL001.lfp").write_text("\r\n".join(lines) + "\r\n")
+    pages = received.parse_lfp(volume / "DATA" / "ACME_VOL001.lfp")
+    assert [p["first"] for p in pages] == [True, False, False, True, False, True, True]
+    assert pages[0]["path"] == "IMAGES/0001/ACME000001.TIF" and pages[-1]["text"] == "TEXT/ACME000008.txt"
+    r = received.check(volume)
+    assert r["opt"].endswith("ACME_VOL001.lfp")
+    assert (r["records"], r["as_images"], r["as_native"], r["as_text"], r["attachments"]) == (5, 2, 2, 1, 1)
+    docs = received.ingest(m, volume, "Acme Corp.")["docs"]
+    assert meta(m, docs["ACME000001"])["produced"]["pages"] == ["ACME000001", "ACME000002", "ACME000003"]
+    assert meta(m, docs["ACME000004"])["produced"]["pages"] == ["ACME000004", "ACME000005"]
+
+
+EDRM = """<?xml version="1.0" encoding="UTF-8"?>
+<Root DataInterchangeType="Update" Description="ACME production" MajorVersion="1" MinorVersion="2">
+  <Batch>
+    <Documents>
+      <Document DocID="CTL-1" DocType="Message" MimeType="message/rfc822">
+        <Tags>
+          <Tag TagName="#BegDoc" TagValue="ACME000101" TagDataType="Text"/>
+          <Tag TagName="#EndDoc" TagValue="ACME000102" TagDataType="Text"/>
+          <Tag TagName="#Custodian" TagValue="Smith, John" TagDataType="Text"/>
+          <Tag TagName="#Subject" TagValue="Re: the Dock 4 pallet" TagDataType="Text"/>
+          <Tag TagName="#DateSent" TagValue="2021-03-04" TagDataType="Date"/>
+        </Tags>
+        <Files>
+          <File FileType="Image">
+            <ExternalFile FilePath="IMAGES\\0001" FileName="ACME000101.tif" FileSize="1" PageCount="1"/>
+            <ExternalFile FilePath="IMAGES\\0001" FileName="ACME000102.tif" FileSize="1" PageCount="1"/>
+          </File>
+          <File FileType="Text"><ExternalFile FilePath="TEXT" FileName="ACME000101.txt"/></File>
+        </Files>
+      </Document>
+      <Document DocID="CTL-2" DocType="File">
+        <Tags>
+          <Tag TagName="#BegDoc" TagValue="ACME000103"/>
+          <Tag TagName="#EndDoc" TagValue="ACME000103"/>
+          <Tag TagName="#Custodian" TagValue="Smith, John"/>
+          <Tag TagName="#FileName" TagValue="totals.csv"/>
+        </Tags>
+        <Files>
+          <File FileType="Native"><ExternalFile FilePath="NATIVES" FileName="ACME000103.csv" Hash="{md5}"/></File>
+        </Files>
+      </Document>
+      <Document DocID="CTL-3" DocType="File">
+        <Tags><Tag TagName="#BegDoc" TagValue="ACME000104"/><Tag TagName="#Custodian" TagValue="Jones, Ann"/></Tags>
+        <Files><File FileType="Text"><ExternalFile FilePath="TEXT" FileName="ACME000104.txt"/></File></Files>
+      </Document>
+    </Documents>
+    <Relationships>
+      <Relationship Type="Attachment" ParentDocId="CTL-1" ChildDocId="CTL-2"/>
+    </Relationships>
+  </Batch>
+</Root>
+"""
+
+
+def test_an_edrm_xml_volume(tmp_path, m):
+    v = tmp_path / "ACME_VOL002"
+    page(v / "IMAGES" / "0001" / "ACME000101.tif")
+    page(v / "IMAGES" / "0001" / "ACME000102.tif")
+    (v / "NATIVES").mkdir()
+    (v / "NATIVES" / "ACME000103.csv").write_text("month,amount\nMarch,1200\n")
+    (v / "TEXT").mkdir()
+    (v / "TEXT" / "ACME000101.txt").write_text("Re: the Dock 4 pallet\n\nIt never arrived.")
+    (v / "TEXT" / "ACME000104.txt").write_text("A note, text only.")
+    md5 = hashlib.md5((v / "NATIVES" / "ACME000103.csv").read_bytes()).hexdigest()
+    (v / "ACME_VOL002.xml").write_text(EDRM.replace("{md5}", md5))
+    r = received.check(v)
+    assert r["dialect"] == "edrm-xml" and r["columns"]["begin"] == "BegDoc" and r["columns"]["control"] == "DocID"
+    assert (r["records"], r["as_images"], r["as_native"], r["as_text"], r["attachments"]) == (3, 1, 1, 1, 1)
+    assert r["problems"] == []
+    out = received.ingest(m, v, "Acme Corp.")
+    docs = out["docs"]
+    mm = Matter(m.root)
+    email = meta(m, docs["ACME000101"])
+    assert email["kind"] == "pdf" and email["date"].startswith("2021-03-04") and email["produced"]["control"] == "CTL-1"
+    import pymupdf
+    assert pymupdf.open(mm.objects.path(mm.state.documents[docs["ACME000101"]])).page_count == 2
+    assert mm.state.children[docs["ACME000101"]] == [docs["ACME000103"]]
+    assert mm.objects.get_bytes(mm.state.documents[docs["ACME000103"]]).startswith(b"month,amount")
+    assert not any("MD5" in p["problem"] for p in out["problems"])               # the hash agreed
+    assert meta(m, docs["ACME000104"])["produced"]["as"] == "text"
+    assert received.resolve_name(mm, "ctl:CTL-2")[0]["loc"]["doc"] == docs["ACME000103"]
