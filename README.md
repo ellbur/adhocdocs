@@ -209,6 +209,7 @@ to try on the sample matter:
 - *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
 - *"Who are the people in this case, and how do they relate to each other?"*
 - *"Who is José Ibáñez? Show me every document that mentions him."*
+- *"Trace the pallet in Q-3: who knew about it, when, and how did each of them hear? Where does it turn up with no record of how it got there?"* ([TRACE.md](TRACE.md))
 - Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
 - *"Add the key people and companies in this dispute to the entities, with a line on each."*
 - *"Record who works for whom, who signed what, and who handled the delivery, as links with their evidence."* Then a hover card lists each entity's connections; click one to go on to the next entity.
@@ -323,6 +324,7 @@ uv run analyze threads
 uv run analyze groups                   # near-duplicates and versions
 uv run analyze people                   # from email headers and names in the documents
 uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
+uv run analyze trace --query 'pallet AND (q-3 OR quarantine)' --list q3.list.jsonl   # who knew, when, and how
 uv run graph path "Raymond Voss" "Rita Ames"   # how two entities connect, with the evidence for each step
 uv run graph export --format mermaid           # the entities and their links, for a diagram
 uv run search '"past due"' --grain new          # one result per thing written, not per email that quotes it
@@ -360,6 +362,7 @@ data system-wide, put `eng.traineddata` in
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
 - [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
 - [CHATS.md](CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
+- [TRACE.md](TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
 - [METADOCS.md](METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
 - [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after

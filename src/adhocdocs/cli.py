@@ -3127,6 +3127,20 @@ def analyze(argv=None):
     s.add_argument("--html", help="also write static HTML for a viewer pane (view pane --new FILE)")
     s = sub.add_parser("dates", help="a document's own date (and where it came from) and the dates in its text, resolved")
     s.add_argument("doc")
+    s = sub.add_parser("trace", help="trace a fact: where a passage (or what a query finds) appears, how it got "
+                                     "from one place to the next, and who had it when (TRACE.md)")
+    s.add_argument("seed", nargs="?", help="a passage: a locator with a char range (or msg=)")
+    s.add_argument("--text", help="the passage's text, instead of a locator")
+    s.add_argument("--query", help="a keyword query describing the fact (search's query language): "
+                                   "its passages join the trace, so it follows the fact when it is reworded")
+    s.add_argument("--include", action="append", default=[], metavar="LOC",
+                   help="a passage judged to say the same thing (repeatable)")
+    s.add_argument("--exclude", action="append", default=[], metavar="LOC",
+                   help="a passage or document that doesn't belong (repeatable)")
+    s.add_argument("--paraphrases", type=int, default=10, help="semantic candidates to offer for judging (0: none)")
+    s.add_argument("--list", dest="list_file", help="also write a list file of the appearances, in date order")
+    s.add_argument("--again", metavar="LIST", help="trace again what a list file written by --list traced, "
+                                                   "with any --include/--exclude added")
     s = sub.add_parser("around", help="what is near a date: documents, dated events, chronology entries")
     s.add_argument("date", help="YYYY-MM-DD")
     s.add_argument("--days", type=int, default=7, help="how far either side (default 7)")
@@ -3191,6 +3205,29 @@ def analyze(argv=None):
     elif a.cmd == "around":
         from . import dates
         out(dates.around(m, a.date, a.days))
+    elif a.cmd == "trace":
+        from . import trace
+        seed, text, query = a.seed, a.text, a.query
+        include, exclude = list(a.include), list(a.exclude)
+        if a.again:
+            head, _ = lists.read(a.again)
+            t = head.get("trace") or {}
+            if not t:
+                raise ValueError(f"{a.again} wasn't written by analyze trace --list")
+            seed, text, query = seed or t.get("seed"), text or t.get("text"), query or t.get("query")
+            include = list(dict.fromkeys(t.get("include", []) + include))
+            exclude = list(dict.fromkeys(t.get("exclude", []) + exclude))
+            a.list_file = a.list_file or a.again
+        if seed and not seed.lstrip().startswith(("{", "tr:")):
+            seed = "doc:" + seed.removeprefix("doc:")
+        s0 = trace.seed_of(m, seed, text) if (seed or text) else None
+        result = trace.trace(m, s0, query=query, include=include, exclude=exclude, paraphrases=a.paraphrases)
+        if a.list_file:
+            head, items = trace.to_list(result, query=query, include=include, exclude=exclude)
+            lists.write(a.list_file, head, items)
+            result["written"] = a.list_file
+            result["next"] = f"view list {a.list_file}"
+        out(result)
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))
         out(header)
