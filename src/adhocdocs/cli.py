@@ -2863,8 +2863,9 @@ starting again or carrying on; openings (letterhead, Dear…, a memo's
 TO/FROM, an email's From/Sent/To, a caption, a form's title) and closings
 on the page before; sentences running on; running headers and footers;
 and whether the page looks like the ones before it, in its words (the
-rarer words and reference numbers they share) and its layout (margins,
-type size, line spacing). A page that looks like neither can start a
+rarer words and reference numbers they share), its layout (margins,
+type size, line spacing) and its image (page size, paper colour, a
+letterhead's art at the top, from small pictures of the pages). A page that looks like neither can start a
 piece with nothing to announce it. Each candidate has a strength (0–1)
 and its reasons for and against. --level sure, likely (the default) or
 possible gives a split, coarse to fine.

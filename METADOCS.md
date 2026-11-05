@@ -219,6 +219,20 @@ has no letterhead.
   for. The right margin isn't used, because ragged text and tables move it
   too much within a document. A page laid out like the one two back is a
   book's facing page, not a new document.
+- **The page images.** Each page is drawn small (24 dpi) from the original,
+  when the original is here. A limited copy doesn't fetch it for this.
+  - A different page size (legal after letter) counts for a cut, and so
+    does different paper: the background's colour or tone, which in a scan
+    tells a tinted or greyed sheet from white. Turning to landscape counts
+    a little, since tables do it within a document.
+  - The top of the page is compared as a grid of ink, so a letterhead
+    counts even when it's a logo with no text. It counts when the top
+    looks like an earlier first page's and not like the pages in between.
+    A running header is on every page, so it doesn't count, but a
+    letterhead is only on the first.
+  - A sentence that seems to run on onto a sheet of another size or paper
+    counts for little.
+  - `--pages` reports each page's size, paper colour and ink.
 - **Both together.** When neither the words nor the layout look like the
   page before, that counts extra. A lowercase start after an unfinished
   line then counts for little, because that is also what two documents'
@@ -281,7 +295,8 @@ In the viewer, a document's side panel lists the pieces it is split into
 piece's first page.
 
 The detector reads text and word positions, so it works on native PDFs,
-and on scans once they are OCRed. Page images are for Claude to look at
+and on scans once they are OCRed, and small pictures of the pages for
+their size, paper and letterhead art. Claude can look at bigger ones
 (`--sheet`). In the corpus, the detector finds the seven documents of a
 PDF made by merging them. It finds the seam between the middle pages of
 two court opinions, where nothing announces a start. It leaves statutes,
@@ -306,10 +321,10 @@ a fair split too.
 
 ## Not built yet
 
-- The detector weighing what the page images show: a change of paper,
-  letterhead artwork, handwriting or stamps. It reads only the text layer
-  and its word positions; Claude can look at the pictures (`--sheet`) and
-  cut by them.
+- The detector seeing handwriting, stamps, or a change of typewriter or
+  printer. It weighs page size, paper and letterhead art from the page
+  images; for the rest Claude looks at the pictures (`--sheet`) and cuts
+  by them.
 - Choosing which version a revision is compared with. It is the nearest
   earlier one with different text; a revision of a revision of a branch
   may want another.

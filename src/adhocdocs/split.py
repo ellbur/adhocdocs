@@ -91,6 +91,7 @@ class Page:
     total: int | None = None                 # "of N"
     ocr: bool | None = None                  # read by OCR (None: unknown)
     boxes: list = field(default_factory=list)  # per line: (x0, top, x1, word height), or None without word positions
+    look: dict | None = None                 # what the page image shows (:func:`looks`), or None without one
 
     @property
     def body(self) -> list[str]:
@@ -140,10 +141,11 @@ def _number(page: Page):
     return None, None
 
 
-def pages(m: Matter, doc: str) -> list[Page]:
+def pages(m: Matter, doc: str, images: bool = True) -> list[Page]:
     """The document's pages, from its primary layer (pages end at form feeds),
     with header and footer zones from the word positions when the layer has
-    them, else the first and last few lines."""
+    them, else the first and last few lines; and, with ``images``, what each
+    page's image shows (:func:`looks`), when the original is at hand."""
     from .produce import geometry
     state = m.state
     layer = state.primary_layer(state.documents[doc])
@@ -189,7 +191,115 @@ def pages(m: Matter, doc: str) -> list[Page]:
         p.ocr = (any("conf" in g for g in words)) if words else None
         out.append(p)
         offset += len(chunk) + 1
+    if images:
+        looks(m, doc, out)
     return out
+
+
+# -- what the page images show -------------------------------------------------------------------
+
+LOOK_DPI = 24          # small: the paper, the page's shape, and what the top of it looks like
+TOP_BAND = 0.18        # the top of the page, where letterheads are, as a fraction of its height
+
+
+def looks(m: Matter, doc: str, ps: list[Page]) -> None:
+    """Set each page's ``look`` from a small picture of it: its size in
+    points, the colour of its paper (the light pixels' median, so a tinted
+    or greyed sheet in a scan stands out from white), how much ink it has,
+    and its top band as a coarse grid of ink, to compare letterheads
+    whatever their text (a logo reads as nothing). Only for documents with
+    pages of their own (PDFs, images) whose original is here; a page
+    without a picture keeps ``look`` None, and the detector does without."""
+    try:
+        import numpy as np
+        meta = m.objects.get_object(m.state.metadata[doc]) if doc in m.state.metadata else {}
+        if meta.get("kind") not in ("pdf", "image"):
+            return
+        path = m.objects.path(m.state.documents[doc])       # here already: a limited copy doesn't fetch for this
+        if path is None or not path.exists():
+            return
+        import pymupdf
+        pdf = pymupdf.open(path) if meta["kind"] == "pdf" else pymupdf.open("pdf", pymupdf.open(path).convert_to_pdf())
+    except Exception:
+        return
+    for p in ps:
+        if p.n > len(pdf):
+            break
+        try:
+            page = pdf[p.n - 1]
+            pix = page.get_pixmap(dpi=LOOK_DPI, colorspace=pymupdf.csRGB, alpha=False)
+            a = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3).astype(np.float32)
+        except Exception:
+            continue
+        lum = a.mean(axis=2)
+        light = lum >= np.percentile(lum, 60)
+        paper = np.median(a[light], axis=0) if light.any() else np.array([255.0, 255.0, 255.0])
+        ink = 1 - lum / max(float(np.median(lum[light])) if light.any() else 255.0, 1.0)
+        band = ink[: max(4, int(pix.height * TOP_BAND))]
+        rows, cols = 8, 32
+        bh, bw = band.shape[0] // rows, band.shape[1] // cols
+        grid = band[: bh * rows, : bw * cols].reshape(rows, bh, cols, bw).mean(axis=(1, 3)) if bh and bw else np.zeros((rows, cols))
+        w, h = page.rect.width, page.rect.height
+        p.look = {"size": (round(w), round(h)), "paper": tuple(int(x) for x in paper),
+                  "ink": round(float((ink > 0.35).mean()), 4), "top": grid.clip(0, 1).round(3).flatten().tolist()}
+
+
+def _inches(size) -> str:
+    w, h = size
+    f = lambda x: f"{x / 72:.1f}".rstrip("0").rstrip(".")
+    return f"{f(w)}×{f(h)} in"
+
+
+def tops_alike(a: dict, b: dict) -> float | None:
+    """How alike two pages' top bands are (correlation of their ink, -1 to 1),
+    or None if either is blank there."""
+    import numpy as np
+    x, y = np.array(a["top"]), np.array(b["top"])
+    if x.sum() < 0.5 or y.sum() < 0.5 or x.std() < 1e-3 or y.std() < 1e-3:
+        return None
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _seen(prev: Page, cur: Page, ps: list[Page], i: int, text_letterhead: bool) -> list[tuple[float, str]]:
+    """Signs from the page images: page size and shape, paper, letterhead art."""
+    a, b = prev.look, cur.look
+    if not a or not b:
+        return []
+    sig = []
+    (wa, ha), (wb, hb) = a["size"], b["size"]
+    if (wa > ha) != (wb > hb):
+        sig.append((0.75, "turned to landscape" if wb > hb else "back to portrait"))
+    elif abs(wa - wb) > 0.03 * max(wa, wb) or abs(ha - hb) > 0.03 * max(ha, hb):
+        sig.append((1.5, f"a different page size ({_inches(a['size'])} → {_inches(b['size'])})"))
+    if max(abs(x - y) for x, y in zip(a["paper"], b["paper"])) >= PAPER:
+        sig.append((1.0, "different paper (its colour or tone changes)"))
+    if not text_letterhead and b["ink"] > 0.002:
+        near = tops_alike(a, b)
+        for j in range(0, i - 1):
+            o = ps[j].look
+            same = o and tops_alike(o, b)
+            # a letterhead is on a first page and not on the page after it (a running header is on both)
+            after = ps[j + 1].look and tops_alike(o, ps[j + 1].look) if o else None
+            if same is not None and same >= SAME_TOP and (near is None or near < UNLIKE_TOP) \
+                    and (after is None or after < UNLIKE_TOP) and (j == 0 or _opening(ps[j])):
+                sig.append((1.25, f"the top of the page looks like page {ps[j].n}'s (the same letterhead?)"))
+                break
+    return sig
+
+
+def other_sheet(prev: Page, cur: Page) -> bool:
+    """The page is a different size or on different paper from the one before."""
+    a, b = prev.look, cur.look
+    if not a or not b:
+        return False
+    (wa, ha), (wb, hb) = a["size"], b["size"]
+    size = abs(wa - wb) > 0.03 * max(wa, wb) or abs(ha - hb) > 0.03 * max(ha, hb)
+    return size or max(abs(x - y) for x, y in zip(a["paper"], b["paper"])) >= PAPER
+
+
+PAPER = 18           # a change in the paper's colour, in any channel (0-255), that counts
+SAME_TOP = 0.92      # tops this alike (correlation) look like the same letterhead
+UNLIKE_TOP = 0.5     # and the pages between don't look like it
 
 
 # -- do two pages look like the same document? ----------------------------------------------------
@@ -414,9 +524,12 @@ def score(ps: list[Page], i: int, sim: dict | None = None) -> dict:
     if cur.chars < 10:
         sig.append((-1.0, "a page with no text"))
     if _runs_on(prev, cur):
-        # a lowercase start after an unfinished line is also what two documents' middle pages look like
-        sig.append((-0.75, "a sentence seems to run on from the page before, though the pages look unalike")
-                   if unlike(sim) else (-3.0, "a sentence runs on from the page before"))
+        # a lowercase start after an unfinished line is also what two documents' middle pages look
+        # like; and a sentence doesn't go on onto a sheet of another size or paper
+        if unlike(sim) or other_sheet(prev, cur):
+            sig.append((-0.75, "a sentence seems to run on from the page before, though the pages look unalike"))
+        else:
+            sig.append((-3.0, "a sentence runs on from the page before"))
     if any(_CONTINUED.search(x) for x in cur.lines[:3]):
         sig.append((-2.0, "marked continued"))
 
@@ -443,6 +556,9 @@ def score(ps: list[Page], i: int, sim: dict | None = None) -> dict:
             if [_norm(x) for x in ps[j].lines[:3]] == top and (j == 0 or _opening(ps[j])):
                 sig.append((1.5, f"the same letterhead or heading as page {ps[j].n}"))
                 break
+
+    # what the page images show (size, paper, letterhead art), when there are pictures
+    sig += _seen(prev, cur, ps, i, any("letterhead or heading" in r for _, r in sig))
 
     # scanned and native pages side by side
     if prev.ocr is not None and cur.ocr is not None and prev.ocr != cur.ocr:
@@ -605,6 +721,8 @@ def page_rows(ps: list[Page], bs: list[dict], which=None) -> list[dict]:
             row["footer"] = p.foot
         if not p.lines:
             row["blank"] = True
+        if p.look:
+            row["look"] = {"size": _inches(p.look["size"]), "paper": "#%02x%02x%02x" % p.look["paper"], "ink": p.look["ink"]}
         b = by.get(p.n)
         if b:
             row["starts_piece"] = {k: b[k] for k in ("strength", "level", "for", "against")}
