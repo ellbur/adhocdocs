@@ -260,3 +260,44 @@ def test_view_splits(api, capsys, monkeypatch):
     with pytest.raises(SystemExit):
         cli.view(["--matter", str(m.root), "meta", m.merged, "--splits", "exhibits"])
     assert "no split named 'exhibits'; its splits: letters" in capsys.readouterr().err
+
+
+# -- what the page images show ---------------------------------------------------------------------
+
+def _logo(page):
+    """Letterhead art with no text: a bar and a disc at the top of the page."""
+    page.draw_rect(pymupdf.Rect(60, 30, 260, 58), color=None, fill=(0.1, 0.2, 0.5))
+    page.draw_circle(pymupdf.Point(300, 44), 14, color=None, fill=(0.6, 0.1, 0.1))
+
+
+def _body(page, words, top=120):
+    text = " ".join(words)
+    page.insert_textbox(pymupdf.Rect(72, top, 540, page.rect.height - 72), text, fontsize=11)
+
+
+def test_page_images(m):
+    a = "the shipment was received at the dock and logged by the receiving clerk who noted the count".split() * 12
+    b = "our records show the account remains open pending review by the credit committee next quarter".split() * 12
+    c = "warehouse inventory for the third quarter shows adjustments across several storage bays".split() * 12
+    out = pymupdf.open()
+    p1 = out.new_page(width=612, height=792); _logo(p1); _body(p1, a)
+    p2 = out.new_page(width=612, height=792); _body(p2, a[40:] + a[:40], top=72)
+    p3 = out.new_page(width=612, height=1008)                       # legal size, on tinted paper
+    p3.draw_rect(p3.rect, color=None, fill=(0.93, 0.89, 0.78)); _body(p3, b, top=72)
+    p4 = out.new_page(width=612, height=792); _logo(p4); _body(p4, c)   # the first page's letterhead again
+    meta = {"custodian": "cust:a", "source": {"collection": "c", "path": "looks.pdf"}}
+    doc = ingest_bytes(m, out.tobytes(), "looks.pdf", meta)
+    mm = Matter(m.root)
+    ps = split.pages(mm, doc)
+    assert ps[2].look["size"] == (612, 1008) and ps[2].look["paper"][2] < 220 and ps[0].look["paper"] == (255, 255, 255)
+    by = {b["page"]: b for b in split.boundaries(ps)}
+    assert not any(k in r for r in by[2]["for"] for k in ("size", "paper", "top of the page"))
+    assert any("a different page size (8.5×11 in → 8.5×14 in)" == r for r in by[3]["for"])
+    assert any("different paper" in r for r in by[3]["for"])
+    assert any("looks like page 1's" in r for r in by[4]["for"]) and any("page size" in r for r in by[4]["for"])
+    # without the pictures, the same pages are weaker candidates
+    plain = {b["page"]: b for b in split.boundaries(split.pages(mm, doc, images=False))}
+    assert by[3]["strength"] > plain[3]["strength"] and by[4]["strength"] > plain[4]["strength"]
+    assert split.starts_at(split.boundaries(ps), "likely") == [3, 4]
+    row = split.page_rows(ps, list(by.values()), {3})[0]
+    assert row["look"]["size"] == "8.5×14 in" and row["look"]["paper"] != "#ffffff"
