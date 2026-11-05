@@ -568,7 +568,7 @@ impl Handler {
         match part {
             "text" => ok("text/plain; charset=utf-8", m.text(&layer.text).unwrap_or_default()),
             "segments" => json_resp(json!(m.segments(id))),
-            "geometry" => json_resp(json!(m.geometry(id))),
+            "geometry" => ok("application/json", m.geometry_json(id)),
             _ => not_found("no such part"),
         }
     }

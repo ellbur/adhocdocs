@@ -25,6 +25,19 @@ def parser(prog, doc):
     return p
 
 
+def _grain_arg(simple):
+    """--grain: one of ``simple``, or grains joined by + (thread+family: a thread with its attachments)."""
+    def check(v):
+        from . import metadocs
+        if v in simple:
+            return v
+        if metadocs.composite(v):
+            return metadocs.canonical_grain(v)
+        raise argparse.ArgumentTypeError(f"{v!r}: one of {', '.join(simple)}, or several of "
+                                         f"{', '.join(metadocs.COMPOSABLE)} joined by + (thread+family)")
+    return check
+
+
 def matter_everywhere(sub):
     """Accept --matter after the subcommand too, not only before it."""
     for sp in sub.choices.values():
@@ -168,6 +181,10 @@ def adhoc(argv=None):
     s.add_argument("--wait", action="store_true", help="run in the foreground")
     s = sub.add_parser("annotate-as-user", help=argparse.SUPPRESS)
     s.add_argument("--user", required=True)
+    s = sub.add_parser("meta-pane", help=argparse.SUPPRESS)      # the viewer's "list parts" links (read only)
+    s.add_argument("ref")
+    s.add_argument("--of", action="store_true")
+    s.add_argument("--splits", nargs="?", const="")
     s = sub.add_parser("ann-api", help="serve the annotation API (writes stamped `claude`) on a Unix socket")
     s.add_argument("--socket", help="default: $ADHOC_ANN_SOCKET or <matter>/run/annotations.sock")
     s = sub.add_parser("audit", help="the audit log: sessions, events, or a check that it is intact")
@@ -374,6 +391,11 @@ def adhoc(argv=None):
         out(m.logs["store"].append(op="withdraw", doc=doc, reason=a.reason))
     elif a.cmd == "view":
         out({"viewer": viewmod.launch(m, a.user, a.wait), "socket": str(viewmod.socket_path(m))})
+    elif a.cmd == "meta-pane":
+        # The viewer's own "list parts" links: a list pane's files, as `view meta` makes them (host only, reads only).
+        header, items = meta_list(m, a.ref, a.of, a.splits)
+        files, sequence = viewmod.list_html(m, (header, items))
+        out({"files": files, "sequence": sequence, "title": header["title"]})
     elif a.cmd == "annotate-as-user":
         # The viewer's write path for the user's own tags and notes (host only).
         out({"events": annotations.write(m, f"user:{a.user}", json.loads(sys.stdin.read()))})
@@ -1074,7 +1096,7 @@ def search(argv=None):
     p.add_argument("--layers", default="primary", help="primary, all, or a view (native, ocr, …)")
     p.add_argument("--in", dest="in_kinds", action="append", default=[], help="segment kinds: body, quoted, header, …")
     p.add_argument("--by", choices=["doc", "hit"], default="doc")
-    p.add_argument("--grain", choices=["doc", "new", "thread", "family", "copies", "versions", "bundle"], default="doc",
+    p.add_argument("--grain", type=_grain_arg(("doc", "new", "thread", "family", "copies", "versions", "bundle")), default="doc",
                    help="report metadocuments: what each message adds, threads, families, copies, versions, bundles")
     p.add_argument("--limit", type=int, help="ranked searches; keyword and grep return everything by default")
     p.add_argument("--list", dest="list_file", help="also write the results as a list file")
@@ -2313,6 +2335,27 @@ prints the pane's new HTML.
 """
 
 
+def meta_list(m, ref, of=False, splits=None):
+    """(header, items) for `view meta` and the viewer's own "list parts"
+    links (adhoc meta-pane): a metadocument's parts, everything a document
+    is part of (``of``), or its recorded splits (``splits``: "" for all, or
+    a split's name)."""
+    from . import metadocs
+    ann = annotations.Annotations.load(m)
+    if of or splits is not None:
+        if metadocs.is_ref(ref):
+            raise ValueError("--of and --splits take a document, not a metadocument")
+        doc = m.state.follow(locators.parse("doc:" + ref.removeprefix("doc:"), m.objects)["doc"])
+        if of:
+            return metadocs.around_list(m, doc, ann)
+        from . import split
+        return split.splits_list(ann, doc, metadocs.Units(m, ann).name(doc), splits or None)
+    if not metadocs.is_ref(ref):
+        raise ValueError(f"{ref} is a document: name a metadocument ({', '.join(metadocs.PREFIXES)}), "
+                         "or use --of (everything it is in) or --splits")
+    return metadocs.list_of(m, ref, ann)
+
+
 def where(s):
     """Which window a new pane goes in (a command naming a pane goes to its window)."""
     g = s.add_mutually_exclusive_group()
@@ -2468,23 +2511,7 @@ def view(argv=None):
              "title": header.get("title") or Path(a.file).stem, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
     elif a.cmd == "meta":
-        from . import metadocs
-        ann = annotations.Annotations.load(m)
-        if a.of or a.splits is not None:
-            if metadocs.is_ref(a.ref):
-                raise ValueError("--of and --splits take a document, not a metadocument")
-            doc = m.state.follow(locators.parse("doc:" + a.ref.removeprefix("doc:"), m.objects)["doc"])
-            if a.of:
-                header, items = metadocs.around_list(m, doc, ann)
-            else:
-                from . import split
-                u = metadocs.Units(m, ann)
-                header, items = split.splits_list(ann, doc, u.name(doc), a.splits or None)
-        else:
-            if not metadocs.is_ref(a.ref):
-                raise ValueError(f"{a.ref} is a document: name a metadocument ({', '.join(metadocs.PREFIXES)}), "
-                                 "or use --of (everything it is in) or --splits")
-            header, items = metadocs.list_of(m, a.ref, ann)
+        header, items = meta_list(m, a.ref, a.of, a.splits)
         if a.list_file:
             lists.write(a.list_file, header, items)
         files, sequence = viewmod.list_html(m, (header, items))
@@ -2632,7 +2659,7 @@ def _graph_opts(s):
                         "HOPS steps out from the documents already in the graph (default 1)")
     s.add_argument("--email", action="store_true",
                    help="add who emailed whom, from the headers, for people whose aliases hold their addresses")
-    s.add_argument("--grain", choices=["doc", "family", "thread", "copies", "versions", "bundle"], default="doc",
+    s.add_argument("--grain", type=_grain_arg(("doc", "family", "thread", "copies", "versions", "bundle")), default="doc",
                    help="gather documents into metadocuments: one node per family, thread, item, text or bundle")
 
 
@@ -2809,6 +2836,9 @@ document in it:
   versions:D   every draft, revision and copy of D's text (estimated)
   new:D        what message D adds: its text without the quoted part
   bundle:B     a recorded bundle, by ID, ID prefix or name
+  thread+family:D   grains joined by +: everything reachable through any
+               of them (a thread with all its attachments; add +copies for
+               every copy). Any of thread, family, copies, versions
 
   meta grains                       the grains and what each means
   meta show REF [--list FILE]       what REF names: its documents and parts
@@ -2907,6 +2937,9 @@ def meta(argv=None):
         for g, what in metadocs.GRAINS.items():
             out({"grain": g, "means": what})
         out({"grain": "bundle", "means": "a set of documents or parts of them someone recorded as one (ann bundle)"})
+        out({"grain": "A+B", "means": f"grains joined (any of {', '.join(metadocs.COMPOSABLE)}): everything reachable "
+                                      "through any of them, step after step. thread+family is a thread with all its "
+                                      "attachments; thread+family+copies adds every copy"})
         return
     m = Matter.find(a.matter)
     if a.cmd in ("split", "splits"):

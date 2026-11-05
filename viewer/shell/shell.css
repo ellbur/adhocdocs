@@ -138,6 +138,7 @@ body.drag-h { cursor: row-resize; }
 .chip.carried { background: var(--warn-bg); outline: 1px dotted var(--warn-line); outline-offset: 1px; cursor: pointer; }
 .pane-links { padding: 3px 10px; color: var(--muted); border-bottom: 1px solid var(--line); flex: none; font-size: 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .pane-links .grp { display: inline-flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
+.pane-links .partof { margin-left: auto; white-space: nowrap; }     /* "All of it…": everything the document is part of */
 .pane-links a { color: var(--accent); cursor: pointer; }
 .pane-links a:hover { text-decoration: underline; }
 /* stepping: the sequence and the highlights, with buttons (] and [ do the same) */
@@ -541,3 +542,6 @@ ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .ann.bundle { border-left: 3px solid #b79cff; }
 .ann.bundle-note { border-left: 3px solid #b79cff; margin-left: 10px; }
 .ann .bundle-parts a { margin-right: 4px; }
+.ann .bundle-acts { display: block; color: var(--muted, #888); }
+.split-h { font-size: 11px; color: var(--muted); margin: 6px 0 2px; }
+.split-h a { color: var(--accent); cursor: pointer; }

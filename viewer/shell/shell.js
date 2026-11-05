@@ -694,6 +694,7 @@ class DocumentPane {
 
   async open(locIn, opts = {}) {
     this.openedAt = performance.now();        // for open_ms: until the first page (or text) is showing
+    this.firstPage = new Promise((r) => { this.firstPageShown = r; });
     const loc = parseLoc(locIn);
     const info = await docInfo(loc.doc);
     const fresh = !this.info || this.info.doc !== info.doc;
@@ -807,7 +808,10 @@ class DocumentPane {
         x.doc, (x.name || x.doc) + pct(x)]).concat(xs.length > 6 ? [[`+${xs.length - 6} more`, null, "Ask Claude: graph show this document --doc-links"]] : [])]);
     }
     this.links.replaceChildren(...groups.map(([label, ds]) => el("span", { class: "grp" }, label + ":",
-      ...ds.map(([t, d, tip]) => el("a", { title: tip || d, onclick: () => d && open(d) }, t)))));
+      ...ds.map(([t, d, tip]) => el("a", { title: tip || d, onclick: () => d && open(d) }, t)))),
+      // all of it at once: its thread, family, copies, versions and bundles, with their parts, in a list pane
+      ...(groups.length ? [el("a", { class: "partof", title: "Everything this document is part of, each with its parts, in a list pane",
+        onclick: () => metaPane(["doc:" + info.doc, "--of"], this) }, "Everything it’s part of…")] : []));
     this.links.hidden = !groups.length;
     this.setFetchNote(this.fetchNote);          // the head was just rebuilt
     this.renderStrip();
@@ -852,6 +856,10 @@ class DocumentPane {
       { label: "PDF with annotations", hint: n ? `${n} marked` : "none yet", disabled: !n || (!info.pages && !layer),
         title: "Tags, notes and highlights marked on the pages, notes as PDF comments (or numbered, at the end)", onclick: () => this.exportAs("annotated") },
       { label: "Text", hint: ".txt", disabled: !layer, title: "The extracted text of this layer: what search and Claude read", onclick: () => this.exportAs("text") }];
+    items.push("-", { label: "What it's part of", hint: "a list", title: "Its thread, family, copies, versions and bundles, each with its parts, in a list pane beside it",
+      onclick: () => metaPane(["doc:" + info.doc, "--of"], this) });
+    if (bundlesOf(info.doc).some((b) => b.split)) items.push({ label: "Its splits", hint: "a list", title: "The ways it has been split into pieces, a row per piece",
+      onclick: () => metaPane(["doc:" + info.doc, "--splits"], this) });
     if (info.pages) items.push("-", { label: "Crop blank margins", checked: cropMargins(), title: "Show only the part of each page with something on it, larger (for every paginated document)",
       onclick: () => setCropMargins(!cropMargins()) });
     if (modes.includes("hex") && modes.length > 1) items.push("-", this.mode === "hex"
@@ -1039,7 +1047,12 @@ class DocumentPane {
     this.setupRegionSelect(wrap);
     const layer = this.currentLayer();
     if (layer?.geometry) {
+      // The viewer answers one request at a time: ask for the words only once the first
+      // page is showing, or they would be answered first and the page would wait (VIEWER.md)
+      if (!cache.geometry[layer.id]) await Promise.race([this.firstPage, new Promise((r) => setTimeout(r, 1500))]);
+      if (gen !== this.pagesGen) return;
       const [geo, t] = await Promise.all([geometry(layer.id), layerText(layer.id)]);
+      if (gen !== this.pagesGen) return;
       this.words = { geo, cps: t.cps };
       for (const p of this.pageEls) if (p.dataset.filled) this.fillWords(p);
     }
@@ -1113,6 +1126,7 @@ class DocumentPane {
     this.drawBoxes();
   }
   shown() {
+    this.firstPageShown?.();
     if (this.openedAt === null) return;
     this.timings = [...(this.timings || []).slice(-49), Math.round(performance.now() - this.openedAt)];
     this.openedAt = null;
@@ -1124,7 +1138,12 @@ class DocumentPane {
     if (!s || s.position + 1 >= s.items.length || !this.pageWidth) return;
     try {
       const info = await docInfo(parseLoc(s.items[s.position + 1]).doc);
-      if (info.pages) fetch(this.pageURL(info.doc, 1));
+      if (!info.pages) return;
+      await fetch(this.pageURL(info.doc, 1));
+      // then its words, so the text layer is there as soon as it opens: but not a long
+      // document's, which would hold up a page the user asks for meanwhile
+      const layer = info.layers.find((l) => l.primary) || info.layers[0];
+      if (layer?.geometry && info.pages.length <= 40) await Promise.all([geometry(layer.id), layerText(layer.id)]);
     } catch {}
   }
   boxesFor(s, e) {
@@ -1894,8 +1913,17 @@ class DocumentPane {
     const bundles = bundlesOf(doc);
     const shownBundles = bundles.filter((b) => inFacet("bundle", b.bundle));
     if (shownBundles.length) kids.push(el("div", { class: "side-h", title: "Bundles: documents, or parts of them, treated as one. Tags and notes here are on the whole bundle." }, "In bundles"));
+    const splitsShown = new Set();
     for (const b of shownBundles) {
       const mine = b.parts.filter((p) => p.doc === doc);
+      // a split's pieces come under one heading, with a way to list them all
+      if (b.split && !splitsShown.has(b.split.name)) {
+        splitsShown.add(b.split.name);
+        kids.push(el("div", { class: "split-h", title: "A way of dividing this document into pieces (meta split). There can be several." },
+          `Split “${b.split.name}” · ${b.split.pieces} pieces · `,
+          el("a", { title: "Every piece, a row each, in a list pane: pick one to go to it",
+            onclick: () => metaPane(["doc:" + (b.split.of || doc), "--splits", b.split.name], this) }, "list them")));
+      }
       const others = [...new Set(b.parts.map((p) => p.doc).filter((d) => d !== doc))];
       const btags = A.tags.filter((t) => t.target.bundle === b.bundle).map((t) => t.tag);
       // a piece of a split of this document (split.py) is named without the document's name, and is pages, not passages
@@ -1914,7 +1942,11 @@ class DocumentPane {
           el("a", { title: "Open this part", onclick: (e) => { e.stopPropagation(); this.open(b.parts.find((p) => p.doc === d).select
             ? locString(b.parts.find((p) => p.doc === d)) : "doc:" + d, { source: "pane" }); } }, `part ${i + 1} `)),
           ...(others.length > 8 ? [el("span", {}, `+${others.length - 8} more`)] : []))] : []),
-        el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "note", target: { bundle: b.bundle } }, `Note on the bundle “${b.name}”`); } }, "note on the bundle")));
+        el("span", { class: "bundle-acts" },
+          // a split's pieces are listed together, from the heading above them
+          ...(piece ? [] : [el("a", { title: "Its parts in a list pane, with a preview",
+            onclick: (e) => { e.stopPropagation(); metaPane(["bundle:" + b.bundle], this); } }, "list parts"), " · "]),
+          el("a", { onclick: (e) => { e.stopPropagation(); noteEditor({ op: "note", target: { bundle: b.bundle } }, `Note on the bundle “${b.name}”`); } }, "note on the bundle"))));
       const bnotes = A.notes.filter((n) => n.target?.bundle === b.bundle && inFacet("note", n.note));
       const btop = bnotes.filter((n) => !n.parent || !bnotes.some((p) => p.note === n.parent));
       const bthread = (n, depth) => {
@@ -2721,6 +2753,26 @@ async function refreshAnnotations() {
     else if (entitiesChanged) entityCard.refresh();
   } catch {}
 }
+// "list parts": the host tool (adhoc meta-pane, as `view meta`) lists a
+// metadocument's parts; the pane opens beside the one asked from, with a preview
+const metaWaiting = new Map();
+let metaSeq = 0;
+function metaPane(args, from) {
+  const id = ++metaSeq;
+  metaWaiting.set(id, from?.id);
+  toast("Listing…");
+  post({ type: "meta-pane", id, args });
+}
+adhoc.metaPaneReady = async (id, r) => {
+  const from = metaWaiting.get(id);
+  metaWaiting.delete(id);
+  if (r.error || r.refused) { toast(r.error || r.refused); return; }
+  const p = addPane(new WebPane(newPaneId(), "list", r.content, r.title), true, from ? { beside: from } : {});
+  p.sequence = r.sequence || null;
+  // the document pane it was asked from is its preview: a row opens where the user was reading
+  p.link = from && paneKind(from) === "document" ? from : addPane(new DocumentPane(newPaneId()), false, { beside: p.id }).id;
+  renderTabs();
+};
 const annotateWaiting = new Map();
 let annotateSeq = 0;
 function annotate(request) {

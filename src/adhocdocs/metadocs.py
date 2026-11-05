@@ -38,19 +38,47 @@ GRAINS = {
     "copies": "one item, however many copies: exact duplicates, the same text in another format, "
               "the same message from several custodians",
     "versions": "every draft, revision and copy of a text (near-duplicates, estimated)",
-    "new": "what a message adds: its own text without the text it quotes; copies count once, "
-           "and quoted text counts for the message that wrote it",
+    "new": "what a document adds: a message's own text without the text it quotes, a revision's changes "
+           "over the version before it; copies count once, and quoted or kept text counts for the "
+           "document that wrote it",
 }
 _BREAK = __import__("re").compile(r"\n[>|\s]*\n|:[ \t]*\n")
 PREFIXES = tuple(f"{g}:" for g in GRAINS if g != "doc") + ("bundle:",)
+# Grains that combine: "thread+family" is everything reachable from a document
+# through its thread or its family (a thread with its attachments, and the
+# attachments' other threads), "thread+family+copies" adds every copy, and so
+# on. Written in this order, whatever order they were asked for in.
+COMPOSABLE = ("thread", "family", "copies", "versions")
 
 
 class MetaError(ValueError):
     pass
 
 
+def composite(grain: str) -> tuple[str, ...] | None:
+    """The grains a combined grain joins ("family+thread" -> ("thread", "family")), or None."""
+    parts = grain.split("+")
+    if len(parts) < 2 or len(set(parts)) != len(parts) or not all(x in COMPOSABLE for x in parts):
+        return None
+    return tuple(g for g in COMPOSABLE if g in parts)
+
+
+def canonical_grain(grain: str) -> str:
+    """A grain's own name: a combined one with its parts in their usual order."""
+    c = composite(grain)
+    return "+".join(c) if c else grain
+
+
+def is_grain(grain: str) -> bool:
+    return grain in GRAINS or composite(grain) is not None
+
+
 def is_ref(s) -> bool:
-    return isinstance(s, str) and s.startswith(PREFIXES)
+    if not isinstance(s, str) or ":" not in s:
+        return False
+    if s.startswith(PREFIXES):
+        return True
+    return composite(s.partition(":")[0]) is not None
 
 
 class _Union:
@@ -82,6 +110,7 @@ class Units:
         self._fields = self._threads = self._links = None
         self._groups = {}
         self._texts = {}
+        self._previous = {}
 
     # -- what is known about documents ---------------------------------------------------
 
@@ -187,6 +216,42 @@ class Units:
                                             for ds in members.values() for r in [rep[ds[0]]]}
         return rep
 
+    def _joined(self, grains: tuple[str, ...]) -> dict:
+        """doc -> representative, for a combined grain: the documents joined
+        through any of ``grains``, step after step, until nothing new joins
+        (so an attachment brings its email, the email its thread, and the
+        thread's other emails their attachments)."""
+        key = "+".join(grains)
+        if key in self._groups:
+            return self._groups[key]
+        u = _Union()
+        for d in self.live:
+            u.find(d)
+        for g in grains:
+            if g == "family":
+                for d in self.live:
+                    u.union(d, self.family_root(d))
+            elif g == "thread":
+                for d in self.live:
+                    t = self.threads.get(d)
+                    if t:
+                        u.union(d, t[1]["messages"][0]["loc"][4:])
+            else:
+                rep = self._grouped(g)
+                for d in self.live:
+                    u.union(d, rep.get(d, d))
+        members = defaultdict(list)
+        for d in self.live:
+            members[u.find(d)].append(d)
+        rep = {}
+        for ds in members.values():
+            r = min(ds, key=self._order)
+            for d in ds:
+                rep[d] = r
+        self._groups[key] = rep
+        self._groups[key + "/members"] = {rep[ds[0]]: sorted(ds, key=self._order) for ds in members.values()}
+        return rep
+
     def unit(self, doc: str, grain: str) -> str:
         """The unit at ``grain`` that holds ``doc``, by its canonical name."""
         doc = self.state.follow(doc)
@@ -201,7 +266,10 @@ class Units:
             return f"{grain}:" + self._grouped("copies").get(doc, doc)
         if grain == "versions":
             return "versions:" + self._grouped("versions").get(doc, doc)
-        raise MetaError(f"no grain {grain!r}: {', '.join(GRAINS)}")
+        if composite(grain):
+            key = canonical_grain(grain)
+            return f"{key}:" + self._joined(composite(grain)).get(doc, doc)
+        raise MetaError(f"no grain {grain!r}: {', '.join(GRAINS)}, or several of {', '.join(COMPOSABLE)} joined by +")
 
     def docs(self, ref: str) -> list[str]:
         """The documents a reference covers (whole or in part), oldest first."""
@@ -209,9 +277,14 @@ class Units:
         if grain == "bundle":
             b = self.bundle(seed)
             return list(dict.fromkeys(self.state.follow(p["doc"]) for p in b["parts"]))
+        if composite(grain):
+            doc = self._doc(seed)
+            key = canonical_grain(grain)
+            r = self._joined(composite(grain)).get(doc, doc)
+            return self._groups[key + "/members"].get(r, [doc])
         if grain == "doc" or grain not in GRAINS:
             if grain != "doc":
-                raise MetaError(f"not a metadocument: {ref} (use {', '.join(PREFIXES)})")
+                raise MetaError(f"not a metadocument: {ref} (use {', '.join(PREFIXES)}, or grains joined by +)")
             return [self._doc(seed)]
         doc = self._doc(seed)
         if grain == "family":
@@ -274,6 +347,83 @@ class Units:
             out.append((pos, len(text)))
         return out
 
+    # -- what a revision adds over the version before it --------------------------------------
+
+    def previous_version(self, doc) -> str | None:
+        """The version a document revises: the nearest earlier one among its
+        versions (near-duplicates or one inside the other, estimated) with
+        different text. Copies don't count. None if it is the first."""
+        cache = self._previous
+        if doc not in cache:
+            copies = set(self.docs("copies:" + doc))
+            here = self._order(doc)
+            earlier = [d for d in self.docs("versions:" + doc) if d not in copies and self._order(d) < here
+                       and self.text(d) is not None]
+            mine = self.text(doc)
+            earlier = [d for d in earlier if mine is not None and self.text(d)[1] != mine[1]]
+            cache[doc] = earlier[-1] if earlier else None
+        return cache[doc]
+
+    def added_ranges(self, doc) -> list[tuple[int, int]] | None:
+        """The char ranges of what a document adds over the version before it:
+        words inserted or changed, compared as `analyze redline` compares them
+        (line breaks, hyphenation and case aside). None if it revises nothing."""
+        prev = self.previous_version(doc)
+        if prev is None:
+            return None
+        import difflib
+        _, ta, _ = self.text(prev)
+        _, tb, _ = self.text(doc)
+        xa, xb = self._words(prev), self._words(doc)
+        sm = difflib.SequenceMatcher(None, [w for w, _, _ in xa], [w for w, _, _ in xb], autojunk=False)
+        out: list[list[int]] = []
+        for op, _, _, j1, j2 in sm.get_opcodes():
+            if op in ("insert", "replace") and j2 > j1:
+                s, e = xb[j1][1], xb[j2 - 1][2]
+                if out and not tb[out[-1][1]:s].strip(" \t\n\f.,;:"):      # runs apart by spacing or punctuation join
+                    out[-1][1] = e
+                else:
+                    out.append([s, e])
+        return [(s, e) for s, e in out]
+
+    def new_ranges(self, doc) -> list[tuple[int, int]] | None:
+        """What a document says that isn't said before it: a message's text
+        without what it quotes; a revision's changes over the version before;
+        else all of it. None if it has no text."""
+        own = self.own_ranges(doc)
+        t = self.text(doc)
+        if own is None or t is None:
+            return own
+        quotes = any(g["kind"] == "quoted" for g in t[2])
+        if not quotes:
+            added = self.added_ranges(doc)
+            if added is not None:
+                return added
+        return own
+
+    def version_origin(self, doc, s, e) -> tuple[str, int, int] | None:
+        """Where words at ``doc`` [s, e) that a revision kept were first
+        written: the earliest version before it that has them, with their
+        range there. None if they are the revision's own."""
+        if any(a <= s and e <= b for a, b in (self.new_ranges(doc) or [])):
+            return None
+        want = [w for w, a, b in self._words(doc) if a < e and s < b]
+        if not want:
+            return None
+        found = None
+        d = self.previous_version(doc)
+        while d is not None:
+            ws = self._words(d)
+            words = [w for w, _, _ in ws]
+            hit = next((i for i in range(len(words) - len(want) + 1) if words[i:i + len(want)] == want), None)
+            if hit is None:
+                break
+            found = (d, ws[hit][1], ws[hit + len(want) - 1][2])
+            if any(a <= found[1] and found[2] <= b for a, b in (self.new_ranges(d) or [])):
+                break                       # that version wrote them
+            d = self.previous_version(d)
+        return found
+
     def members(self, ref: str) -> list[dict]:
         """The parts of a unit or bundle as locators (dicts): whole
         documents, or for ``new`` and bundles, ranges in them."""
@@ -282,8 +432,10 @@ class Units:
             return [dict(p) for p in self.bundle(seed)["parts"]]
         if grain == "new":
             doc = self.unit(self._doc(seed), "new")[4:]
-            ranges = self.own_ranges(doc)
+            ranges = self.new_ranges(doc)
             t = self.text(doc)
+            if ranges == [] and self.previous_version(doc):
+                return []                   # a revision that adds nothing
             if not ranges or t is None or ranges == [(0, len(t[1]))]:
                 return [{"doc": doc}]
             return [locators.char_locator(doc, t[0].id, t[1], s, e) for s, e in ranges]
@@ -299,8 +451,9 @@ class Units:
             out = {"ref": "bundle:" + b["bundle"], "grain": "bundle", "name": b["name"],
                    "summary": b.get("summary"), "by": b["by"], "parts": len(b["parts"])}
         else:
-            if grain not in GRAINS:
+            if not is_grain(grain):
                 raise MetaError(f"not a metadocument: {ref}")
+            grain = canonical_grain(grain)
             canon = self.unit(self._doc(ref.partition(":")[2]), grain)
             docs = self.docs(canon)
             rep = canon.partition(":")[2]
@@ -308,6 +461,10 @@ class Units:
             if grain == "new":
                 out["parts"] = len(self.members(canon))
                 out["copies"] = len(self.docs("copies:" + rep))
+                prev = self.previous_version(rep)
+                t = self.text(rep)
+                if prev and t is not None and not any(g["kind"] == "quoted" for g in t[2]):
+                    out["over"] = "doc:" + prev         # what it adds over this version
         dates = sorted(d[:10] for d in (self.date(x) for x in docs) if d)
         out.update({"documents": len(docs), "first": dates[0] if dates else None,
                     "last": dates[-1] if dates else None})
@@ -318,13 +475,18 @@ class Units:
         hold it or part of it."""
         doc = self._doc(doc)
         out = []
+        sizes = {}
         for g in GRAINS:
             if g == "doc":
                 continue
             ref = self.unit(doc, g)
-            n = len(self.docs(ref))
+            n = sizes[g] = len(self.docs(ref))
             if n > 1 or g == "new":
                 out.append(self.describe(ref))
+        # a thread with its attachments, when that is more than either alone
+        ref = self.unit(doc, "thread+family")
+        if len(self.docs(ref)) > max(sizes["thread"], sizes["family"]):
+            out.insert(1, self.describe(ref))
         for b in self.ann.bundles.values():
             if any(self.state.follow(p["doc"]) == doc for p in b["parts"]):
                 out.append(self.describe("bundle:" + b["bundle"]))
@@ -477,6 +639,20 @@ def regroup(m: Matter, items: list[dict], grain: str, units: Units | None = None
                     continue
                 add_hit(slot(own_unit, it.get("score")), doc, h, quoted=True)
                 continue
+            sel = (h.get("loc") or {}).get("select") or {}
+            if "char" in sel and u.previous_version(doc) is not None:
+                o = u.version_origin(doc, *sel["char"])
+                if o is not None:                   # words a revision kept: they count for the version that wrote them
+                    src, a, b = o
+                    x = slot(u.unit(src, "new"), it.get("score"))
+                    x.setdefault("kept_in", [])
+                    if "doc:" + doc not in x["kept_in"]:
+                        x["kept_in"].append("doc:" + doc)
+                    layer, text, _ = u.text(src)
+                    from .search import snippet
+                    add_hit(x, src, {"loc": locators.char_locator(src, layer.id, text, a, b), "in": ["body"],
+                                     "snippet": snippet(text, a, b)})
+                    continue
             add_hit(slot(own_unit, it.get("score")), doc, h)
     rows = []
     for x in out.values():
@@ -601,6 +777,25 @@ def part_items(u: Units, ref: str, group: str | None = None) -> list[dict]:
             sel = p.get("select") or {}
             what = _pages(sel) or ("passage" if sel else "whole document")
             items.append(item({**p, "doc": d}, part=f"{k}. {what} of {u.name(d)}" if sel else f"{k}. {u.name(d)}"))
+        return items
+    joined = composite(grain)
+    if joined and "family" in joined:
+        # each top-level item (an email, a loose file) in date order, its attachments under it
+        docs = u.docs(ref)
+        here = set(docs)
+        roots = sorted({u.family_root(d) if u.family_root(d) in here else d for d in docs}, key=u._order)
+
+        def walk(d, depth):
+            if d not in here:
+                return
+            here.discard(d)
+            items.append(item("doc:" + d, part="\u00a0\u00a0" * depth + ("↳ " if depth else "") + u.name(d)))
+            for c in u.state.children.get(d, []):
+                walk(c, depth + 1)
+        for r in roots:
+            walk(r, 0)
+        for d in sorted(here, key=u._order):                 # anything not under a root in the unit
+            items.append(item("doc:" + d, part=u.name(d)))
         return items
     docs = sorted(u.docs(ref), key=u._order)                 # copies, versions: oldest first
     for d in docs:

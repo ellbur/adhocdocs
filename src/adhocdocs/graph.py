@@ -1033,7 +1033,7 @@ def regrain(m: Matter, g: Graph, grain: str, ann: Annotations | None = None) -> 
             bs = sorted(u.ann.bundles_of(n["doc"]), key=lambda b: b["name"].casefold())
             if bs:
                 to[nid] = "unit:bundle:" + bs[0]["bundle"]
-        elif grain in metadocs.GRAINS:
+        elif metadocs.is_grain(grain):
             to[nid] = "unit:" + u.unit(n["doc"], grain)
         else:
             raise ValueError(f"no grain {grain!r}")

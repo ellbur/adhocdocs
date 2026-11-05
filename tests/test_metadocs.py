@@ -397,3 +397,100 @@ def test_view_meta_command(m, monkeypatch, capsys, tmp_path):
     with pytest.raises(SystemExit):
         cli.view(["--matter", str(m.root), "meta", msgs[1]])
     assert "is a document" in capsys.readouterr().err
+
+
+def test_meta_pane_for_the_viewer(m, capsys):
+    """The viewer's "list parts" links run `adhoc meta-pane`: the same pane as `view meta`, as files."""
+    import base64
+    from adhocdocs import cli
+    msgs, t = past_due(m)
+    capsys.readouterr()
+    cli.adhoc(["--matter", str(m.root), "meta-pane", "doc:" + msgs[1], "--of"])
+    r = json.loads(capsys.readouterr().out)
+    assert r["title"].startswith("Around ") and t["messages"][0]["loc"] in r["sequence"]
+    assert "thread:" in base64.b64decode(r["files"]["index.html"]).decode()
+    cli.adhoc(["--matter", str(m.root), "meta-pane", "thread:" + msgs[1]])
+    assert json.loads(capsys.readouterr().out)["title"].endswith("(thread)")
+    with pytest.raises(SystemExit):
+        cli.adhoc(["--matter", str(m.root), "meta-pane", "doc:" + msgs[1]])
+    assert "is a document" in capsys.readouterr().err
+
+
+# -- grains joined: a thread with its attachments ------------------------------------------------
+
+def test_joined_grains(m):
+    from adhocdocs import lists
+    u = metadocs.Units(m)
+    pod = named(m, "pod-TCF-889104.pdf")                    # an attachment of an email in the proof-of-delivery thread
+    email = u.family_root(pod)
+    thread = set(u.docs("thread:" + email))
+    joined = u.docs("family+thread:" + pod)                 # named in either order, from any member
+    assert pod not in thread and set(joined) == thread | {pod} | {d for t in thread for d in u.docs("family:" + t)}
+    assert u.unit(pod, "family+thread") == u.unit(email, "thread+family") == "thread+family:" + joined[0]
+    assert metadocs.is_ref("family+thread:" + pod) and not metadocs.is_ref("thread+thread:" + pod)
+    assert metadocs.canonical_grain("versions+thread") == "thread+versions" and metadocs.composite("doc+thread") is None
+    with pytest.raises(metadocs.MetaError):
+        u.unit(pod, "thread+new")
+    # copies join too: the other custodian's copy of each message is already in its thread; +copies adds the rest
+    assert set(u.docs("thread+family+copies:" + pod)) >= set(joined)
+
+    d = u.describe("thread+family:" + pod)
+    assert d["grain"] == "thread+family" and d["documents"] == len(joined)
+    _, items = metadocs.list_of(m, "thread+family:" + pod)
+    at = [it["loc"] for it in items].index("doc:" + pod)
+    assert items[at]["fields"]["part"].lstrip(" ").startswith("↳") and items[at - 1]["loc"] == "doc:" + email
+    # what a document is part of includes it, when it is more than the thread or the family
+    assert any(x["grain"] == "thread+family" for x in u.units_of(pod))
+
+
+def test_search_and_tags_at_a_joined_grain(m, capsys):
+    from adhocdocs import cli
+    pod = named(m, "pod-TCF-889104.pdf")
+    items = search(m, '"proof of delivery"')
+    units = metadocs.regroup(m, items, "thread+family")
+    assert units and all(x["unit"].startswith("thread+family:") for x in units)
+    assert len(units) <= len(metadocs.regroup(m, items, "thread"))
+    capsys.readouterr()
+    cli.search(["--matter", str(m.root), '"proof of delivery"', "--grain", "family+thread"])
+    head = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert head["grain"] == "thread+family"
+    with pytest.raises(SystemExit):
+        cli.search(["--matter", str(m.root), "x", "--grain", "thread+new"])
+    assert "joined by +" in capsys.readouterr().err
+    # a joined unit is a target like any metadocument: each of its documents
+    targets = cli._targets(m, ["thread+family:" + pod])
+    assert {t["doc"] for t in targets} == set(metadocs.Units(m).docs("thread+family:" + pod))
+
+
+# -- what a revision adds over the version before it ----------------------------------------------
+
+def test_new_for_a_revision(m):
+    u = metadocs.Units(m)
+    v1 = named(m, "memo-collection-bellwether-2026-03-16.pdf")
+    v2 = named(m, "memo-collection-bellwether-2026-03-18-rev.pdf")
+    assert u.previous_version(v2) == v1 and u.previous_version(v1) is None
+    text = u.text(v2)[1]
+    added = [text[a:b] for a, b in u.new_ranges(v2)]
+    assert any("Carrier position" in x for x in added) and "REVISED" in added
+    assert not any("Raymond Voss" in x for x in added)              # kept from the first version
+    parts = u.members("new:" + v2)
+    assert parts and all("char" in p["select"] for p in parts)
+    d = u.describe("new:" + v2)
+    assert d["over"] == "doc:" + v1
+    assert u.members("new:" + v1) == [{"doc": v1}]                  # the first version: all of it is its own
+    # kept words go back to the version that wrote them
+    s = text.index("Raymond Voss")
+    src, a, b = u.version_origin(v2, s, s + len("Raymond Voss"))
+    assert src == v1 and u.text(v1)[1][a:b] == "Raymond Voss"
+    s = text.index("Carrier position")
+    assert u.version_origin(v2, s, s + 16) is None
+
+
+def test_search_new_counts_kept_words_once(m):
+    v1 = named(m, "memo-collection-bellwether-2026-03-16.pdf")
+    v2 = named(m, "memo-collection-bellwether-2026-03-18-rev.pdf")
+    units = metadocs.regroup(m, search(m, "Bellwether"), "new")
+    first = next(x for x in units if x["unit"] == metadocs.Units(m).unit(v1, "new"))
+    assert "doc:" + v2 in first.get("kept_in", [])
+    units = metadocs.regroup(m, search(m, '"Carrier position"'), "new")
+    assert [x["unit"] for x in units] == [metadocs.Units(m).unit(v2, "new")]   # only the revision says it
