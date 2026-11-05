@@ -12,7 +12,8 @@ design doc), or **proposed**.
   of Principle 4.
 - **Ingestion and text extraction.** *Built* for PDF (with OCR), images,
   .eml and Outlook .msg with attachments, .docx, .xlsx, CSV, HTML, text,
-  and zip, mbox and Outlook PST/OST containers: `adhoc ingest`,
+  zip, mbox and Outlook PST/OST containers, and chat exports (Slack,
+  WhatsApp, RSMF; [CHATS.md](CHATS.md)): `adhoc ingest`,
   [TEXTLAYERS.md](TEXTLAYERS.md). Originals are never changed; text is a
   derived layer.
 - **Received productions.** *Built:* `adhoc ingest-production` takes a

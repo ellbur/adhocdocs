@@ -57,6 +57,11 @@ text is now at the old offsets.
   [RECEIVED.md](RECEIVED.md); a range spanning documents resolves to a
   list), `ctl:<number>` (a received document's control number), and `exh:12`, `exh:DX-12`, `exh:12#page=3` (through exhibit sets;
   pages are the exhibit's own, mapped back to the original's).
+- `msg=1705309380.000100` (or `msg=E2,E5` for a run of them) names a
+  chat message in a chat day by its ID, through `message` segments: an
+  alias for the `char` range of the message as shown, sender and time
+  included, so a quote says who wrote it and when ([CHATS.md](CHATS.md)).
+  IDs are percent-encoded.
 - `sheet=…&cells=B2:D10` resolves to the rectangle's text (tab-separated,
   one row per line), and its quote is that text; the viewer selects cells
   this way. Pages quote cells as a table, or inline joined by semicolons

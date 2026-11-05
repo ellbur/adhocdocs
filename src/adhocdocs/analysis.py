@@ -78,7 +78,8 @@ def threads(m: Matter, by_subject=False) -> list[dict]:
     for r in rows:
         node = node_of[r["doc"]]
         u.find(node)
-        parent = r["in_reply_to"] or (r["refs"][-1] if r["refs"] else None)
+        # a chat day's one reference is its conversation, not a parent
+        parent = r["in_reply_to"] or (r["refs"][-1] if r["refs"] and not r["refs"][-1].startswith("chat:") else None)
         if parent and parent != node:
             parent_of[node] = parent
             u.union(node, parent)
@@ -114,6 +115,7 @@ def threads(m: Matter, by_subject=False) -> list[dict]:
             messages.append({
                 "loc": "doc:" + first["doc"], "message_id": first["message_id"],
                 "date": first["date"], "subject": (fields.get(first["doc"]) or {}).get("subject"),
+                "title": (fields.get(first["doc"]) or {}).get("title"),
                 "from": (fields.get(first["doc"]) or {}).get("from"),
                 "depth": depth(node), "in_reply_to": parent_of.get(node),
                 "copies": sorted("doc:" + c["doc"] for c in copies if c is not first),
@@ -482,7 +484,7 @@ def people(m: Matter, mentions=False) -> list[dict]:
     meta = {}
     for d in state.live_documents():
         r = rows.get(d)
-        if r and r.get("kind") == "email":
+        if r and r.get("kind") in ("email", "chat"):
             meta[d] = m.objects.get_object(state.metadata[d])
     u = _Union()
     names = defaultdict(lambda: defaultdict(int))     # address -> display name -> count

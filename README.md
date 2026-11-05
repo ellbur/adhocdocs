@@ -80,6 +80,9 @@ Adding documents works for these formats:
 - PDF, including scans, which are OCRed
 - images
 - email (`.eml`, `.mbox`, Outlook `.msg` and `.pst`/`.ost`), with attachments
+- chat messages: Slack exports, WhatsApp exports and RSMF (how Teams,
+  iMessage and other chats are usually produced), each conversation a
+  document per day ([CHATS.md](CHATS.md))
 - `.docx` and `.xlsx`
 - CSV, HTML and text
 - JSON, JSON Lines and XML, kept as their text
@@ -91,7 +94,7 @@ its own reading of them, always marked as its reading
 ([DATA.md](DATA.md)).
 
 Originals are kept exactly as given, and identical files are stored once.
-Zip archives and mailboxes (`.mbox`, `.pst`) are read a member at a
+Zip archives, mailboxes (`.mbox`, `.pst`) and chat exports are read a member at a
 time, including when one is inside another or attached to an email, so
 they can be larger than memory. If an ingest is interrupted, run the same command
 again: it finishes the job without adding anything twice.
@@ -356,6 +359,7 @@ data system-wide, put `eng.traineddata` in
 - [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
 - [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
 - [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
+- [CHATS.md](CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
 - [METADOCS.md](METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
 - [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](DATES.md): the date strip and date cards: hover a date to see what came before and after

@@ -93,6 +93,9 @@ passes, a .docx with tracked changes accepted and with them shown.
 - Spreadsheets: one page per sheet (form feeds), so `page=` selects a sheet,
   and `sheet=…&cells=B2:D10` a rectangle of cells;
   cells hold the values Excel last calculated, not formulas.
+- A chat day (Slack, WhatsApp, RSMF) has a header block and one message
+  per line; each message is a `message` segment with its `id`, and
+  `msg=` locators name them ([CHATS.md](CHATS.md)).
 - A PDF whose pages are mostly lines numbered 1–25 is a transcript. Its
   layer gets `line` segments, and ingestion adds a derived `transcript` view
   without line numbers and page labels, made primary, so phrases read

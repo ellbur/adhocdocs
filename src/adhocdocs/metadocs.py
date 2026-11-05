@@ -34,7 +34,7 @@ from .matter import Matter
 GRAINS = {
     "doc": "the document itself, as ingested",
     "family": "a document with its parent and attachments: the top-level item and everything under it",
-    "thread": "an email conversation: every message in the thread, and their copies",
+    "thread": "an email conversation, or a chat's: every message in the thread (every day of the chat), and their copies",
     "copies": "one item, however many copies: exact duplicates, the same text in another format, "
               "the same message from several custodians",
     "versions": "every draft, revision and copy of a text (near-duplicates, estimated)",
@@ -159,6 +159,8 @@ class Units:
 
     def name(self, doc) -> str:
         row = self.fields.get(doc) or {}
+        if row.get("kind") == "chat":            # a conversation's day: "#shipping, 2024-01-15"
+            return row.get("title") or row.get("name") or doc[:12]
         return row.get("subject") or row.get("name") or doc[:12]
 
     def _order(self, doc):
