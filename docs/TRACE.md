@@ -128,3 +128,6 @@ follows the latest judgments (`analyze trace --again F --exclude …`).
   embedding model when it's installed.
 - A person's possession of a loose file is dated by the file, which may be
   long after they first had it.
+
+For contrary claims, who holds which and who changed their story, see
+[DISPUTES.md](DISPUTES.md): a dispute is traces, one per side.

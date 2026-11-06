@@ -210,6 +210,7 @@ to try on the sample matter:
 - *"Who are the people in this case, and how do they relate to each other?"*
 - *"Who is José Ibáñez? Show me every document that mentions him."*
 - *"Trace the pallet in Q-3: who knew about it, when, and how did each of them hear? Where does it turn up with no record of how it got there?"* ([TRACE.md](docs/TRACE.md))
+- *"Bellwether says the shipment was never received; Harrowgate says it arrived. Who says which, and when? Who said both, who changed their story, and who kept to it after a colleague said otherwise?"* ([DISPUTES.md](docs/DISPUTES.md))
 - Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
 - *"Add the key people and companies in this dispute to the entities, with a line on each."*
 - *"Record who works for whom, who signed what, and who handled the delivery, as links with their evidence."* Then a hover card lists each entity's connections; click one to go on to the next entity.
@@ -364,6 +365,7 @@ data system-wide, put `eng.traineddata` in
 - [GRAPH.md](docs/GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
 - [CHATS.md](docs/CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
 - [TRACE.md](docs/TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
+- [DISPUTES.md](docs/DISPUTES.md): contrary claims: who holds which side and when, who is on both, who switched, who kept to a side despite a colleague
 - [METADOCS.md](docs/METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
 - [RECEIVED.md](docs/RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
 - [DATES.md](docs/DATES.md): the date strip and date cards: hover a date to see what came before and after

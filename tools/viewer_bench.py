@@ -4,7 +4,7 @@
     tools/headless-viewer.sh MATTER &          # or a viewer on a real screen
     uv run python tools/viewer_bench.py MATTER [--display :99] [--pause 0.4]
 
-The viewer must be running for MATTER, its window focused. See VIEWER.md
+The viewer must be running for MATTER, its window focused. See docs/VIEWER.md
 (the 100 ms target)."""
 
 import argparse

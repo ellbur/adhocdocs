@@ -1,6 +1,6 @@
 #!/bin/sh
 # Run the viewer on a virtual screen, to check it where there is no display
-# (a cloud container, CI). See VIEWER.md, "Checking it without a screen".
+# (a cloud container, CI). See docs/VIEWER.md, "Checking it without a screen".
 #
 #   tools/headless-viewer.sh MATTER [:99]
 #

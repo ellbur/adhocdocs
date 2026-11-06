@@ -2464,6 +2464,13 @@ def view(argv=None):
     s.add_argument("--title")
     s.add_argument("--pane", help="replace this pane's content")
     s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
+    s = sub.add_parser("dispute", help="draw a dispute (analyze dispute --list) as a time DAG: events colored by "
+                                       "the sides their speakers take, switches and sides kept despite a colleague "
+                                       "in red (docs/DISPUTES.md)")
+    s.add_argument("file", help="a list file written by analyze dispute --list")
+    s.add_argument("--title")
+    s.add_argument("--pane", help="replace this pane's content")
+    s.add_argument("--preview", metavar="DOC_PANE", help="a document pane to follow the selection, in any window")
     s = sub.add_parser("facet", help="show the user one issue (a facet: ann --help), dimming what isn't filed under it")
     s.add_argument("facet", nargs="?", help="omit, or --clear, for every issue")
     s.add_argument("--clear", action="store_true")
@@ -2546,6 +2553,15 @@ def view(argv=None):
         c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
              "link": a.preview, "preview_new": not a.preview and not a.pane}
         shown = summary
+    elif a.cmd == "dispute":
+        from . import dispute as dispmod
+        header, _ = lists.read(a.file)
+        result, _ = dispmod.again(m, header)
+        title = a.title or header.get("title") or "Dispute"
+        files, sequence, summary = dispmod.dag_html(m, result, title)
+        c = {"cmd": "pane", "kind": "graph", "files": files, "sequence": sequence, "title": title, "update": a.pane,
+             "link": a.preview, "preview_new": not a.preview and not a.pane}
+        shown = summary
     elif a.cmd == "meta":
         header, items = meta_list(m, a.ref, a.of, a.splits)
         if a.list_file:
@@ -2622,8 +2638,8 @@ def view(argv=None):
             result["timeline"]["no_evidence"] = links_summary["no_evidence"]     # not shown: nothing to point at
     if a.cmd == "graph":
         result["graph"] = summary
-    if a.cmd == "trace":
-        result["trace"] = shown
+    if a.cmd in ("trace", "dispute"):
+        result[a.cmd] = shown
     if a.cmd == "meta":
         result["meta"] = shown
     out(result)
@@ -3119,6 +3135,37 @@ def _split(m, a):
 
 # -- analyze ---------------------------------------------------------------------------------
 
+class _Side(argparse.Action):
+    """--side NAME starts a side; --seed, --text, --query, --include and
+    --exclude after it are that side's."""
+
+    def __call__(self, p, ns, value, opt=None):
+        sides = getattr(ns, "sides", None) or []
+        if self.dest == "sides":
+            sides.append({"name": value, "seed": None, "text": None, "query": None, "include": [], "exclude": []})
+        else:
+            if not sides:
+                raise argparse.ArgumentError(self, "give --side NAME first: this belongs to a side")
+            key = self.dest.removeprefix("side_")
+            if key in ("include", "exclude"):
+                sides[-1][key].append(value)
+            elif sides[-1][key]:
+                raise argparse.ArgumentError(self, f"side {sides[-1]['name']!r} already has a {key}")
+            else:
+                sides[-1][key] = value
+        ns.sides = sides
+
+
+def _stances(xs):
+    out_ = []
+    for x in xs:
+        loc, sep, st = x.rpartition("=")
+        if not sep:
+            raise ValueError(f"--stance {x!r}: LOC=STANCE")
+        out_.append((loc if loc.lstrip().startswith(("{", "doc:", "tr:")) else "doc:" + loc, st))
+    return out_
+
+
 @run
 def analyze(argv=None):
     from . import analysis
@@ -3158,6 +3205,25 @@ def analyze(argv=None):
     s.add_argument("--list", dest="list_file", help="also write a list file of the appearances, in date order")
     s.add_argument("--again", metavar="LIST", help="trace again what a list file written by --list traced, "
                                                    "with any --include/--exclude added")
+    s = sub.add_parser("dispute", help="contrary claims: who holds which side and when, who is on both, who "
+                                       "switched, who kept to a side after a colleague said otherwise (docs/DISPUTES.md)",
+                       description="Each --side starts a claim, traced like analyze trace by the --seed, --text, "
+                                   "--query, --include and --exclude after it. Two sides that can't both be true: "
+                                   "denying one is the other's camp.")
+    s.add_argument("--side", action=_Side, dest="sides", metavar="NAME", help="a side: a few words for its claim")
+    s.add_argument("--seed", action=_Side, dest="side_seed", metavar="LOC", help="the side's seed passage")
+    s.add_argument("--text", action=_Side, dest="side_text", help="the side's seed passage's text")
+    s.add_argument("--query", action=_Side, dest="side_query", help="a keyword query for the side's claim: a "
+                   "sentence makes the claim when the query holds within it")
+    s.add_argument("--include", action=_Side, dest="side_include", metavar="LOC", help="a passage making the side's claim")
+    s.add_argument("--exclude", action=_Side, dest="side_exclude", metavar="LOC", help="a passage or document that doesn't")
+    s.add_argument("--stance", action="append", default=[], metavar="LOC=STANCE",
+                   help="judge the statement at LOC: asserts, qualifies, denies, doubts, rejects, reports, quotes, "
+                        "asks or supposes (repeatable)")
+    s.add_argument("--list", dest="list_file", help="also write a list file of the statements, in date order")
+    s.add_argument("--again", metavar="LIST", help="the dispute a list file written by --list holds, with any "
+                                                   "--stance judgments added")
+    s.add_argument("--full", action="store_true", help="also every side's appearances")
     s = sub.add_parser("around", help="what is near a date: documents, dated events, chronology entries")
     s.add_argument("date", help="YYYY-MM-DD")
     s.add_argument("--days", type=int, default=7, help="how far either side (default 7)")
@@ -3243,6 +3309,30 @@ def analyze(argv=None):
             lists.write(a.list_file, head, items)
             result["written"] = a.list_file
             result["next"] = f"view list {a.list_file}"
+        out(result)
+    elif a.cmd == "dispute":
+        from . import dispute
+        stances = _stances(a.stance)
+        if a.again:
+            head, _ = lists.read(a.again)
+            if getattr(a, "sides", None):
+                raise ValueError("--again takes the list's sides: add --stance judgments, not sides")
+            result, terms = dispute.again(m, head, stances)
+            sides, stances = terms["sides"], terms["stances"]
+            a.list_file = a.list_file or a.again
+        else:
+            sides = [dispute.side(**x) for x in (getattr(a, "sides", None) or [])]
+            for x in sides:
+                if x["seed"] and not x["seed"].lstrip().startswith(("{", "tr:", "doc:")):
+                    x["seed"] = "doc:" + x["seed"]
+            result = dispute.dispute(m, sides, stances)
+        if a.list_file:
+            head, items = dispute.to_list(result, sides, stances)
+            lists.write(a.list_file, head, items)
+            result["written"] = a.list_file
+            result["next"] = f"view dispute {a.list_file}"
+        if not a.full:
+            del result["appearances"]
         out(result)
     elif a.cmd == "redline":
         header, changes = analysis.redline(m, doc(a.a), doc(a.b))

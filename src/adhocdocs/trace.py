@@ -175,7 +175,7 @@ def find(m: Matter, text: str, docs=None) -> list[dict]:
             found.append((*rng, score))
         for s, e, score in found:
             for d, layer in by_text[h]:
-                out.append({"doc": d, "layer": layer.id, "range": [s, e], "score": round(score, 3),
+                out.append({"doc": d, "layer": layer.id, "range": [s, e], "hits": [[s, e]], "score": round(score, 3),
                             "how": "verbatim" if score >= VERBATIM else "edited"})
     return out
 
@@ -234,7 +234,7 @@ def find_query(m: Matter, query: str) -> list[dict]:
                 groups.append([sp])
         rows = (m.objects.get_object(state.metadata[d]).get("kind") if d in state.metadata else None) == "spreadsheet"
         for g in groups:
-            words = {textnorm.words(text[a:b])[0] if textnorm.words(text[a:b]) else "" for a, b in g}
+            words = {w for a, b in g for w in textnorm.words(text[a:b])}     # a phrase hit is all its words
             if terms >= 2 and len(words) < 2:
                 continue                    # one word alone isn't the fact
             a, b = _passage(text, g[0][0], g[-1][1], rows)
@@ -242,7 +242,8 @@ def find_query(m: Matter, query: str) -> list[dict]:
             if inner:                       # not out of its quoted part, or its chat message
                 x, y = max(inner)
                 a, b = max(a, x), min(b, y)
-            out.append({"doc": d, "layer": layer.id, "range": [a, b], "score": None, "how": "mentions"})
+            out.append({"doc": d, "layer": layer.id, "range": [a, b], "score": None, "how": "mentions",
+                        "hits": [[x, y] for x, y in g if a <= x and y <= b]})
     return out
 
 
@@ -400,7 +401,8 @@ def trace(m: Matter, seed: dict | None, query: str | None = None, include=(), ex
         if any(f["doc"] == d and f["range"][0] < sel["char"][1] and sel["char"][0] < f["range"][1] for f in found):
             continue
         found.append({"doc": d, "layer": r["loc"].get("layer") or state.primary_layer(state.documents[d]).id,
-                      "range": list(sel["char"]), "score": None, "how": "reworded", "included": True})
+                      "range": list(sel["char"]), "hits": [list(sel["char"])], "score": None, "how": "reworded",
+                      "included": True})
 
     occ = [_describe(m, u, rows, f) for f in found]
     occ.sort(key=lambda o: (o["_when"] is None, o["_when"] or datetime.min, o["doc"], o["range"][0]))
@@ -665,14 +667,15 @@ def again(m: Matter, head: dict, include=(), exclude=(), paraphrases: int = 0) -
 EDGE_WORDS = {"quoted": "quoted", "attached": "attached", "draft": "kept from a draft", "knew": "via someone"}
 
 
-def dag(result: dict) -> list[dict]:
+def dag(result: dict, extra=()) -> list[dict]:
     """The trace as a time DAG, in **strands**: the appearances joined by
     their routes, each group of connected ones a strand (a subplot), with
     no order claimed between strands. An event is a document with its
     copies and its other passages; an edge is a route from an earlier
     event; a gap is an event with a route from nowhere (``?``). Columns
     follow the routes, not the calendar: an event sits one step after the
-    latest event it came from."""
+    latest event it came from. ``extra``: more edges, ``(from appearance,
+    to appearance, label, kind)`` (a dispute's "despite")."""
     apps = result["appearances"]
     if not apps:
         return []
@@ -701,11 +704,15 @@ def dag(result: dict) -> list[dict]:
             if r["kind"] in ("knew",) or (r["kind"] == "attached" and r.get("person")):
                 who = next((p["name"] for p in o["people"] if p["person"] == r.get("person")), None)
                 word = f"via {_short(who)}" if who else word
-            edges.add((frm, to, word, bool(r.get("lower_bound"))))
+            edges.add((frm, to, word, bool(r.get("lower_bound")), "route"))
         elif r["kind"] == "unexplained" or r.get("missing"):
             events[to]["gap"] = "quoted from a message not in the matter" if r.get("missing") else "no record of how"
-    for frm, to, word, weak in sorted(edges):
-        events[to]["in"].append({"from": frm, "label": word, "weak": weak})
+    for a, b, word, kind in extra:
+        frm, to = event_of.get(a), event_of.get(b)
+        if frm is not None and to is not None and frm != to:
+            edges.add((frm, to, word, False, kind))
+    for frm, to, word, weak, kind in sorted(edges):
+        events[to]["in"].append({"from": frm, "label": word, "weak": weak, "kind": kind})
     # strands: connected groups of events
     parent = {i: i for i in events}
 
@@ -723,11 +730,15 @@ def dag(result: dict) -> list[dict]:
         strands[find(i)].append(events[i])
     out = []
     for root, evs in sorted(strands.items()):
-        col = {}
-        for e in evs:                              # in date order, so sources come first
-            col[e["id"]] = 1 + max((col.get(x["from"], 0) for x in e["in"]), default=-1 if not e["gap"] else 0)
+        by_id, col = {e["id"]: e for e in evs}, {}
+
+        def column(e, seen=()):
+            if e["id"] not in col:
+                ins = [by_id[x["from"]] for x in e["in"] if x["from"] not in seen]
+                col[e["id"]] = 1 + max((column(x, (*seen, e["id"])) for x in ins), default=-1 if not e["gap"] else 0)
+            return col[e["id"]]
         for e in evs:
-            e["column"] = col[e["id"]]
+            e["column"] = column(e)
         people = Counter(p["name"] for e in evs for o in e["appearances"] for p in o["people"])
         out.append({"events": evs, "people": [n for n, _ in people.most_common(4)],
                     "first": next((o["date"] for e in evs for o in e["appearances"] if o["date"]), None),
@@ -779,29 +790,34 @@ def _event_text(e: dict) -> tuple[str, str]:
     return first["name"], " · ".join([date, *([who] if who else []), *extra])
 
 
-def dag_html(m: Matter, result: dict, title: str) -> tuple[dict, list[str], dict]:
+def dag_html(m: Matter, result: dict, title: str, extra=(), decorate=None, intro=None) -> tuple[dict, list[str], dict]:
     """(files, sequence, summary): the time DAG as an SVG diagram for a
     viewer pane, like ``view graph``'s: a click on an event previews its
     passage in the linked document pane, and ]/[ step through the events,
-    strand by strand."""
+    strand by strand. ``extra`` as for ``dag``; ``decorate(event)`` gives
+    an event's ``class`` and ``sub`` line and ``tip`` lines (a dispute's
+    sides); ``intro`` replaces the line under the title."""
     import base64
     import html as html_
     from .graph import Graph, PAD, _layout, _path, _trim, CHAR_W, SUB_W
     esc = html_.escape
-    strands = dag(result)
+    strands = dag(result, extra)
     out = [f"<h2>{esc(title)}</h2>"]
     n_events = sum(len(s["events"]) for s in strands)
     n_gaps = sum(s["gaps"] for s in strands)
     out.append(f'<p class="adhoc-query">{n_events} events in {len(strands)} strand{"s" * (len(strands) != 1)}'
                + (f" · {n_gaps} gap{'s' * (n_gaps != 1)} (dashed ?)" if n_gaps else "")
+               + (f" · {intro}" if intro else "")
                + " · columns follow what came from what, not the calendar; strands are unrelated to each other"
                + " · click an event to see its passage</p>")
+    decorate = decorate or (lambda e: {})
     sequence, body, y0, width = [], [], 0.0, 0.0
     for k, s in enumerate(strands):
         g = Graph()
         col = {}
         for e in s["events"]:
             name, sub = _event_text(e)
+            sub = decorate(e).get("sub") or sub
             nid = f"e{e['id']}"
             g.node(nid, type="doc", label=name, kind=sub, date=None)
             col[nid] = e["column"]
@@ -811,7 +827,7 @@ def dag_html(m: Matter, result: dict, title: str) -> tuple[dict, list[str], dict
                 col[gid] = e["column"] - 1
                 g.edge(gid, nid, "gap", label="no record" if e["gap"] == "no record of how" else "not collected")
             for x in e["in"]:
-                g.edge(f"e{x['from']}", nid, "route", label=x["label"], weak=x["weak"])
+                g.edge(f"e{x['from']}", nid, x.get("kind", "route"), label=x["label"], weak=x["weak"])
         box, routes, w, h = _layout(g, col)
         head = f"Strand {k + 1}" + (f": {', '.join(s['people'])}" if s["people"] else "")
         body.append(f'<text class="adhoc-trace-strand" x="{PAD}" y="{y0 + 16:.0f}">{esc(head)}</text>')
@@ -841,16 +857,19 @@ def dag_html(m: Matter, result: dict, title: str) -> tuple[dict, list[str], dict
             e = next(ev for ev in s["events"] if f"e{ev['id']}" == nid)
             loc = e["appearances"][0]["loc"]
             sequence.append(loc)
-            tip = "\n".join([n["label"], n["kind"], *(f"#{o['n']} {o['how']}: {o['route']['text']}" for o in e["appearances"]),
+            dec = decorate(e)
+            tip = "\n".join([n["label"], n["kind"], *(dec.get("tip") or
+                                                      [f"#{o['n']} {o['how']}: {o['route']['text']}" for o in e["appearances"]]),
                              "", e["appearances"][0]["excerpt"]])
-            body.append(f'<g class="adhoc-graph-node type-doc{" adhoc-trace-gapped" if e["gap"] else ""}" '
+            cls = (" adhoc-trace-gapped" if e["gap"] else "") + (" " + dec["class"] if dec.get("class") else "")
+            body.append(f'<g class="adhoc-graph-node type-doc{cls}" '
                         f'data-locator="{esc(loc)}" transform="translate({x:.0f},{y:.0f})"><title>{esc(tip)}</title>'
                         f'<rect width="{bw:.0f}" height="{bh}" rx="4"/>'
                         f'<text x="8" y="14" class="adhoc-graph-name">{esc(_trim(n["label"], int((bw - 14) / CHAR_W)))}</text>'
                         f'<text x="8" y="26" class="adhoc-graph-sub">{esc(_trim(n["kind"], int((bw - 14) / SUB_W)))}</text></g>')
         for mx, my, text, kind in labels:
             lw = 8 + len(text) * 6.1
-            body.append(f'<g class="adhoc-graph-label{" derived" if kind == "gap" else ""}" '
+            body.append(f'<g class="adhoc-graph-label kind-{kind}{" derived" if kind == "gap" else ""}" '
                         f'transform="translate({mx - lw / 2:.0f},{my - 8:.0f})"><rect width="{lw:.0f}" height="15" rx="3"/>'
                         f'<text x="4" y="11">{esc(text)}</text></g>')
             w = max(w, mx + lw / 2 + PAD)
