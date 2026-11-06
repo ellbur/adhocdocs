@@ -233,7 +233,17 @@ def condense(m: Matter, sources: list[tuple[str, dict, list[dict]]], title=None,
 # -- editing a key set ---------------------------------------------------------------------------
 
 def _find(items, doc):
-    """(index of the top-level item, index of the child or None)."""
+    """(index of the top-level item, index of the child or None). ``doc`` is
+    a document hash, an item's whole locator (for a list that holds several
+    passages of one document), or ``@N``, the Nth top-level item."""
+    if doc.startswith("@") and doc[1:].isdigit():
+        if not 1 <= int(doc[1:]) <= len(items):
+            raise ValueError(f"no item {doc}: the list has {len(items)}")
+        return int(doc[1:]) - 1, None
+    exact = [(i, j) for i, it in enumerate(items)
+             for j, x in [(None, it), *enumerate(it.get("children", []))] if x["loc"] == doc]
+    if exact:
+        return exact[0]
     for i, it in enumerate(items):
         if _doc(it["loc"]) == doc:
             return i, None
@@ -254,6 +264,23 @@ def _take(items, doc) -> list[dict]:
         return [c]
     it = items.pop(i)
     return [it, *it.pop("children", [])]
+
+
+def add(items, locs: list[str]) -> list[str]:
+    """Add documents (or passages) as items of their own, after the rest:
+    for a key set, what a condense missed. A document already in the list,
+    as an item or under one, is refused rather than listed twice."""
+    added = []
+    for loc in locs:
+        doc = _doc(loc)
+        try:
+            i, j = _find(items, doc)
+        except ValueError:
+            items.append({"loc": loc})
+            added.append(loc)
+            continue
+        raise ValueError(f"doc:{doc} is already in this list" + (" (covered: list uncover it)" if j is not None else ""))
+    return added
 
 
 def set_fields(items, doc, values: dict, header=None):

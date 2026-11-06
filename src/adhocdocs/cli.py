@@ -659,12 +659,25 @@ def layers(argv=None):
     state = m.state
     content = state.documents.get(h, h)
     primary = state.primary_layer(content)
+    if not state.layers.get(content):
+        # say so, and why, rather than print nothing
+        meta = m.objects.get_object(state.metadata[h]) if h in state.metadata else {}
+        kids = state.children.get(h, [])
+        why = (f"a container: its text is in its {len(kids)} parts (`meta show family:{h}`)" if kids else
+               "no text was extracted: a scan with no text layer, OCR not run or failed (`layers ocr`), "
+               "or a format nothing reads (`raw info`)" if meta.get("kind") in ("pdf", "image") else
+               "no text was extracted: a format nothing reads (`raw info`)")
+        out({"doc": h, "layers": 0, "kind": meta.get("kind"), "why": why})
+        return
     for l in state.layers.get(content, []):
         obj = m.objects.get_object(l.id)
         out({"layer": l.id, "view": l.view, "primary": primary is not None and l.id == primary.id,
              "chars": len(m.objects.get_text(l.text)), "text_path": str(m.objects.path(l.text)),
              "parts": sorted(k for k in ("segments", "geometry", "presentation") if k in obj),
              "feed": l.feed})
+    if kids := state.children.get(h):
+        # a mailbox, an email with attachments, an archive: the parts are documents of their own
+        out({"parts": len(kids), "see": f"meta show family:{h}"})
 
 
 def layers_ocr(argv):
@@ -691,6 +704,13 @@ def layers_ocr(argv):
         kind = unextracted_kind(meta.get("name"), data)
     if kind not in ("pdf", "image"):
         raise ValueError(f"only PDFs and images can be OCRed (this is {meta.get('kind')})")
+    from .portable import tesseract
+    if not shutil.which(tesseract()):
+        raise ValueError("OCR needs tesseract, which isn't installed where this runs. Tell the user; "
+                         "`adhoc setup` on the host checks for it. Until then, read the page as a picture "
+                         "(`raw path`), and keep what you read as an interpretation, each field linked to its page "
+                         "region (`interp --help`, \"A reading of a scan\"), so it is shown as your reading, not the "
+                         "document's text")
     layer = ocr_layer(data, kind, meta.get("name"), a.dpi, a.psm)
     before = {l.id for l in state.layers.get(content, [])}
     store_layers(m, content, Extraction(kind=kind, layers=[layer]), log="workspace", objects=m.workspace_objects)
@@ -913,6 +933,14 @@ to the evidence they were read from, which can be quoted. In pages, show an
 interpretation with :interp{#id} or ::interp{#id as=table|tree|value|text|image}
 (page ref add page.md <id> --interp N [--ptr P]); it can never be quoted
 with :q. Say it is your reading whenever you rely on one.
+
+A reading of a scan: where a page has no text layer, or OCR mangled it
+(handwriting, stamps), and you read it from the picture instead, keep what
+you read here rather than only in chat. Write it as JSON, each field with
+the page region it came from ("_loc": "doc:D#page=1&xywh=x,y,w,h", fractions
+of the page), then `interp run D --name rdr-reading --title "…" --about
+"read by eye from the page image" -- cat reading.json`. The user opens each
+field on its region, and `interp search` finds it.
 """
 
 
@@ -1206,6 +1234,7 @@ near-duplicates under a representative. Then record your judgment:
 
   list set pod.set.list.jsonl <doc> why="the signed proof of delivery"
   list cover pod.set.list.jsonl <doc>... --by <doc> --note "same facts as the carrier's notice"
+  list add pod.set.list.jsonl <doc>...       (a document the condense missed)
   list uncover pod.set.list.jsonl <doc>      (a covered document that matters on its own)
 
 Points say what the set must establish; then find the gaps:
@@ -1252,8 +1281,12 @@ def list_(argv=None):
                    help="how much of an email a later one must contain to cover it (0 turns it off)")
     s = sub.add_parser("set", help="set fields on an item, e.g. why=\"the signed POD\" (key= removes one)")
     s.add_argument("file")
-    s.add_argument("doc")
+    s.add_argument("doc", help="the item: its document, its whole locator (when the list holds several "
+                               "passages of one document), or @N for the Nth item")
     s.add_argument("values", nargs="+", metavar="key=value")
+    s = sub.add_parser("add", help="add documents (or passages) as items: what a condense missed")
+    s.add_argument("file")
+    s.add_argument("locs", nargs="+", metavar="loc")
     s = sub.add_parser("cover", help="put documents under the item that covers them (a judgment: restates)")
     s.add_argument("file")
     s.add_argument("docs", nargs="+")
@@ -1310,7 +1343,7 @@ def list_(argv=None):
         for row in lists.catalog(a.dir or m.workspace):
             out(row)
         return
-    if a.cmd in ("condense", "set", "cover", "uncover"):
+    if a.cmd in ("condense", "set", "cover", "uncover", "add"):
         from . import sets
 
         def doc(s):
@@ -1329,7 +1362,10 @@ def list_(argv=None):
                 if not eq or not k:
                     raise ValueError(f"expected key=value, got {kv!r}")
                 values[k] = v or None
-            sets.set_fields(items, doc(a.doc), values, header)
+            key = a.doc if a.doc.startswith("@") else _item_key(items, a.doc) or doc(a.doc)
+            sets.set_fields(items, key, values, header)
+        elif a.cmd == "add":
+            sets.add(items, [x if x.lstrip().startswith("{") or "#" in x else "doc:" + doc(x) for x in a.locs])
         elif a.cmd == "cover":
             sets.cover(items, [doc(d) for d in a.docs], doc(a.by), a.reason, a.note)
         else:
@@ -1352,6 +1388,27 @@ def list_(argv=None):
             items = [it for it in items if (name in tags.get(lists.doc_of(it), ())) != neg]
     lists.write(a.out, header, items)
     out({"written": a.out, "items": len(items)})
+
+
+def _item_key(items, given):
+    """The ``loc`` of the item a whole locator names (same document and
+    selection, however it is spelled), for lists holding several passages of
+    one document; None when it names none, or is a bare document."""
+    try:
+        want = locators.parse(given)
+    except (locators.LocatorError, ValueError):
+        return None
+    if not want.get("select"):
+        return None
+    for it in items:
+        for x in [it, *it.get("children", [])]:
+            try:
+                got = locators.parse(x["loc"])
+            except (locators.LocatorError, ValueError):
+                continue
+            if got["doc"] == want["doc"] and got.get("select") == want["select"]:
+                return x["loc"]
+    return None
 
 
 # -- ann ------------------------------------------------------------------------------------
@@ -2146,6 +2203,21 @@ regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
 by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
 
+A claim can carry what it was checked against: `page ref search page.md
+nr '"never received" OR "not received"' --read all --against LOC --why "…"`
+records the search, and :checked{#nr} shows it after the claim as one line
+("checked: … 19 documents, read all 19: 1 against") that opens to every
+document it found, the ones judged against first, each with its snippet.
+The search re-runs whenever the page is checked or shown: if it finds other
+documents now, the check is re-anchored (read the new ones, then `page
+refs update`). Use it where the reader would ask "does anything say
+otherwise?", and for things you say are not in the documents (--absent: one
+search per missing thing, so each absence shows what ruled it out).
+
+The documents behind a point, beyond the one or two the prose cites: `page
+ref list page.md arrived lists/x.set.list.jsonl --point arrived`, shown
+with :listed{#arrived} as a count that opens to each document and its why.
+
 A reference can also be a metadocument (docs/METADOCS.md): `page ref add page.md
 chase thread:<doc>` (or family:, copies:, versions:, new:, bundle:) cites
 the whole thread, so the reader knows the scope is the conversation, not
@@ -2167,6 +2239,10 @@ def page(argv=None):
         argv[i:i + 2] = ["ref-add"]
     elif argv[i:i + 2] == ["refs", "update"]:
         argv[i:i + 2] = ["refs-update"]
+    elif argv[i:i + 2] == ["ref", "search"]:
+        argv[i:i + 2] = ["ref-search"]
+    elif argv[i:i + 2] == ["ref", "list"]:
+        argv[i:i + 2] = ["ref-list"]
     p = parser("page", PAGE_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("check")
@@ -2199,6 +2275,32 @@ def page(argv=None):
     s.add_argument("--layer", metavar="VIEW", help="with --words: search this layer view (e.g. ocr), not the primary")
     s.add_argument("--interp", metavar="NAME", help="a reference to an interpretation (interp --help), shown with :interp")
     s.add_argument("--ptr", help="with --interp: a JSON pointer into its output")
+    s.add_argument("--replace", action="store_true")
+    s = sub.add_parser("ref-search", help="page ref search <file> <id> \"<query>\": what a claim was checked against",
+                       description="Record the search a claim was checked against, shown with :checked{#id}: "
+                       "the query, its coverage, every document it finds (re-run whenever the page is "
+                       "checked or shown, so new documents show up as re-anchored), how many you read, "
+                       "and the passages you judged to go against the claim (--against, with --why).")
+    s.add_argument("file")
+    s.add_argument("id")
+    s.add_argument("query", help="a keyword query (search --help); it must be exhaustive, so not semantic")
+    s.add_argument("--where", help="as search --where (e.g. custodian:smith-j)")
+    s.add_argument("--against", action="append", default=[], metavar="LOC",
+                   help="a passage that goes against the claim (repeat; pair each with --why)")
+    s.add_argument("--why", action="append", default=[], help="why the --against passage at the same position does")
+    s.add_argument("--read", help="how many of its documents you read for contrary statements: all, or a number")
+    s.add_argument("--note", help="a line on what the check shows, e.g. what the search was meant to catch")
+    s.add_argument("--absent", action="store_true",
+                   help="the claim is that something isn't in the collection: what the search finds are near "
+                        "misses, and --against marks any that may be it after all. One search per absent thing")
+    s.add_argument("--replace", action="store_true")
+    s = sub.add_parser("ref-list", help="page ref list <file> <id> <list file> [--point P]: the documents behind a point",
+                       description="Reference a list file (a key set, a chronology), or one point of a key set, "
+                       "shown with :listed{#id}: a count that opens to its documents, each with its why.")
+    s.add_argument("file")
+    s.add_argument("id")
+    s.add_argument("list_file")
+    s.add_argument("--point", help="only the items supporting this key-set point")
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("refs-update", help="page refs update <file>")
     s.add_argument("file")
@@ -2245,6 +2347,15 @@ def page(argv=None):
                 raise pages.PageError("give locators, or --words (with --in), not both")
             locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
             out(pages.add_ref(m, a.file, a.id, locs, a.replace))
+        elif a.cmd == "ref-list":
+            out(pages.add_list_ref(m, a.file, a.id, a.list_file, a.point, a.replace))
+        elif a.cmd == "ref-search":
+            if len(a.why) > len(a.against):
+                raise pages.PageError("each --why goes with the --against before it")
+            read = None if a.read is None else "all" if a.read == "all" else int(a.read)
+            out(pages.add_search_ref(m, a.file, a.id, a.query, a.where,
+                                     list(zip(a.against, a.why + [None] * (len(a.against) - len(a.why)))),
+                                     read, a.note, a.replace, a.absent))
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)

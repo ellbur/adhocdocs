@@ -2166,6 +2166,17 @@ class WebPane {
         openFromPane(this, a.getAttribute("href").slice(4), true, false, a.dataset.mode);
         return;
       }
+      if (a && a.getAttribute("href").startsWith("#")) {
+        // in-page links (footnotes, a page's checks): scroll there, opening a <details> it is or is in
+        ev.preventDefault();
+        const id = decodeURIComponent(a.getAttribute("href").slice(1));
+        const target = id && d.getElementById(id);
+        if (target) {
+          for (let x = target; x; x = x.parentElement) if (x.tagName === "DETAILS") x.open = true;
+          target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+        return;
+      }
       if (a && /^[a-z]+:/i.test(a.getAttribute("href")) && !a.getAttribute("href").startsWith("adhoc:")) { ev.preventDefault(); return; }
       const item = ev.target.closest("[data-locator]");
       if (item && !ev.target.closest("input,select,textarea,button,label")) this.select(item, ev.shiftKey, ev.ctrlKey || ev.metaKey);
@@ -2390,7 +2401,7 @@ class HomePane {
     const kinds = e.kinds.map((k) => `${k.n} ${k.name}`).join(" · ");
     return this.section("Entities", e.total,
       kinds ? el("p", { class: "muted" }, kinds) : "",
-      el("ul", { class: "rows" }, ...e.known.map((x) => this.row(x.name, x.summary || x.kind || "",
+      el("ul", { class: "rows ent-rows" }, ...e.known.map((x) => this.row(x.name, x.summary || x.kind || "",
         () => askClaude(`Tell me about ${x.name}`), [x.kind, x.summary].filter(Boolean).join(": ")))),
       this.more(e.total, e.known.length, "entity", "Show me the whole entity list", "entities"),
       sugg);

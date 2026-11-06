@@ -88,6 +88,40 @@ through to its source.
   Formatting and pictures aren't stored with the text layers. They're
   recomputed from the original, so documents ingested before this existed
   get them too.
+- **What a claim was checked against.** A quotation shows what supports a
+  claim. It doesn't show whether anything says otherwise, or, for "the
+  collection has no X", what was searched. A **search reference** (`page
+  ref search page.md nr '"never received" OR "not received"' --read all
+  --against LOC --why "…"`) records:
+  - the keyword search;
+  - the documents it found;
+  - how many of them the author read for contrary statements;
+  - the passages judged to go against the claim.
+
+  In the rendered page, `:checked{#nr}` shows a short line at the claim:
+  "checked: 21 documents, read all 21: 1 against". It is red when anything
+  goes against the claim. After the paragraph comes the search itself:
+  - its query and coverage (searched out of all documents, and how many
+    have no searchable text);
+  - one row per item, with copies folded together;
+  - the passages judged against the claim first, each with its why;
+  - a snippet of each document's first hit, which opens it.
+
+  The search runs again whenever the page is checked or shown. If it finds
+  other documents now (new documents ingested, OCR run), the reference is
+  re-anchored until the author reads the new ones and runs `page refs
+  update`.
+
+  A search reference has to be a keyword search, because a check must be
+  exhaustive. Exports show the line, and the provenance file lists every
+  document under `checks`.
+- **The documents behind a point.** The prose cites one or two documents
+  for a point. A **list reference** (`page ref list page.md arrived
+  lists/x.set.list.jsonl --point arrived`) holds the rest: a list file, or
+  one point of a key set. `:listed{#arrived}` shows a count that opens, in
+  the page, to each document with its why and what it covers. This is the
+  tip of the iceberg with the rest one click away
+  ([LISTS.md](LISTS.md#key-sets)).
 - **Citations are generated** from the locator, the document's **cite-as**
   name and the page's `cite-style`. Cite-as names live in
   `workspace/cite-as.jsonl`, outside document identity. Without one, a name
