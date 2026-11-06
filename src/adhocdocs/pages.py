@@ -909,7 +909,7 @@ def listed_html(page: Page, r: Resolved) -> tuple[str, str]:
     more = f'<p class="adhoc-mark">{n - CHECK_SHOWN} more: view list {html.escape(str(page.refs[r.id]["list"]))}</p>' if n > CHECK_SHOWN else ""
     total = f"{n} document{'s' * (n != 1)}" + (f" (+{covered} covered)" if covered else "")
     badge = (f'<a class="adhoc-check-badge adhoc-list-badge" href="#adhoc-list-{r.id}" title="the documents behind this">'
-             f'{total}</a>')
+             f'{total} behind this</a>')
     block = (f'<details class="adhoc-check adhoc-list" id="adhoc-list-{r.id}" data-ref="{r.id}"><summary>'
              f'{title}' + (f': {html.escape(ptext)}' if ptext else "") + f' — {total}</summary>'
              f'<ol data-sequence>{"".join(rows)}</ol>{more}</details>')
@@ -956,7 +956,11 @@ def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, agai
     ref["docs"] = [locators.parse(it["loc"], m.objects)["doc"] for it in items]
     marks = []
     for loc, why in against:
-        r = locators.resolve(m, loc if loc.lstrip().startswith("{") else "doc:" + loc.removeprefix("doc:"))
+        try:
+            r = locators.resolve(m, loc if loc.lstrip().startswith("{") else "doc:" + loc.removeprefix("doc:"))
+        except (locators.LocatorError, ValueError) as e:
+            raise PageError(f"--against takes a locator: a search hit's loc (string or JSON, whole) or a document "
+                            f"hash; {loc[:60]!r} isn't one ({e})")
         if r["status"] == "broken":
             raise PageError(f"--against locator is broken: {r.get('error')}")
         marks.append({"loc": locators.format(r["loc"]), **({"why": why} if why else {})})

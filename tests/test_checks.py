@@ -115,7 +115,7 @@ def test_the_documents_behind_a_point(m, tmp_path):
     with pytest.raises(pages.PageError):
         pages.add_list_ref(m, p, "x", str(ks), point="nope")
     html_doc, _ = pages.render(pages.Page(m, p))
-    assert "Key: Bellwether denied receipt — 1 document" in html_doc and "the first denial" in html_doc
+    assert "Key: Bellwether denied receipt — 1 document" in html_doc and "1 document behind this" in html_doc and "the first denial" in html_doc
     assert html_doc.count('class="adhoc-check adhoc-list"') == 2
 
 
