@@ -2401,7 +2401,7 @@ class HomePane {
     const kinds = e.kinds.map((k) => `${k.n} ${k.name}`).join(" · ");
     return this.section("Entities", e.total,
       kinds ? el("p", { class: "muted" }, kinds) : "",
-      el("ul", { class: "rows" }, ...e.known.map((x) => this.row(x.name, x.summary || x.kind || "",
+      el("ul", { class: "rows ent-rows" }, ...e.known.map((x) => this.row(x.name, x.summary || x.kind || "",
         () => askClaude(`Tell me about ${x.name}`), [x.kind, x.summary].filter(Boolean).join(": ")))),
       this.more(e.total, e.known.length, "entity", "Show me the whole entity list", "entities"),
       sugg);
