@@ -266,6 +266,23 @@ def _take(items, doc) -> list[dict]:
     return [it, *it.pop("children", [])]
 
 
+def add(items, locs: list[str]) -> list[str]:
+    """Add documents (or passages) as items of their own, after the rest:
+    for a key set, what a condense missed. A document already in the list,
+    as an item or under one, is refused rather than listed twice."""
+    added = []
+    for loc in locs:
+        doc = _doc(loc)
+        try:
+            i, j = _find(items, doc)
+        except ValueError:
+            items.append({"loc": loc})
+            added.append(loc)
+            continue
+        raise ValueError(f"doc:{doc} is already in this list" + (" (covered: list uncover it)" if j is not None else ""))
+    return added
+
+
 def set_fields(items, doc, values: dict, header=None):
     """Set (or, with a value of None, remove) fields on an item or child.
     ``points`` is a comma-separated list of the header's point IDs."""

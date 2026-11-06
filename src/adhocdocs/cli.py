@@ -1234,6 +1234,7 @@ near-duplicates under a representative. Then record your judgment:
 
   list set pod.set.list.jsonl <doc> why="the signed proof of delivery"
   list cover pod.set.list.jsonl <doc>... --by <doc> --note "same facts as the carrier's notice"
+  list add pod.set.list.jsonl <doc>...       (a document the condense missed)
   list uncover pod.set.list.jsonl <doc>      (a covered document that matters on its own)
 
 Points say what the set must establish; then find the gaps:
@@ -1283,6 +1284,9 @@ def list_(argv=None):
     s.add_argument("doc", help="the item: its document, its whole locator (when the list holds several "
                                "passages of one document), or @N for the Nth item")
     s.add_argument("values", nargs="+", metavar="key=value")
+    s = sub.add_parser("add", help="add documents (or passages) as items: what a condense missed")
+    s.add_argument("file")
+    s.add_argument("locs", nargs="+", metavar="loc")
     s = sub.add_parser("cover", help="put documents under the item that covers them (a judgment: restates)")
     s.add_argument("file")
     s.add_argument("docs", nargs="+")
@@ -1339,7 +1343,7 @@ def list_(argv=None):
         for row in lists.catalog(a.dir or m.workspace):
             out(row)
         return
-    if a.cmd in ("condense", "set", "cover", "uncover"):
+    if a.cmd in ("condense", "set", "cover", "uncover", "add"):
         from . import sets
 
         def doc(s):
@@ -1360,6 +1364,8 @@ def list_(argv=None):
                 values[k] = v or None
             key = a.doc if a.doc.startswith("@") else _item_key(items, a.doc) or doc(a.doc)
             sets.set_fields(items, key, values, header)
+        elif a.cmd == "add":
+            sets.add(items, [x if x.lstrip().startswith("{") or "#" in x else "doc:" + doc(x) for x in a.locs])
         elif a.cmd == "cover":
             sets.cover(items, [doc(d) for d in a.docs], doc(a.by), a.reason, a.note)
         else:

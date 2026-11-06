@@ -159,3 +159,15 @@ def test_an_absence_is_one_search_with_its_near_misses(m, tmp_path):
     html_doc, _ = pages.render(pages.Page(m, p))
     assert "checked: 2 documents, read all 2: none is it" in html_doc
     assert "checked: 0 documents, nothing found; 1 found otherwise" in html_doc and "may be it: a pallet, but no photo" in html_doc
+
+
+def test_adding_what_a_condense_missed(m, tmp_path):
+    docs = sorted(m.state.live_documents())
+    header, items = lists.new("k", ["doc:" + docs[0]])
+    assert sets.add(items, ["doc:" + docs[1]]) == ["doc:" + docs[1]]
+    with pytest.raises(ValueError):
+        sets.add(items, ["doc:" + docs[0]])
+    f = tmp_path / "k.list.jsonl"
+    lists.write(f, header, items)
+    cli.list_(["--matter", str(m.root), "add", str(f), docs[2][:20]])
+    assert [lists.doc_of(i) for i in lists.read(f)[1]] == docs[:3]
