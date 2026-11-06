@@ -799,7 +799,7 @@ def _screened(m, doc, past=None, quiet=False) -> bool:
         return False
     if quiet:
         return True
-    print(json.dumps({"screened": doc, "why": why, "arrived": privscreen.arrived(m, doc),
+    print(json.dumps({"screened": doc, "why": why, "what": privscreen.what(m, doc), "arrived": privscreen.arrived(m, doc),
                       "next": "Don't read it. Tell the user why it was screened and how it arrived, and ask; "
                               "a lawyer decides. If they say to read it: text LOC --past-screen \"<what they said>\". "
                               "A user's privilege-cleared tag lifts the screen."}, ensure_ascii=False), file=sys.stderr)
@@ -1327,9 +1327,15 @@ def _screen_items(m, header, items):
         if not why:
             continue
         it["screened"] = privscreen.describe(why)
-        for h in it.get("hits") or []:
-            if isinstance(h, dict) and "snippet" in h:
+        for h in [it, *(it.get("hits") or [])]:
+            if not isinstance(h, dict):
+                continue
+            if "snippet" in h:
                 h["snippet"] = {"text": "[screened for possible privilege: text left out]"}
+            q = (h.get("loc") or {}).get("quote") if isinstance(h.get("loc"), dict) else None
+            if q:                       # the words around a hit are the document's; the hit's own are the query's
+                q.pop("prefix", None)
+                q.pop("suffix", None)
         if isinstance(it.get("snippet"), dict):
             it["snippet"] = {"text": "[screened for possible privilege: text left out]"}
     if held:

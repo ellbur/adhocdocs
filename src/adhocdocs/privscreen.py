@@ -159,6 +159,15 @@ def arrived(m, doc: str) -> dict:
             "custodian": (obj.get("custodian") or "").removeprefix("cust:") or None, "path": src.get("path")}
 
 
+def what(m, doc: str) -> dict:
+    """What a held-back document is, from its metadata alone, so it can be
+    named correctly without being read: name, kind, date, author or sender,
+    recipients, subject or title."""
+    md = _meta(m, doc)
+    keys = ("name", "kind", "date", "author", "from_names", "from", "to", "subject", "title")
+    return {k: md[k] for k in keys if md.get(k)}
+
+
 def screened(m, docs) -> dict[str, list[dict]]:
     """Doc -> reasons, for those of ``docs`` that are screened."""
     tags = _tags(m)

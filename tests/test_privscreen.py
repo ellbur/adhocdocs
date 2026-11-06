@@ -64,6 +64,7 @@ def test_text_holds_back_and_search_leaves_out(m, capsys, monkeypatch):
     assert e.value.code == 3
     err = json.loads(capsys.readouterr().err)
     assert err["screened"] == memo and err["arrived"]["custodian"] == "delacroix-m" and "ask" in err["next"]
+    assert err["what"]["author"] == "Marcus Delacroix-Hale" and err["what"]["title"].startswith("Privileged memo")
     cli.text(["doc:" + memo, "--past-screen", "the user said to read it"])
     got = capsys.readouterr()
     assert "Memorandum" in got.out and json.loads(got.err)["reason_given"] == "the user said to read it"
@@ -72,6 +73,7 @@ def test_text_holds_back_and_search_leaves_out(m, capsys, monkeypatch):
     assert lines[0]["screened"]["documents"] >= 2
     held = [x for x in lines[1:] if x.get("screened")]
     assert held and all(h["snippet"]["text"].startswith("[screened") for x in held for h in x["hits"])
+    assert all(set(h["loc"]["quote"]) == {"exact"} for x in held for h in x["hits"])     # no words around the hit
 
 
 def test_a_lawyer_lifts_or_widens_the_screen(tmp_path):
