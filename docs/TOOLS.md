@@ -186,31 +186,46 @@ entity layer ([ENTITIES.md](ENTITIES.md)). *Proposed:* first names alone
   never acted on.
 - **A privilege screen before reading.** *Built*
   ([`privscreen.py`](../src/adhocdocs/privscreen.py)). A flag records a
-  judgment that comes after reading. In trial runs, Claude read the other
-  side's privileged emails before recognizing them. The screen comes first.
-  A document is held back when any of these holds:
-  - **Marked:** its subject, title or first page says privileged,
-    attorney-client, work product, legal advice, or prepared at counsel's
-    direction.
-  - **Counsel:** it is an internal email about a legal matter that counsel
-    sent, or that went to counsel directly (To) among four recipients or
-    fewer. Counsel are found from how people sign their own emails, and
-    can be listed in `workspace/privilege-screen.json`.
-  - **Flagged:** someone tagged it `check-privilege`.
+  judgment made after reading. The screen stops Claude before it reads. It
+  has three levels (`ann privilege-screen LEVEL`):
+  - **off:** nothing is held back.
+  - **marked** (the default): documents a person tagged `privileged`.
+    Discovery documents are often known not to be privileged by the time
+    they're analyzed, so screening on suspicion by default would mostly get
+    in the way.
+  - **suspected:** also documents that look privileged:
+    - its subject, title or first page uses privilege wording;
+    - it is an internal email about a legal matter that counsel sent, or
+      that went to counsel directly (To) among four recipients or fewer;
+    - someone tagged it `check-privilege`.
 
-  `text` stops at a held-back document with exit status 3. It says why the
-  document was held back and how it arrived: a party's production (volume,
-  Bates), a custodian's collection, or an attachment. The rules are in
-  CLAUDE.md:
-  - Claude tells the user and asks.
-  - Claude reads past the screen with `--past-screen "<what they said>"`
-    only when the user says so. The audit log keeps the command.
+    Counsel are found from how people sign their own emails, or listed in
+    `workspace/privilege-screen.json`. A user's `privilege-cleared` tag
+    lifts a suspicion. Claude can't apply that tag.
 
-  Search results mark held-back documents and leave out their snippets.
-  A user's `privilege-cleared` tag lifts the screen. Clearing is a privilege
-  call, so Claude can't apply that tag. The screen isn't a wall: the files
-  are in the store. It is a stop before reading, so the lawyer decides
-  first.
+  CLAUDE.md lets Claude raise the level when the set may hold privileged
+  material (a production that may be inadvertent, a client's own files),
+  and say so. It lowers the level only when the user says so.
+
+  `text` stops at a held-back document with exit status 3. It says:
+  - why the document is held back;
+  - what it is, from metadata alone: name, date, author and sender, so
+    Claude can name it correctly without reading it;
+  - how it arrived: a party's production (volume, Bates), a custodian's
+    collection, or an attachment.
+
+  Claude tells the user and asks. It reads past the screen with
+  `--past-screen "<what they said>"` only when the user says so, and the
+  audit log keeps the command.
+
+  Search results and `analyze` output mark held-back documents and leave out
+  their words. That includes the words around a search hit, but not names,
+  dates and locators.
+
+  The screen isn't a wall: the files are in the store, and `raw` reads bytes.
+  It is a stop before reading, so the lawyer decides first. In trial runs at
+  the suspected level, Claude stopped at the other side's privileged emails,
+  wrote around them, and asked.
 - **Exports of pages** with the provenance of every quotation. *Built*:
   [PAGES.md](PAGES.md).
 - **Exhibits.** *Built* (`produce exhibits`): documents stamped as numbered

@@ -1769,6 +1769,14 @@ def ann(argv=None):
     s.add_argument("ref", nargs="?")
     s.add_argument("--doc", help="only bundles holding this document")
     s.add_argument("--facet")
+    s = sub.add_parser("privilege-screen", help="the privilege screen's level: off, marked (the default) or suspected",
+                       description="What `text` holds back before you read it. off: nothing. marked (the "
+                       "default): documents a person tagged privileged. suspected: also what looks privileged "
+                       "(privilege wording on its first page, internal emails with counsel about a legal matter, "
+                       "check-privilege flags). With no level, prints the current one and how many documents it "
+                       "holds back. Raise it when the documents may hold privileged material (an inadvertent "
+                       "production, a client's own files); lower it only when the user says so.")
+    s.add_argument("level", nargs="?", choices=["off", "marked", "suspected"])
     s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
     s.add_argument("locators", nargs="+")
     s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
@@ -1886,6 +1894,14 @@ def ann(argv=None):
     if getattr(a, "tag", None) and isinstance(a.tag, list):
         a.tag = [t.strip() for t in a.tag]
     m = Matter.find(a.matter)
+    if a.cmd == "privilege-screen":
+        from . import privscreen
+        if a.level:
+            out(privscreen.set_level(m, a.level))
+        lv = privscreen.level(m)
+        held = privscreen.screened(m, m.state.live_documents())
+        out({"level": lv, "held_back": len(held)})
+        return
 
     def who(spec, author):
         return spec is None or author == spec or (spec == "user" and annotations.is_user(author))

@@ -18,7 +18,9 @@ def m(tmp_path_factory):
     m = Matter.create(tmp_path_factory.mktemp("screen") / "m")
     ingest_paths(m, [CORPUS / "delacroix-m"], "delacroix-m", "delacroix-m")
     ingest_paths(m, [CORPUS / "voss-r" / "demand-letter-2026-03-25.pdf"], "voss-r", "voss-r")
-    return Matter(m.root)
+    m = Matter(m.root)
+    privscreen.set_level(m, "suspected")
+    return m
 
 
 def named(m, name):
@@ -32,9 +34,9 @@ def test_who_is_counsel(m):
 
 def test_what_is_screened_and_why(m):
     memo = privscreen.screen(m, named(m, "privileged-memo-harrowgate-2026-03-27.docx"))
-    assert memo == [{"reason": "marked", "words": ["privileged"]}]
+    assert memo == [{"reason": "worded", "words": ["privileged"]}]
     hold = {w["reason"] for w in privscreen.screen(m, named(m, "2026-03-27_litigation-hold.eml"))}
-    assert hold == {"marked", "counsel"}
+    assert hold == {"worded", "counsel"}
     reply = privscreen.screen(m, named(m, "RE LITIGATION HOLD - Harrowgate.msg"))        # unmarked, to counsel
     assert [w["reason"] for w in reply] == ["counsel"] and reply[0]["who"] == [GC]
     # counsel on an email isn't enough: not the lunch order, not an all-staff notice, not a letter from outside
@@ -82,9 +84,11 @@ def test_a_lawyer_lifts_or_widens_the_screen(tmp_path):
                       CORPUS / "delacroix-m" / "2025-10-08_Board-deck-legal-section.eml"], "delacroix-m", "c")
     m2 = Matter(m2.root)
     memo, deck = named(m2, "privileged-memo-harrowgate-2026-03-27.docx"), named(m2, "2025-10-08_Board-deck-legal-section.eml")
+    assert not privscreen.screen(m2, memo)                                    # the default: only what a person tagged
+    privscreen.set_level(m2, "suspected")
     assert privscreen.screen(m2, memo) and not privscreen.screen(m2, deck)   # one email: counsel not found
     # the lawyer names counsel, and an internal email to counsel about a legal matter is screened
-    (m2.workspace / "privilege-screen.json").write_text(json.dumps({"counsel": [GC]}))
+    (m2.workspace / "privilege-screen.json").write_text(json.dumps({"level": "suspected", "counsel": [GC]}))
     assert [w["reason"] for w in privscreen.screen(m2, deck)] == ["counsel"]
     # clearing is a lawyer's call: Claude can't, a user can
     annotations.write(m2, "user:lawyer", {"op": "define-tag", "tag": privscreen.CLEARED})
@@ -102,3 +106,25 @@ def test_analyze_leaves_out_held_back_passages(m, capsys, monkeypatch):
     assert held and all(x["excerpt"].startswith("[screened") for x in held)
     assert all(not x["route"]["text"].startswith("[screened") for x in held)       # the tool's words stay
     assert all(x["name"] and x["date"] for x in held)                              # so do names and dates
+
+
+def test_the_levels(tmp_path, capsys, monkeypatch):
+    m2 = Matter.create(tmp_path / "m3")
+    ingest_paths(m2, [CORPUS / "delacroix-m" / "privileged-memo-harrowgate-2026-03-27.docx",
+                      CORPUS / "voss-r" / "demand-letter-2026-03-25.pdf"], "x", "c")
+    m2 = Matter(m2.root)
+    memo, letter = named(m2, "privileged-memo-harrowgate-2026-03-27.docx"), named(m2, "demand-letter-2026-03-25.pdf")
+    assert privscreen.level(m2) == "marked" and privscreen.screened(m2, [memo, letter]) == {}
+    # a person's privileged tag holds a document back at marked and suspected, not off; Claude's can't be made
+    annotations.write(m2, "user:lawyer", {"op": "define-tag", "tag": "privileged"})
+    annotations.write(m2, "user:lawyer", {"op": "tag", "tag": "privileged", "target": "doc:" + letter})
+    assert privscreen.screen(m2, letter) == [{"reason": "tagged", "by": ["user:lawyer"]}]
+    privscreen.set_level(m2, "suspected")
+    assert set(privscreen.screened(m2, [memo, letter])) == {memo, letter}
+    privscreen.set_level(m2, "off")
+    assert privscreen.screened(m2, [memo, letter]) == {}
+    with pytest.raises(ValueError):
+        privscreen.set_level(m2, "paranoid")
+    monkeypatch.setenv("ADHOC_MATTER", str(m2.root))
+    cli.ann(["privilege-screen", "marked"])
+    assert json.loads(capsys.readouterr().out.splitlines()[-1]) == {"level": "marked", "held_back": 1}

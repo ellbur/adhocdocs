@@ -9,25 +9,31 @@ its snippet. Whether anything *is* privileged, and whether it may be read,
 stays a lawyer's call; the screen only says why a document looks like it
 might be, and how it came into the matter.
 
-A document is screened when:
+The screen has three levels, set with ``ann privilege-screen LEVEL`` and
+kept in ``workspace/privilege-screen.json``:
 
-- **marked**: its subject, title or first page says privileged, attorney-
-  client, work product, legal advice, or prepared at counsel's direction;
-- **counsel**: it is an email within one organization (every address on it
-  shares a domain) that counsel sent, or that went to counsel directly (To)
-  among at most four recipients (not counsel's copy of an all-staff
-  notice), and whose subject or opening is about a legal matter (a claim, a
-  contract, a hold, compliance, employment…): not the lunch order.
-  Counsel are addresses whose own
-  emails are mostly signed as counsel (general counsel, Esq., attorney,
-  legal department), plus any listed in ``workspace/privilege-screen.json``
-  (``{"counsel": [...], "not_counsel": [...]}``);
-- **flagged**: anyone tagged it ``check-privilege``.
+- **off**: nothing is held back.
+- **marked** (the default): what a person tagged ``privileged``. Often the
+  documents are known not to be privileged (the other side's production,
+  already reviewed), and a screen on suspicion would mostly get in the way.
+- **suspected**: also what looks privileged:
+  - **worded**: its subject, title or first page says privileged,
+    attorney-client, work product, legal advice, or prepared at counsel's
+    direction;
+  - **counsel**: an email within one organization (every address on it
+    shares a domain) that counsel sent, or that went to counsel directly
+    (To) among at most four recipients (not counsel's copy of an all-staff
+    notice), whose subject or opening is about a legal matter (a claim, a
+    contract, a hold, compliance, employment…): not the lunch order.
+    Counsel are addresses whose own emails are mostly signed as counsel
+    (general counsel, Esq., attorney, legal department), plus any listed in
+    the same file (``{"counsel": [...], "not_counsel": [...]}``);
+  - **flagged**: anyone tagged it ``check-privilege``.
 
-An attachment is screened for its own content, not its email's: a letter
-forwarded to counsel isn't privileged for having been forwarded.
-
-A user's ``privilege-cleared`` tag lifts the screen for that document.
+  An attachment is screened for its own content, not its email's: a letter
+  forwarded to counsel isn't privileged for having been forwarded. A
+  user's ``privilege-cleared`` tag lifts a suspicion (not a person's
+  ``privileged`` tag).
 """
 
 import json
@@ -37,6 +43,9 @@ from collections import defaultdict
 from .annotations import CLAUDE, PRIVILEGE_CHECK, Annotations
 
 CLEARED = "privilege-cleared"
+PRIVILEGED = "privileged"
+LEVELS = ("off", "marked", "suspected")
+DEFAULT = "marked"
 MARKING = re.compile(r"\b(privileged(?:\s*(?:&|and)\s*confidential)?|attorney[-\s]client|work[-\s]product|"
                      r"prepared (?:at|by) the (?:request|direction) of counsel|legal advice)\b", re.I)
 SIGNED_AS_COUNSEL = re.compile(r"\b(general counsel|associate counsel|in-house counsel|legal counsel|esq\.?|"
@@ -75,6 +84,22 @@ def _config(m) -> dict:
         return {}
 
 
+def level(m) -> str:
+    lv = _config(m).get("level", DEFAULT)
+    return lv if lv in LEVELS else DEFAULT
+
+
+def set_level(m, lv: str) -> dict:
+    if lv not in LEVELS:
+        raise ValueError(f"the privilege screen's level is one of {', '.join(LEVELS)}")
+    f = m.workspace / "privilege-screen.json"
+    cfg = _config(m)
+    cfg["level"] = lv
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    return {"level": lv, "file": str(f)}
+
+
 def counsel(m) -> dict[str, str]:
     """Address -> why it is taken for counsel."""
     key = (str(m.root), len(m.state.metadata), (m.workspace / "privilege-screen.json").exists() and
@@ -106,22 +131,26 @@ def counsel(m) -> dict[str, str]:
 def _tags(m) -> dict[str, list[dict]]:
     by_doc = defaultdict(list)
     for a in Annotations.load(m).applications(parts=True):
-        if a["tag"] in (PRIVILEGE_CHECK, CLEARED) and "doc" in a["target"]:
+        if a["tag"] in (PRIVILEGE_CHECK, CLEARED, PRIVILEGED) and "doc" in a["target"]:
             by_doc[a["target"]["doc"]].append(a)
     return by_doc
 
 
-def screen(m, doc: str, tags=None) -> list[dict]:
-    """Why ``doc`` is screened (empty: it isn't)."""
-    tags = _tags(m) if tags is None else tags
-    if any(a["tag"] == CLEARED and a["by"] != CLAUDE for a in tags.get(doc, [])):
+def screen(m, doc: str, tags=None, lv=None) -> list[dict]:
+    """Why ``doc`` is screened at the matter's level (empty: it isn't)."""
+    lv = lv or level(m)
+    if lv == "off":
         return []
+    tags = _tags(m) if tags is None else tags
+    marked = [a for a in tags.get(doc, []) if a["tag"] == PRIVILEGED and a["by"] != CLAUDE]
+    why = [{"reason": "tagged", "by": sorted({a["by"] for a in marked})}] if marked else []
+    if lv == "marked" or any(a["tag"] == CLEARED and a["by"] != CLAUDE for a in tags.get(doc, [])):
+        return why
     md = _meta(m, doc)
-    why = []
     head = "\n".join(x for x in (md.get("subject"), md.get("title")) if x) + "\n" + _text(m, doc)[:HEAD]
     marks = sorted({x.lower() for x in MARKING.findall(head)})
     if marks:
-        why.append({"reason": "marked", "words": marks})
+        why.append({"reason": "worded", "words": marks})
     if md.get("kind") == "email":
         addrs = [a.lower() for k in ("from", "to", "cc", "bcc") for a in (md.get(k) or [])]
         doms = {_domain(a) for a in addrs if "@" in a}
@@ -170,10 +199,13 @@ def what(m, doc: str) -> dict:
 
 def screened(m, docs) -> dict[str, list[dict]]:
     """Doc -> reasons, for those of ``docs`` that are screened."""
+    lv = level(m)
+    if lv == "off":
+        return {}
     tags = _tags(m)
     out = {}
     for d in docs:
-        why = screen(m, d, tags)
+        why = screen(m, d, tags, lv)
         if why:
             out[d] = why
     return out
@@ -182,8 +214,10 @@ def screened(m, docs) -> dict[str, list[dict]]:
 def describe(why: list[dict]) -> str:
     parts = []
     for w in why:
-        if w["reason"] == "marked":
-            parts.append("marked " + ", ".join(f"“{x}”" for x in w["words"]))
+        if w["reason"] == "tagged":
+            parts.append("tagged privileged by " + ", ".join(w["by"]))
+        elif w["reason"] == "worded":
+            parts.append("worded " + ", ".join(f"“{x}”" for x in w["words"]))
         elif w["reason"] == "counsel":
             parts.append(w["detail"] + " (" + ", ".join(w["who"]) + ")")
         else:
