@@ -4,7 +4,7 @@ Podman there. Run it from the repository, with Podman's machine started:
     uv run python tools/windows/probe.py            # or: ... --image localhost/adhocdocs:latest
 
 Each check prints ok / FAIL / note and the facts it found; a JSON report
-goes to probe-report.json. Nothing here touches a matter. See WINDOWS.md,
+goes to probe-report.json. Nothing here touches a matter. See docs/WINDOWS.md,
 "What the probe answers".
 """
 

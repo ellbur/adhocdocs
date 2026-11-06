@@ -142,6 +142,12 @@ details).
   came by (quoted, copied, attached, kept from a draft, already known to
   whoever wrote it); each person's first exposure; and the appearances
   nothing explains.
+- **A dispute** (`analyze dispute`, [DISPUTES.md](DISPUTES.md)): contrary
+  claims, each traced; their statements, each with a speaker (a
+  transcript's witness or examiner, a quoted part's author) and a stance
+  (asserts, denies, reports, rejects, hedges, asks, supposes); and the
+  tensions: one person on both sides in a document, a switch, a side kept
+  after a colleague's statement for another reached them.
 - **A cast of characters** from email headers and from names in document
   text. Addresses whose display names fold to the same name become one
   person. Names in text ("T. Kettering", "Mr. Kettering", "Tom Kettering")

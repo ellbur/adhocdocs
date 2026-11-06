@@ -92,6 +92,14 @@ def test_a_gap_where_nothing_shows_how_someone_knew(m):
     assert notes["route"]["kind"] == "unplaced" and notes["date"] is None
 
 
+def test_a_phrase_query(m):
+    # a phrase is one hit; it is still all its words, not one word alone
+    r = trace.trace(m, None, query='"never received"', paraphrases=0)
+    names = {a["name"] for a in r["appearances"]}
+    assert {"dispute-timeline-notes.txt", "call-notes-bellwether-2026-03.txt", "RE: INV-2026/0347 past due"} <= names
+    assert all(a["hits"] for a in r["appearances"])
+
+
 def test_include_and_exclude(m):
     base = trace.trace(m, None, query='pallet AND unclaimed AND (march OR "3/4")', paraphrases=0)
     memo = next(a for a in base["appearances"] if a["name"].endswith("-rev.pdf"))

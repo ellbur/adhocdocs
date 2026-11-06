@@ -552,3 +552,16 @@ ul.rows.files-rows .row .main { white-space: normal; overflow: visible; }
 .adhoc-trace-gap .adhoc-graph-name { fill: var(--bad); }
 .adhoc-graph-node.adhoc-trace-gapped rect { stroke: var(--bad); }
 .adhoc-graph-edge.kind-gap { stroke: var(--bad); }
+.adhoc-dispute-key { font-weight: 600; margin-right: .8em; }
+.adhoc-dispute-key.c0, .adhoc-graph-node.adhoc-dispute-c0 .adhoc-graph-name { color: var(--accent); fill: var(--accent); }
+.adhoc-dispute-key.c1, .adhoc-graph-node.adhoc-dispute-c1 .adhoc-graph-name { color: var(--hl-edge); fill: var(--hl-edge); }
+.adhoc-dispute-key.c2, .adhoc-graph-node.adhoc-dispute-c2 .adhoc-graph-name { color: var(--ent); fill: var(--ent); }
+.adhoc-dispute-key.c3, .adhoc-graph-node.adhoc-dispute-c3 .adhoc-graph-name { color: var(--muted); fill: var(--muted); }
+.adhoc-graph-node.adhoc-dispute-c0 rect { stroke: var(--accent); fill: var(--accent-soft); }
+.adhoc-graph-node.adhoc-dispute-c1 rect { stroke: var(--hl-edge); fill: var(--warn-bg); }
+.adhoc-graph-node.adhoc-dispute-c2 rect { stroke: var(--ent); fill: var(--ent-bg); }
+.adhoc-graph-node.adhoc-dispute-mixed rect { stroke: var(--ink); stroke-dasharray: 5 2; }
+.adhoc-graph-node.adhoc-dispute-both rect { stroke: var(--bad); stroke-width: 2.2; stroke-dasharray: none; }
+.adhoc-graph-edge.kind-despite { stroke: var(--bad); stroke-width: 1.8; opacity: 1; }
+.adhoc-graph-label.kind-despite rect { stroke: var(--bad); }
+.adhoc-graph-label.kind-despite text { fill: var(--bad); font-weight: 600; }
