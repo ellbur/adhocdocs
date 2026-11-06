@@ -184,6 +184,33 @@ entity layer ([ENTITIES.md](ENTITIES.md)). *Proposed:* first names alone
   lawyer's list to review before serving, not a privilege log. A
   withhold or redact tag Claude applied earlier is reported as a flag and
   never acted on.
+- **A privilege screen before reading.** *Built*
+  ([`privscreen.py`](../src/adhocdocs/privscreen.py)). A flag records a
+  judgment that comes after reading. In trial runs, Claude read the other
+  side's privileged emails before recognizing them. The screen comes first.
+  A document is held back when any of these holds:
+  - **Marked:** its subject, title or first page says privileged,
+    attorney-client, work product, legal advice, or prepared at counsel's
+    direction.
+  - **Counsel:** it is an internal email about a legal matter that counsel
+    sent, or that went to counsel directly (To) among four recipients or
+    fewer. Counsel are found from how people sign their own emails, and
+    can be listed in `workspace/privilege-screen.json`.
+  - **Flagged:** someone tagged it `check-privilege`.
+
+  `text` stops at a held-back document with exit status 3. It says why the
+  document was held back and how it arrived: a party's production (volume,
+  Bates), a custodian's collection, or an attachment. The rules are in
+  CLAUDE.md:
+  - Claude tells the user and asks.
+  - Claude reads past the screen with `--past-screen "<what they said>"`
+    only when the user says so. The audit log keeps the command.
+
+  Search results mark held-back documents and leave out their snippets.
+  A user's `privilege-cleared` tag lifts the screen. Clearing is a privilege
+  call, so Claude can't apply that tag. The screen isn't a wall: the files
+  are in the store. It is a stop before reading, so the lawyer decides
+  first.
 - **Exports of pages** with the provenance of every quotation. *Built*:
   [PAGES.md](PAGES.md).
 - **Exhibits.** *Built* (`produce exhibits`): documents stamped as numbered

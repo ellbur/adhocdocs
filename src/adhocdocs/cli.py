@@ -723,10 +723,14 @@ def layers_ocr(argv):
 
 @run
 def text(argv=None):
-    p = parser("text", "Print the text at a locator, after checking it.")
+    p = parser("text", "Print the text at a locator, after checking it: plain text, not JSON (--json for the "
+                       "status, locator and text as one JSON object). Documents the privilege screen holds "
+                       "back stop it with exit status 3.")
     p.add_argument("locator", help="string or JSON locator")
     p.add_argument("--path", action="store_true", help="print the layer text file's path instead")
     p.add_argument("--json", action="store_true", help="print the resolution (status, locator, text) as JSON")
+    p.add_argument("--past-screen", metavar="WHY",
+                   help="read a document the privilege screen holds back: only when the user said to, with why")
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
     from .received import NAMES, resolve_name
@@ -734,15 +738,23 @@ def text(argv=None):
     if metadocs.is_ref(a.locator):                 # a metadocument: each of its parts
         for part in metadocs.members(m, a.locator):
             r = locators.resolve(m, part)
+            if a.json and "text" in r and r.get("loc") and _screened(m, r["loc"]["doc"], a.past_screen, quiet=True):
+                out({"loc": locators.format(r["loc"]), "status": r["status"], "screened": True})
+                continue
             out({"loc": locators.format(r["loc"]) if r.get("loc") else locators.format(part), "status": r["status"],
                  **({"text": r["text"]} if a.json and "text" in r else {})})
         return
     if a.locator.startswith(NAMES):
         for hit in resolve_name(m, a.locator):
             r = locators.resolve(m, hit["loc"])
+            if a.json and "text" in r and _screened(m, r["loc"]["doc"], a.past_screen, quiet=True):
+                out({**hit, "status": r["status"], "screened": True})
+                continue
             out({**hit, "status": r["status"], **({"text": r["text"]} if a.json and "text" in r else {})})
         return
     r = locators.resolve(m, a.locator)
+    if r["status"] != "broken" and r.get("loc"):
+        _screened(m, r["loc"]["doc"], a.past_screen)
     if a.json:
         out(dict(r))
         return
@@ -770,6 +782,28 @@ def text(argv=None):
     sys.stdout.write(r["text"])
     if not r["text"].endswith("\n"):
         sys.stdout.write("\n")
+
+
+def _screened(m, doc, past=None, quiet=False) -> bool:
+    """The privilege screen (privscreen.py), before any text is shown. A
+    screened document stops ``text`` with why and how it came into the
+    matter, unless ``--past-screen`` gives a reason (the audit log keeps the
+    command). ``quiet``: just say whether it is screened."""
+    from . import privscreen
+    doc = m.state.follow(doc) if hasattr(m.state, "follow") else doc
+    why = privscreen.screen(m, doc)
+    if not why:
+        return False
+    if past:
+        print(json.dumps({"past_screen": doc, "why": privscreen.describe(why), "reason_given": past}), file=sys.stderr)
+        return False
+    if quiet:
+        return True
+    print(json.dumps({"screened": doc, "why": why, "arrived": privscreen.arrived(m, doc),
+                      "next": "Don't read it. Tell the user why it was screened and how it arrived, and ask; "
+                              "a lawyer decides. If they say to read it: text LOC --past-screen \"<what they said>\". "
+                              "A user's privilege-cleared tag lifts the screen."}, ensure_ascii=False), file=sys.stderr)
+    sys.exit(3)
 
 
 # -- raw and interp: files of unknown format or schema ------------------------------------
@@ -1204,6 +1238,14 @@ def search(argv=None):
         header["matches"]["units"] = len(items)
         if limit is not None:
             items = items[:limit]
+        for it in items:                               # a unit is screened if any of its documents is
+            from . import privscreen
+            held = privscreen.screened(m, [locators.parse(x["loc"])["doc"] for x in it.get("docs") or []])
+            if held:
+                it["screened"] = "; ".join(sorted({privscreen.describe(w) for w in held.values()}))
+                for h in it.get("hits") or []:
+                    if isinstance(h, dict) and "snippet" in h:
+                        h["snippet"] = {"text": "[screened for possible privilege: text left out]"}
         out(header)
         for it in items:
             out(it)
@@ -1211,11 +1253,40 @@ def search(argv=None):
             lists.write(a.list_file, *(lambda rows: (rows[0], rows[1:]))(metadocs.to_list(header, items)))
         return
     header, items = s.finish(header, items)
+    _screen_items(m, header, items)
     out(header)
     for it in items:
         out(it)
     if a.list_file:
         lists.write(a.list_file, *(lambda rows: (rows[0], rows[1:]))(to_list(header, items, a.by)))
+
+
+def _screen_items(m, header, items):
+    """Search results from documents the privilege screen holds back: marked
+    ``screened`` (why), with their snippets left out, and counted in the
+    header. Their locators stay, so the user can open them."""
+    from . import privscreen
+    def doc_of(it):
+        loc = it.get("loc")
+        try:
+            return (loc if isinstance(loc, dict) else locators.parse(loc))["doc"]
+        except (locators.LocatorError, KeyError, TypeError, ValueError):
+            return None
+    docs = {d for d in map(doc_of, items) if d}
+    held = privscreen.screened(m, docs)
+    for it in items:
+        why = held.get(doc_of(it))
+        if not why:
+            continue
+        it["screened"] = privscreen.describe(why)
+        for h in it.get("hits") or []:
+            if isinstance(h, dict) and "snippet" in h:
+                h["snippet"] = {"text": "[screened for possible privilege: text left out]"}
+        if isinstance(it.get("snippet"), dict):
+            it["snippet"] = {"text": "[screened for possible privilege: text left out]"}
+    if held:
+        header["screened"] = {"documents": len(held),
+                              "note": "possible privilege: snippets left out; don't read these without asking the user"}
 
 
 # -- list ----------------------------------------------------------------------------------
@@ -2313,7 +2384,7 @@ def page(argv=None):
     try:
         if a.cmd == "check":
             results = pages.Page(m, a.file).check()
-            for r in results if a.all else [r for r in results if r in __import__("adhocdocs.literate", fromlist=["x"]).problems(results)]:
+            for r in results if a.all else literate.problems(results):
                 out(r)
             if any(r.get("status") == "broken" or r.get("lint") in ("missing-ref", "bad-ref", "duplicate-ref") for r in results):
                 sys.exit(1)
@@ -2321,7 +2392,7 @@ def page(argv=None):
             html_doc, results = pages.render(pages.Page(m, a.file))
             if a.out:
                 Path(a.out).write_text(html_doc, encoding="utf-8", newline="\n")
-                out({"written": a.out, "problems": len([r for r in results if "lint" in r or r.get("status") != "exact"])})
+                out({"written": a.out, **literate.summary(results)})
             else:
                 sys.stdout.write(html_doc)
         elif a.cmd == "view":
@@ -2333,7 +2404,7 @@ def page(argv=None):
             c = {"cmd": "pane", "kind": "page", "files": files, "title": page.meta.get("title") or Path(a.file).stem,
                  "update": a.pane, "window": a.window}
             shown = viewmod.command(m, {k: v for k, v in c.items() if v is not None})
-            out({**shown, "problems": len(literate.problems(results))})
+            out({**shown, **literate.summary(results)})
         elif a.cmd == "export":
             out(pages.export(pages.Page(m, a.file), a.format, Path(a.out), a.allow_reanchored))
         elif a.cmd == "ref-add" and a.interp:

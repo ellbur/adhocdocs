@@ -105,7 +105,8 @@ PRIVILEGE_CHECK_DESCRIPTION = ("Check for possible privilege: flagged for a lawy
 
 
 def is_privilege_call(tag: str) -> bool:
-    return tag == "privileged" or tag.startswith("redact")
+    # privilege-cleared lifts the privilege screen (privscreen.py): a lawyer's call too
+    return tag in ("privileged", "privilege-cleared") or tag.startswith("redact")
 
 
 class Refused(Exception):

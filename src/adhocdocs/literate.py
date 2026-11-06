@@ -640,5 +640,20 @@ def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
 
 
 def problems(results: list[dict]) -> list[dict]:
-    """The results that need attention."""
-    return [r for r in results if "lint" in r or r.get("status") != "exact" or r.get("low_confidence")]
+    """The results that need attention. A low-confidence OCR quotation is
+    one to check against the page image, said so (``check``)."""
+    out = []
+    for r in results:
+        if "lint" in r or r.get("status") != "exact":
+            out.append(r)
+        elif r.get("low_confidence"):
+            out.append({**r, "check": "low-confidence OCR: compare the quotation with the page image "
+                                      "(its [check page N] marker opens it)"})
+    return out
+
+
+def summary(results: list[dict]) -> dict:
+    """Counts for a one-line report: what's wrong, and what to check."""
+    wrong = [r for r in results if "lint" in r or r.get("status") != "exact"]
+    ocr = [r for r in results if not ("lint" in r or r.get("status") != "exact") and r.get("low_confidence")]
+    return {"problems": len(wrong), **({"check_ocr": [r["id"] for r in ocr]} if ocr else {})}
