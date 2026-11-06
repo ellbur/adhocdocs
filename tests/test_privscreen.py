@@ -90,3 +90,13 @@ def test_a_lawyer_lifts_or_widens_the_screen(tmp_path):
         annotations.write(m2, annotations.CLAUDE, {"op": "tag", "tag": privscreen.CLEARED, "target": "doc:" + memo})
     annotations.write(m2, "user:lawyer", {"op": "tag", "tag": privscreen.CLEARED, "target": "doc:" + memo})
     assert privscreen.screen(Matter(m2.root), memo) == []
+
+
+def test_analyze_leaves_out_held_back_passages(m, capsys, monkeypatch):
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    cli.analyze(["trace", "--query", '"litigation hold"'])
+    r = json.loads(capsys.readouterr().out.splitlines()[0])
+    held = [x for x in r["appearances"] if x.get("screened")]
+    assert held and all(x["excerpt"].startswith("[screened") for x in held)
+    assert all(not x["route"]["text"].startswith("[screened") for x in held)       # the tool's words stay
+    assert all(x["name"] and x["date"] for x in held)                              # so do names and dates

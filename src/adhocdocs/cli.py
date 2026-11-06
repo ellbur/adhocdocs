@@ -806,6 +806,54 @@ def _screened(m, doc, past=None, quiet=False) -> bool:
     sys.exit(3)
 
 
+TEXT_KEYS = ("text", "snippet", "passage", "sentence", "context", "before", "after", "words", "quote_text", "excerpt")
+SCREENED_TEXT = "[screened for possible privilege: text left out]"
+
+
+def _screening_out(m):
+    """``out`` for commands that print documents' words (analyze trace,
+    dispute, redline, dates…): any object naming a held-back document (by
+    ``doc`` or ``loc``) has its text fields replaced and is marked
+    ``screened``. Locators, dates and names stay."""
+    from . import privscreen
+    held: dict = {}
+
+    def doc_of(o):
+        if isinstance(o.get("doc"), str) and o["doc"].startswith("sha256:"):
+            return o["doc"]
+        loc = o.get("loc")
+        try:
+            if isinstance(loc, dict):
+                return loc.get("doc")
+            if isinstance(loc, str):
+                return locators.parse(loc)["doc"]
+        except (locators.LocatorError, ValueError, KeyError):
+            return None
+        return None
+
+    def is_held(d):
+        if d not in held:
+            held[d] = bool(privscreen.screen(m, d))
+        return held[d]
+
+    def clean(o, inherited=False):
+        if isinstance(o, list):
+            return [clean(x, inherited) for x in o]
+        if not isinstance(o, dict):
+            return o
+        d = doc_of(o)
+        mine = inherited or (bool(d) and is_held(d))
+        # a route or a tension describes how things connect, in the tool's words, not the document's
+        own = {"route", "people", "tensions"}
+        o = {k: (SCREENED_TEXT if mine and k in TEXT_KEYS and isinstance(v, (str, dict, list)) else
+                 clean(v, mine and k not in own)) for k, v in o.items()}
+        if mine and d and not inherited:
+            o["screened"] = True
+        return o
+
+    return lambda obj: print(json.dumps(clean(obj), ensure_ascii=False))
+
+
 # -- raw and interp: files of unknown format or schema ------------------------------------
 
 RAW_HELP = """\
@@ -3412,6 +3460,7 @@ def analyze(argv=None):
     matter_everywhere(sub)
     a = p.parse_args(argv)
     m = Matter.find(a.matter)
+    out = _screening_out(m)               # passages from documents the privilege screen holds back are left out
 
     def doc(x):
         return locators.parse("doc:" + x.removeprefix("doc:"), m.objects)["doc"] if not x.lstrip().startswith("{") \
