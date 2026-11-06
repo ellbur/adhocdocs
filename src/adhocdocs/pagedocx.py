@@ -3,6 +3,7 @@ block quotations and footnoted citations. Quotations are written as
 literal text from the document, with the renderer's marks."""
 
 import io
+import html
 import re
 
 import docx
@@ -155,6 +156,14 @@ class Writer:
             if d.kind == "interp-block":
                 para.paragraph_format.left_indent = Inches(0.25)
             self.interpretation(para, d, r)
+            return
+        if d.kind in ("checked", "listed"):
+            # the one-line verdict or count; the documents behind it are in the provenance file
+            from .pages import checked_html, listed_html
+            badge, _ = (checked_html if d.kind == "checked" else listed_html)(self.page, r)
+            text = html.unescape(re.sub(r"<[^>]+>", "", badge))
+            run = para.add_run(" [" + text + "]")
+            run.font.size = Pt(8)
             return
         citation = self.page.cite(r, d.opts.get("signal"))
         if d.kind == "cite":

@@ -11,6 +11,12 @@ naming entries in a fenced ``refs`` block at the end of the text:
 ``:interp{#id}``       an interpretation's value, inline, marked as one
 ``::interp{#id}``      (own line) an interpretation as a table, tree,
                        text or picture, captioned as Claude's reading
+``:checked{#id}``      a search reference: what a claim was checked
+                       against, one line that opens to every document
+                       the search finds (``page ref search``)
+``:listed{#id}``       a list reference: a list file, or one point of a
+                       key set, as one line that opens to its documents
+                       and their whys (``page ref list``)
 =====================  ==================================================
 
 Options: ``cite=none|footnote``, ``layout=lines``, ``signal="see"``, and
@@ -60,7 +66,7 @@ from dataclasses import dataclass, field
 from . import locators
 
 REFS_BLOCK = re.compile(r"^```refs[ \t]*\n(.*?)^```[ \t]*\n?", re.S | re.M)
-DIRECTIVE = re.compile(r"(?P<colons>:{1,2})(?P<name>q|cite|interp)\{#(?P<id>[a-z0-9-]+)(?P<opts>[^}]*)\}")
+DIRECTIVE = re.compile(r"(?P<colons>:{1,2})(?P<name>q|cite|interp|checked|listed)\{#(?P<id>[a-z0-9-]+)(?P<opts>[^}]*)\}")
 REF_LINK = re.compile(r"\]\(ref:(?P<id>[a-z0-9-]+)\)")
 OPTION = re.compile(r'([a-z]+)=(?:"([^"]*)"|(\S+))')
 QUOTED = re.compile(r"“[^”]*”|\"[^\"\n]*\"")
@@ -89,7 +95,8 @@ def directives(prose: str) -> list[Directive]:
             block = False
         opts = {k: a if a else b for k, a, b in OPTION.findall(m.group("opts"))}
         name = m.group("name")
-        kind = {"cite": "cite", "interp": "interp-block" if block else "interp"}.get(name) or ("block" if block else "q")
+        kind = {"cite": "cite", "checked": "checked", "listed": "listed", "interp": "interp-block" if block else "interp"}.get(name) or (
+            "block" if block else "q")
         out.append(Directive(kind, m.group("id"), opts, m.start(), m.end()))
     for m in REF_LINK.finditer(prose):
         out.append(Directive("link", m.group("id"), {}, m.start(), m.end()))
@@ -162,6 +169,8 @@ class Resolved:
     interp: dict | None = None      # an interpretation reference: its record
     ptr: str | None = None          # … and the pointer into its output
     meta: dict | None = None        # a metadocument reference: what it names (metadocs.describe) and its docs
+    search: dict | None = None      # a search reference: the search's header and its documents, run now
+    listing: dict | None = None     # a list reference: the list file's header and items (a point's, if it names one)
 
     @property
     def quoted(self) -> bool:
@@ -171,6 +180,10 @@ class Resolved:
     def kind(self) -> str:
         if self.meta is not None:
             return "meta"
+        if self.search is not None:
+            return "search"
+        if self.listing is not None:
+            return "list"
         if self.interp is not None:
             return "interp"
         if self.data is not None:
@@ -281,9 +294,78 @@ def _resolve_meta(m, ref: dict) -> Resolved:
     return res
 
 
+def run_search(m, ref: dict) -> tuple[dict, list[dict]]:
+    """A search reference's search, run now: (header, one item per document)."""
+    from .search import Options, Searcher
+    s = Searcher(m, Options(layers=ref.get("layers") or "primary", where=ref.get("where")))
+    index = ref.get("index") or "keyword"
+    if index != "keyword":
+        raise ValueError(f"index {index}: a search reference re-runs its search, so it must be exhaustive (keyword)")
+    return s.finish(*s.keyword(ref["search"]))
+
+
+def _resolve_search(m, ref: dict) -> Resolved:
+    """A search reference: the search behind a claim, kept so the reader can
+    re-run it, see every document it found, and see which ones the author
+    judged to go against the claim. Re-anchored when it finds other
+    documents now than when it was recorded."""
+    rid = ref.get("id", "?")
+    try:
+        header, items = run_search(m, ref)
+    except (locators.LocatorError, KeyError, ValueError) as e:
+        return Resolved(rid, "broken", error=str(e))
+    docs = [locators.parse(it["loc"], m.objects)["doc"] for it in items]
+    res = Resolved(rid, "exact", doc=docs[0] if docs else None, search={"header": header, "items": items, "docs": docs})
+    was = [locators.parse("doc:" + x.removeprefix("doc:"), m.objects)["doc"] for x in ref.get("docs") or []]
+    if "docs" in ref and set(map(m.state.follow, was)) != set(docs):
+        gone, added = len(set(was) - set(docs)), len(set(docs) - set(was))
+        res.status = "re-anchored"
+        res.error = (f"the search finds other documents now: " + ", ".join(
+            x for x in ([f"{added} more"] if added else []) + ([f"{gone} no longer"] if gone else []))
+            + "; read the new ones against the claim, then page refs update")
+        res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "docs": docs}
+    for a in ref.get("against") or []:
+        try:
+            if locators.resolve(m, locators.parse(a["loc"], m.objects))["status"] == "broken":
+                res.status, res.error = "broken", f"an 'against' locator no longer resolves: {a['loc'][:80]}"
+        except (locators.LocatorError, KeyError, ValueError) as e:
+            res.status, res.error = "broken", f"an 'against' entry is not a locator: {e}"
+    return res
+
+
+def list_path(m, ref: dict):
+    from pathlib import Path
+    p = Path(ref["list"])
+    return p if p.is_absolute() else m.workspace / p
+
+
+def _resolve_list(m, ref: dict) -> Resolved:
+    """A list reference: a list file (a key set, a chronology), or one point
+    of a key set: the documents behind a claim, beyond the one or two cited."""
+    from . import lists
+    rid = ref.get("id", "?")
+    path = list_path(m, ref)
+    try:
+        header, items = lists.read(path)
+    except (OSError, ValueError) as e:
+        return Resolved(rid, "broken", error=f"list {ref['list']}: {e}")
+    point = ref.get("point")
+    if point:
+        if point not in [p["id"] for p in header.get("points", [])]:
+            return Resolved(rid, "broken", error=f"list {ref['list']} has no point {point!r}")
+        items = [it for it in items if point in ((it.get("fields") or {}).get("points") or [])]
+    docs = [locators.parse(it["loc"], m.objects)["doc"] for it in items]
+    return Resolved(rid, "exact", doc=docs[0] if docs else None,
+                    listing={"header": header, "items": items, "docs": docs, "point": point})
+
+
 def resolve(m, ref: dict) -> Resolved:
     rid = ref.get("id", "?")
     sel = ref.get("select") or {}
+    if "list" in ref:
+        return _resolve_list(m, ref)
+    if "search" in ref:
+        return _resolve_search(m, ref)
     if "meta" in ref:
         return _resolve_meta(m, ref)
     if "interp" in ref:
@@ -479,7 +561,7 @@ def check(m, text: str) -> list[dict]:
         res = r.result()
         if r.status != "broken":
             # every use of the reference must be one it can be shown as
-            err = next((e for d in used.get(ref["id"], []) if d.kind in ("q", "block", "interp", "interp-block")
+            err = next((e for d in used.get(ref["id"], []) if d.kind in ("q", "block", "interp", "interp-block", "checked", "listed")
                         for e in [shown_as(m, d, r)[1]] if e), None)
             if err:
                 res.update(status="broken", error=err)
@@ -506,6 +588,15 @@ def check(m, text: str) -> list[dict]:
 def shown_as(m, d: Directive, r: Resolved) -> tuple[str, str | None]:
     """How a quotation or interpretation directive shows its reference
     (``as=``), or why it can't."""
+    if d.kind == "checked":
+        return "", None if r.kind == "search" else "not a search: :checked shows a search reference (page ref search)"
+    if d.kind == "listed":
+        return "", None if r.kind == "list" else "not a list: :listed shows a list reference (page ref list)"
+    if r.kind == "list":
+        return "", "a list: show its documents with :listed, or cite it"
+    if r.kind == "search":
+        return d.opts.get("as") or "", ("a search: show what it found with :checked, or cite it; "
+                                        "to quote, quote a passage it found")
     if d.kind in ("interp", "interp-block"):
         if r.kind != "interp":
             return d.opts.get("as") or "", "not an interpretation: quote the document with :q, or make an interpretation (interp run)"

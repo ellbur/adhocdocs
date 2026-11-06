@@ -2166,6 +2166,17 @@ class WebPane {
         openFromPane(this, a.getAttribute("href").slice(4), true, false, a.dataset.mode);
         return;
       }
+      if (a && a.getAttribute("href").startsWith("#")) {
+        // in-page links (footnotes, a page's checks): scroll there, opening a <details> it is or is in
+        ev.preventDefault();
+        const id = decodeURIComponent(a.getAttribute("href").slice(1));
+        const target = id && d.getElementById(id);
+        if (target) {
+          for (let x = target; x; x = x.parentElement) if (x.tagName === "DETAILS") x.open = true;
+          target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+        return;
+      }
       if (a && /^[a-z]+:/i.test(a.getAttribute("href")) && !a.getAttribute("href").startsWith("adhoc:")) { ev.preventDefault(); return; }
       const item = ev.target.closest("[data-locator]");
       if (item && !ev.target.closest("input,select,textarea,button,label")) this.select(item, ev.shiftKey, ev.ctrlKey || ev.metaKey);

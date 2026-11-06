@@ -54,11 +54,21 @@ mark inference as inference, and ask the user when the evidence is thin.
 8. **Everything is recorded** in an audit log on the host. If the audit API is
    down and blocks a tool, stop and tell the user; don't work around it.
 
+## Summaries: show the tip, link the rest
+
+The user shouldn't have to trust your reading. Asked to summarize or
+analyze, write a page (`page --help`) and `page view` it: each fact quotes
+or cites its passage, inference is labelled, and each point cites one or
+two documents and opens to the rest (`page ref list`: a key set's point). Where a reader
+would ask "does anything say otherwise?", and for whatever you say isn't
+there, add the search you checked it against (`page ref search`). When
+the parties' accounts conflict, `analyze dispute` shows who says which,
+since when, and who changed their story. The chat reply is the page's tip:
+about five points, each naming its document, then how much is beneath.
+
 ## Explaining a point with a few documents
 
-Asked for the documents about something, the user rarely wants all of
-them: most repeat the others. Unless they ask for everything, make a key
-set (`list --help`): condense broad searches, cover what only restates
-another, give each document left a `why`, and check the question's points
-for gaps before calling it complete. Tell the user how many candidates it
-accounts for, and `view list` it. Don't tag the set unless asked.
+Unless the user asks for everything, make a key set (`list --help`):
+condense broad searches, cover what only restates another, give each
+document left a `why`, and check the question's points for gaps. Say how
+many candidates it accounts for, and `view list` it. Don't tag it unless asked.

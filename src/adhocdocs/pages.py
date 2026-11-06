@@ -146,6 +146,16 @@ class Page:
     def cite(self, r: Resolved, signal=None) -> str:
         if r.kind == "meta":
             return self.cite_meta(r, signal)
+        if r.kind == "list":
+            n, h = len(r.listing["docs"]), r.listing["header"]
+            what = html.escape(h.get("title") or str(page.refs[r.id]["list"]))
+            if r.listing["point"]:
+                what += f", point “{html.escape(r.listing['point'])}”"
+            return f'{html.escape(signal) + " " if signal else ""}<i>{what}</i> ({n} document{"s" * (n != 1)})'
+        if r.kind == "search":
+            n = len(r.search["docs"])
+            return (f'{html.escape(signal) + " " if signal else ""}search [{html.escape(r.search["header"]["query"])}] '
+                    f'({n} document{"s" * (n != 1)})')
         if r.kind == "interp":
             return "Claude’s reading of " + self.cite(_doc_only(r), signal) + f" ({html.escape(r.interp['title'])})"
         style = self.meta.get("cite-style", "default")
@@ -463,7 +473,9 @@ def render(page: Page, standalone=True, images="data", review=True) -> tuple[str
     for token, (kind, d, r) in fills.items():
         i = token[len("ADHOCFILL"):-1]
         if kind == "link":
-            href = f"loc:{_loc(r) if not r.quoted else _loc(r, r.parts[0].start, r.parts[-1].end)}" if r.status != "broken" else "#broken"
+            href = ("#broken" if r.status == "broken" else f"#adhoc-check-{r.id}" if r.kind == "search" else
+                    f"#adhoc-list-{r.id}" if r.kind == "list" else
+                    f"loc:{_loc(r) if not r.quoted else _loc(r, r.parts[0].start, r.parts[-1].end)}")
             title = f' title="{html.escape(re.sub("<[^>]+>", "", page.cite(r)))}: opens its first document"' if r.kind == "meta" else ""
             body = body.replace(f'href="ADHOCLINK{i}X"', f'href="{html.escape(href)}"{title}')
             continue
@@ -471,6 +483,24 @@ def render(page: Page, standalone=True, images="data", review=True) -> tuple[str
             frag = broken_html(d.id, r.error)
         elif d.kind in ("interp", "interp-block"):
             frag = interp_html(page, d, r, images)
+        elif d.kind in ("checked", "listed"):
+            err = literate.shown_as(page.m, d, r)[1]
+            if err:
+                frag = broken_html(d.id, err)
+            else:
+                # a badge where the claim is, and the documents behind it just after the paragraph
+                # (or list item) it is in: a <details> can't sit inside a <p>
+                badge, block = (checked_html if d.kind == "checked" else listed_html)(page, r)
+                at = body.find(token)
+                ends = [e for e in (body.find("</p>", at), body.find("</li>", at)) if e >= 0]
+                if at >= 0 and ends:
+                    end = min(ends)
+                    close = "</p>" if body.startswith("</p>", end) else "</li>"
+                    body = body[:end + len(close)] + block + body[end + len(close):] if close == "</p>" else \
+                        body[:end] + block + body[end:]
+                    frag = badge
+                else:
+                    frag = badge + block
         else:
             cite_mode = d.opts.get("cite", "inline")
             citation = page.cite(r, d.opts.get("signal"))
@@ -530,6 +560,19 @@ blockquote.adhoc-quote {{ margin: 1em 2em; }}
 .adhoc-low-confidence {{ text-decoration: underline wavy #c90; }}
 .adhoc-ocr-check {{ font-size: 0.8em; color: #a60; text-decoration: none; white-space: nowrap; }}
 .adhoc-broken {{ color: #fff; background: #c00; padding: 0 .3em; }}
+.adhoc-check-badge {{ font-size: .8em; color: #2a6; text-decoration: none; border: 1px solid #bdb; border-radius: 3px;
+  padding: 0 .3em; white-space: nowrap; }}
+.adhoc-check-badge.adhoc-check-against {{ color: #c30; border-color: #ebb; }}
+details.adhoc-check {{ font-size: .85em; color: #555; margin: -.6em 0 .8em 1.5em; }}
+details.adhoc-check[open] {{ padding: .4em .8em; border-left: 3px solid #ccd; }}
+details.adhoc-check summary {{ cursor: pointer; }}
+details.adhoc-check ol {{ margin: .4em 0; padding-left: 1.5em; }}
+details.adhoc-check li {{ margin: .3em 0; }}
+details.adhoc-check li.adhoc-against {{ border-left: 3px solid #c30; padding-left: .4em; }}
+.adhoc-check-why {{ color: #c30; }}
+.adhoc-list-badge {{ color: #36a; border-color: #bcd; }}
+.adhoc-list-why {{ color: #333; }}
+.adhoc-snippet {{ color: #333; font-size: .95em; }}
 figure.adhoc-quote {{ margin: 1em 2em; }}
 figure.adhoc-image img {{ max-width: 100%; border: 1px solid #ccc; display: block; margin-bottom: .3em; }}
 figure.adhoc-cells {{ margin: 1em 0; }}
@@ -599,6 +642,23 @@ def interpretations(page: Page) -> list[dict]:
     return rows
 
 
+def checks(page: Page) -> list[dict]:
+    """Each search a claim was checked against (:checked), as run for this
+    export: the query, its coverage and as-of, every document it found, how
+    many the author read, and the passages judged against the claim."""
+    rows = []
+    for rid in dict.fromkeys(d.id for d in literate.directives(page.prose) if d.kind == "checked"):
+        r, ref = page.resolved(rid), page.refs.get(rid) or {}
+        if r.kind != "search":
+            continue
+        h = r.search["header"]
+        rows.append({"id": rid, "query": h["query"], **({"where": ref["where"]} if ref.get("where") else {}),
+                     "as_of": h.get("as_of"), "exhaustive": h.get("exhaustive"), "coverage": h.get("coverage"),
+                     "documents": r.search["docs"], "read": ref.get("read"), "against": ref.get("against", []),
+                     **({"note": ref["note"]} if ref.get("note") else {}), "status": r.status})
+    return rows
+
+
 def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
     """Write the page with quotations as literal text, plus a provenance
     record. Refuses while any reference is broken, and, unless allowed,
@@ -638,7 +698,7 @@ def export(page: Page, fmt: str, out: Path, allow_reanchored=False) -> dict:
     prov_path = out.with_name(out.name + ".provenance.json")
     prov = {"page": str(page.path), "page_hash": sha256(page.source.encode()), "output": str(out),
             "output_hash": sha256(out.read_bytes()), "format": fmt, "quotations": provenance(page),
-            "interpretations": interpretations(page)}
+            "interpretations": interpretations(page), "checks": checks(page)}
     prov_path.write_text(json.dumps(prov, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     ev = page.m.logs["workspace"].append(op="export", page=str(page.path), output=str(out), output_hash=prov["output_hash"],
                                          provenance=str(prov_path), provenance_hash=sha256(prov_path.read_bytes()))
@@ -732,6 +792,172 @@ def find_words(m: Matter, where: str | None, words: list[str], view: str | None 
     doc, (layer, text, spans) = next(iter(found.items()))
     return [{"doc": doc, "layer": layer.id, "select": {"char": [a, b]}, "quote": locators.make_quote(text, a, b)}
             for a, b in spans]
+
+
+CHECK_SHOWN = 40           # documents listed under a check; the rest are a re-run of the search away
+
+
+def checked_html(page: Page, r: Resolved) -> str:
+    """What a claim was checked against: the search, how much it covered, how
+    many documents it found, which the author read and judged to go against
+    the claim, and each document, openable, with a snippet of its first hit.
+    A <details>, so the claim reads as one line until the reader opens it."""
+    ref, h, items = page.refs[r.id], r.search["header"], r.search["items"]
+    cov, n = h.get("coverage") or {}, len(items)
+    against = {}
+    for a in ref.get("against") or []:
+        against.setdefault(locators.parse(a["loc"], page.m.objects)["doc"], []).append(a)
+    read = ref.get("read")
+    if read == "all" or (isinstance(read, int) and read >= n):
+        verdict = (f"read all {n}: " if n else "nothing found") + (
+            (f"; {len(against)} against, found otherwise" if not n else f"{len(against)} against") if against
+            else "none against" if n else "")
+    elif isinstance(read, int):
+        verdict = f"read {read} of {n}: " + (f"{len(against)} against" if against else "none against in those")
+    else:
+        verdict = f"{len(against)} against" if against else "not read for contrary statements"
+    unsearched = (cov.get("documents") or 0) - (cov.get("searched") or 0)
+    scope = (f"over {cov.get('searched')} of {cov.get('documents')} documents"
+             + (f" ({unsearched} without searchable text)" if unsearched else "")) if cov else ""
+    rows = []
+    # one row per item, however many copies (the same email in two mailboxes, a letter and its attachments)
+    from . import metadocs
+    by_doc = dict(zip(r.search["docs"], items))
+    try:
+        units = [[locators.parse(x["loc"], page.m.objects)["doc"] for x in u["docs"]]
+                 for u in metadocs.regroup(page.m, items, "copies")]
+        units = [[d for d in u if d in by_doc] or u for u in units]
+    except (metadocs.MetaError, KeyError, ValueError):
+        units = [[d] for d in r.search["docs"]]
+    units.sort(key=lambda u: not any(d in against for d in u))
+    for u in units[:CHECK_SHOWN]:
+        d = next((d for d in u if d in against), u[0])
+        it = by_doc.get(d) or {}
+        hit = (it.get("hits") or [{}])[0]
+        loc = locators.format(hit["loc"]) if hit.get("loc") else it.get("loc", "doc:" + d)
+        info = it.get("doc") or {}
+        holders = list(dict.fromkeys(c for x in u for c in [((by_doc.get(x) or {}).get("doc") or {}).get("custodian")] if c))
+        label = " · ".join(x for x in (info.get("subject") or info.get("title") or info.get("name") or d[:19],
+                                       (info.get("date") or "")[:10], ", ".join(holders)) if x)
+        copies = f' <span class="adhoc-mark">({len(u)} copies)</span>' if len(u) > 1 else ""
+        snip = (hit.get("snippet") or {}).get("text") or ""
+        why = "".join(f' <span class="adhoc-check-why">against: {html.escape(a.get("why") or "")}</span>'
+                      for x in u for a in against.get(x, []))
+        cls = ' class="adhoc-against"' if any(x in against for x in u) else ""
+        rows.append(f'<li data-locator="{html.escape(loc)}"{cls}>'
+                    f'<a href="loc:{html.escape(loc)}">{html.escape(label)}</a>{copies}{why}'
+                    f'<br><span class="adhoc-snippet" data-snippet="{html.escape(loc)}">{html.escape(snip)}</span></li>')
+    shown_n = len(units)
+    for d, marks in against.items():        # judged against, but found some other way
+        if d in r.search["docs"]:
+            continue
+        loc = marks[0]["loc"]
+        info = page.doc_meta(d)
+        label = " · ".join(x for x in (info.get("title") or info.get("name") or d[:19], (info.get("date") or "")[:10]) if x)
+        why = "".join(f' <span class="adhoc-check-why">against: {html.escape(a.get("why") or "")}</span>' for a in marks)
+        rows.insert(0, f'<li data-locator="{html.escape(loc)}" class="adhoc-against"><a href="loc:{html.escape(loc)}">'
+                       f'{html.escape(label)}</a>{why} <span class="adhoc-mark">(not found by this search)</span>'
+                       f'<br><span class="adhoc-snippet" data-snippet="{html.escape(loc)}"></span></li>')
+    more = (f'<p class="adhoc-mark">{shown_n - CHECK_SHOWN} more: <code>search {html.escape(json.dumps(h["query"], ensure_ascii=False))}</code></p>'
+            if shown_n > CHECK_SHOWN else "")
+    items_note = f" ({shown_n} once copies are folded)" if shown_n != n else ""
+    note = f'<p class="adhoc-check-note">{html.escape(ref["note"])}</p>' if ref.get("note") else ""
+    stale = ' <span class="adhoc-mark">(finds other documents now: see page check)</span>' if r.status == "re-anchored" else ""
+    badge = (f'<a class="adhoc-check-badge{" adhoc-check-against" if against else ""}" href="#adhoc-check-{r.id}" '
+             f'title="what this was checked against">checked: {n} document{"s" * (n != 1)}, {verdict}{stale}</a>')
+    block = (f'<details class="adhoc-check" id="adhoc-check-{r.id}" data-ref="{r.id}"><summary>the search: '
+             f'<code>{html.escape(h["query"])}</code>, {scope}{items_note}</summary>'
+             f'{note}<ol data-sequence>{"".join(rows)}</ol>{more}</details>')
+    return badge, block
+
+
+def listed_html(page: Page, r: Resolved) -> tuple[str, str]:
+    """The documents behind a point, beyond the one or two the prose cites:
+    a list file's items (or one key-set point's), each openable, with its why
+    and the documents it covers."""
+    h, items = r.listing["header"], r.listing["items"]
+    point = r.listing["point"]
+    ptext = next((p["text"] for p in h.get("points", []) if p["id"] == point), None) if point else None
+    covered = sum(len(it.get("children", [])) for it in items)
+    rows = []
+    for it in items[:CHECK_SHOWN]:
+        d = locators.parse(it["loc"], page.m.objects)["doc"]
+        info = page.doc_meta(d)
+        f = it.get("fields") or {}
+        label = " · ".join(x for x in (f.get("event") or info.get("subject") or info.get("title") or info.get("name") or d[:19],
+                                       str(f.get("date") or info.get("date") or "")[:10], info.get("custodian") or "") if x)
+        why = f'<br><span class="adhoc-list-why">{html.escape(f["why"])}</span>' if f.get("why") else ""
+        kids = it.get("children", [])
+        under = (f' <span class="adhoc-mark">(+{len(kids)}: ' + ", ".join(sorted({c.get("reason") or "covered" for c in kids}))
+                 + ")</span>") if kids else ""
+        rows.append(f'<li data-locator="{html.escape(it["loc"])}"><a href="loc:{html.escape(it["loc"])}">{html.escape(label)}</a>'
+                    f'{under}{why}</li>')
+    n = len(items)
+    title = html.escape(h.get("title") or str(page.refs[r.id]["list"]))
+    more = f'<p class="adhoc-mark">{n - CHECK_SHOWN} more: view list {html.escape(str(page.refs[r.id]["list"]))}</p>' if n > CHECK_SHOWN else ""
+    total = f"{n} document{'s' * (n != 1)}" + (f" (+{covered} covered)" if covered else "")
+    badge = (f'<a class="adhoc-check-badge adhoc-list-badge" href="#adhoc-list-{r.id}" title="the documents behind this">'
+             f'{total}</a>')
+    block = (f'<details class="adhoc-check adhoc-list" id="adhoc-list-{r.id}" data-ref="{r.id}"><summary>'
+             f'{title}' + (f': {html.escape(ptext)}' if ptext else "") + f' — {total}</summary>'
+             f'<ol data-sequence>{"".join(rows)}</ol>{more}</details>')
+    return badge, block
+
+
+def add_list_ref(m: Matter, path: Path, rid: str, list_file: str, point=None, replace=False) -> dict:
+    """A list reference: a list file, or one point of a key set."""
+    if not literate.ID.match(rid):
+        raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
+    source = Path(path).read_text(encoding="utf-8")
+    _, refs, _, _ = literate.split(source)
+    if any(r["id"] == rid for r in refs) and not replace:
+        raise PageError(f"reference {rid} exists; pass --replace")
+    f = Path(list_file).resolve()
+    try:
+        rel = str(f.relative_to(Path(m.workspace).resolve()))
+    except ValueError:
+        rel = str(f)
+    ref = {"id": rid, "list": rel, **({"point": point} if point else {})}
+    r = literate.resolve(m, ref)
+    if r.status == "broken":
+        raise PageError(r.error)
+    refs = [x for x in refs if x["id"] != rid] + [ref]
+    Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+    return {"id": rid, "list": rel, "point": point, "documents": len(r.listing["docs"])}
+
+
+def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, against=(), read=None, note=None,
+                   replace=False) -> dict:
+    """A search reference: the search a claim was checked against, its
+    documents now, and the passages the author judged to go against it."""
+    if not literate.ID.match(rid):
+        raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
+    source = Path(path).read_text(encoding="utf-8")
+    _, refs, _, _ = literate.split(source)
+    if any(r["id"] == rid for r in refs) and not replace:
+        raise PageError(f"reference {rid} exists; pass --replace")
+    ref = {"id": rid, "search": query, **({"where": where} if where else {})}
+    try:
+        header, items = literate.run_search(m, ref)
+    except (locators.LocatorError, ValueError) as e:
+        raise PageError(str(e))
+    ref["docs"] = [locators.parse(it["loc"], m.objects)["doc"] for it in items]
+    marks = []
+    for loc, why in against:
+        r = locators.resolve(m, loc if loc.lstrip().startswith("{") else "doc:" + loc.removeprefix("doc:"))
+        if r["status"] == "broken":
+            raise PageError(f"--against locator is broken: {r.get('error')}")
+        marks.append({"loc": locators.format(r["loc"]), **({"why": why} if why else {})})
+    if marks:
+        ref["against"] = marks
+    if read is not None:
+        ref["read"] = read
+    if note:
+        ref["note"] = note
+    refs = [r for r in refs if r["id"] != rid] + [ref]
+    Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+    return {"id": rid, "search": query, "documents": len(ref["docs"]), "coverage": header.get("coverage"),
+            "against": len(marks), "read": read}
 
 
 def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:
