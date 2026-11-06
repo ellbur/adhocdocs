@@ -808,7 +808,19 @@ def checked_html(page: Page, r: Resolved) -> str:
     for a in ref.get("against") or []:
         against.setdefault(locators.parse(a["loc"], page.m.objects)["doc"], []).append(a)
     read = ref.get("read")
-    if read == "all" or (isinstance(read, int) and read >= n):
+    mark_word = "may be it" if ref.get("absent") else "against"
+    if ref.get("absent"):
+        # the claim is that something isn't there: what the search finds are near misses, and the question
+        # is whether any of them is the thing after all
+        if not n:
+            verdict = "nothing found" + (f"; {len(against)} found otherwise" if against else "")
+        elif read == "all" or (isinstance(read, int) and read >= n):
+            verdict = f"read all {n}: " + (f"{len(against)} may be it" if against else "none is it")
+        elif isinstance(read, int):
+            verdict = f"read {read} of {n}: " + (f"{len(against)} may be it" if against else "none of those is it")
+        else:
+            verdict = f"{n} mention it, not read"
+    elif read == "all" or (isinstance(read, int) and read >= n):
         verdict = (f"read all {n}: " if n else "nothing found") + (
             (f"; {len(against)} against, found otherwise" if not n else f"{len(against)} against") if against
             else "none against" if n else "")
@@ -841,7 +853,7 @@ def checked_html(page: Page, r: Resolved) -> str:
                                        (info.get("date") or "")[:10], ", ".join(holders)) if x)
         copies = f' <span class="adhoc-mark">({len(u)} copies)</span>' if len(u) > 1 else ""
         snip = (hit.get("snippet") or {}).get("text") or ""
-        why = "".join(f' <span class="adhoc-check-why">against: {html.escape(a.get("why") or "")}</span>'
+        why = "".join(f' <span class="adhoc-check-why">{mark_word}: {html.escape(a.get("why") or "")}</span>'
                       for x in u for a in against.get(x, []))
         cls = ' class="adhoc-against"' if any(x in against for x in u) else ""
         rows.append(f'<li data-locator="{html.escape(loc)}"{cls}>'
@@ -854,7 +866,7 @@ def checked_html(page: Page, r: Resolved) -> str:
         loc = marks[0]["loc"]
         info = page.doc_meta(d)
         label = " · ".join(x for x in (info.get("title") or info.get("name") or d[:19], (info.get("date") or "")[:10]) if x)
-        why = "".join(f' <span class="adhoc-check-why">against: {html.escape(a.get("why") or "")}</span>' for a in marks)
+        why = "".join(f' <span class="adhoc-check-why">{mark_word}: {html.escape(a.get("why") or "")}</span>' for a in marks)
         rows.insert(0, f'<li data-locator="{html.escape(loc)}" class="adhoc-against"><a href="loc:{html.escape(loc)}">'
                        f'{html.escape(label)}</a>{why} <span class="adhoc-mark">(not found by this search)</span>'
                        f'<br><span class="adhoc-snippet" data-snippet="{html.escape(loc)}"></span></li>')
@@ -927,7 +939,7 @@ def add_list_ref(m: Matter, path: Path, rid: str, list_file: str, point=None, re
 
 
 def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, against=(), read=None, note=None,
-                   replace=False) -> dict:
+                   replace=False, absent=False) -> dict:
     """A search reference: the search a claim was checked against, its
     documents now, and the passages the author judged to go against it."""
     if not literate.ID.match(rid):
@@ -952,12 +964,14 @@ def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, agai
         ref["against"] = marks
     if read is not None:
         ref["read"] = read
+    if absent:
+        ref["absent"] = True
     if note:
         ref["note"] = note
     refs = [r for r in refs if r["id"] != rid] + [ref]
     Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
     return {"id": rid, "search": query, "documents": len(ref["docs"]), "coverage": header.get("coverage"),
-            "against": len(marks), "read": read}
+            "against": len(marks), "read": read, **({"absent": True} if absent else {})}
 
 
 def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:

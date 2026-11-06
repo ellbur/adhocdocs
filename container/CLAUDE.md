@@ -59,9 +59,10 @@ mark inference as inference, and ask the user when the evidence is thin.
 The user shouldn't have to trust your reading. Asked to summarize or
 analyze, write a page (`page --help`) and `page view` it: each fact quotes
 or cites its passage, inference is labelled, and each point cites one or
-two documents and opens to the rest (`page ref list`: a key set's point). Where a reader
-would ask "does anything say otherwise?", and for whatever you say isn't
-there, add the search you checked it against (`page ref search`). When
+two documents and opens to the rest (`page ref list --point`). Where a
+reader would ask "does anything say otherwise?", add the search you checked
+it against (`page ref search`); for each thing you say isn't there, one
+search (`--absent`). Give each point of the tip one or the other. When
 the parties' accounts conflict, `analyze dispute` shows who says which,
 since when, and who changed their story. The chat reply is the page's tip:
 about five points, each naming its document, then how much is beneath.

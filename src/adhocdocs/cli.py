@@ -2205,7 +2205,8 @@ document it found, the ones judged against first, each with its snippet.
 The search re-runs whenever the page is checked or shown: if it finds other
 documents now, the check is re-anchored (read the new ones, then `page
 refs update`). Use it where the reader would ask "does anything say
-otherwise?", and for things you say are not in the documents.
+otherwise?", and for things you say are not in the documents (--absent: one
+search per missing thing, so each absence shows what ruled it out).
 
 The documents behind a point, beyond the one or two the prose cites: `page
 ref list page.md arrived lists/x.set.list.jsonl --point arrived`, shown
@@ -2283,6 +2284,9 @@ def page(argv=None):
     s.add_argument("--why", action="append", default=[], help="why the --against passage at the same position does")
     s.add_argument("--read", help="how many of its documents you read for contrary statements: all, or a number")
     s.add_argument("--note", help="a line on what the check shows, e.g. what the search was meant to catch")
+    s.add_argument("--absent", action="store_true",
+                   help="the claim is that something isn't in the collection: what the search finds are near "
+                        "misses, and --against marks any that may be it after all. One search per absent thing")
     s.add_argument("--replace", action="store_true")
     s = sub.add_parser("ref-list", help="page ref list <file> <id> <list file> [--point P]: the documents behind a point",
                        description="Reference a list file (a key set, a chronology), or one point of a key set, "
@@ -2345,7 +2349,7 @@ def page(argv=None):
             read = None if a.read is None else "all" if a.read == "all" else int(a.read)
             out(pages.add_search_ref(m, a.file, a.id, a.query, a.where,
                                      list(zip(a.against, a.why + [None] * (len(a.against) - len(a.why)))),
-                                     read, a.note, a.replace))
+                                     read, a.note, a.replace, a.absent))
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)

@@ -148,3 +148,14 @@ def test_layers_points_to_parts_and_says_when_ocr_cannot_run(tmp_path, capsys, m
     with pytest.raises(SystemExit):
         cli.layers(["ocr", pdf])
     assert "OCR needs tesseract" in capsys.readouterr().err
+
+
+def test_an_absence_is_one_search_with_its_near_misses(m, tmp_path):
+    p = page_with(tmp_path, "No photograph of the pallet is in the collection :checked{#photo}. "
+                            "Nor any forklift record :checked{#fl}.")
+    pages.add_search_ref(m, p, "photo", "pallet", read="all", absent=True)
+    near = hit(m, "may have been sitting in Q-3")
+    pages.add_search_ref(m, p, "fl", "forklift", read="all", absent=True, against=[(near, "a pallet, but no photo")])
+    html_doc, _ = pages.render(pages.Page(m, p))
+    assert "checked: 2 documents, read all 2: none is it" in html_doc
+    assert "checked: 0 documents, nothing found; 1 found otherwise" in html_doc and "may be it: a pallet, but no photo" in html_doc
