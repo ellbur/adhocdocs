@@ -9,9 +9,10 @@ reading a hit when it overlaps it and is at least ``MIN_SPAN`` characters:
 the words of the hit alone aren't the passage. A copy of a document
 read counts as read (the same bytes, or the same email in two mailboxes).
 
-Reads that come in a burst (``BURST`` within ``BURST_SECONDS``: a script
-running ``text`` over many documents into files) are a dump, not a reading,
-and don't count; a check says how many of its documents were only dumped.
+Text written to a file (``text … > f``) was shown to no one, and reads that
+come in a burst (``BURST`` within ``BURST_SECONDS``: a script running
+``text`` over many documents) are a dump: neither counts as a reading, and a
+check says how many of its documents were only dumped.
 
 The log only knows what went through ``text``. A layer file read some other
 way (``text --path`` and then the file, ``raw``) is recorded as a whole read
@@ -69,7 +70,7 @@ def reads(m, bulk=False) -> dict[str, list[tuple]]:
     bulk dump (``bulk=True``: only those)."""
     out: dict[str, list[tuple]] = {}
     for r in _rows(m):
-        if bool(r.get("bulk")) != bulk:
+        if bool(r.get("bulk") or r.get("how") == "file") != bulk:
             continue
         out.setdefault(r["doc"], []).append((r.get("layer"), tuple(r["span"]) if r.get("span") else None))
     return out

@@ -795,9 +795,15 @@ def text(argv=None):
 def _log_read(m, r, how="text"):
     """Record what ``text`` showed (readlog.py), for the checks on pages."""
     from . import readlog
+    import stat
     loc = r.get("loc") or {}
     if not loc.get("doc"):
         return
+    try:                                  # written to a file, it was shown to no one (yet)
+        if how == "text" and stat.S_ISREG(os.fstat(sys.stdout.fileno()).st_mode):
+            how = "file"
+    except (OSError, ValueError):
+        pass
     sel = loc.get("select") or {}
     readlog.record(m, loc["doc"], loc.get("layer"), sel.get("char") if "char" in sel else None, how)
 
@@ -1795,6 +1801,8 @@ def ann(argv=None):
                        "holds back. Raise it when the documents may hold privileged material (an inadvertent "
                        "production, a client's own files); lower it only when the user says so.")
     s.add_argument("level", nargs="?", choices=["off", "marked", "suspected"])
+    s.add_argument("--list", action="store_true", help="also list each held-back document: what it is (from its "
+                                                       "metadata), why it is held back, and how it arrived")
     s = sub.add_parser("flag-privilege", help="flag documents or passages: check for possible privilege, with --basis")
     s.add_argument("locators", nargs="+")
     s.add_argument("--basis", required=True, help="why it may be privileged (Markdown; quotations as references)")
@@ -1919,6 +1927,10 @@ def ann(argv=None):
         lv = privscreen.level(m)
         held = privscreen.screened(m, m.state.live_documents())
         out({"level": lv, "held_back": len(held)})
+        if a.list:
+            for d, why in held.items():
+                out({"doc": d, "what": privscreen.what(m, d), "why": privscreen.describe(why),
+                     "arrived": privscreen.arrived(m, d)})
         return
 
     def who(spec, author):

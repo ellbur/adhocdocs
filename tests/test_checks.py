@@ -224,3 +224,24 @@ def test_a_bulk_dump_is_not_a_reading(m, tmp_path, monkeypatch):
     html_doc = pages.render(pages.Page(m, p))[0]
     assert "0 of 4 read, 4 more only in a bulk dump (the author says all)" in html_doc
     assert "only in a bulk dump</span>" in html_doc
+
+
+def test_text_written_to_a_file_is_not_a_reading(m, tmp_path, monkeypatch):
+    from adhocdocs import readlog
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    d = sorted(m.state.live_documents())[0]
+    import sys
+    with open(tmp_path / "dump.txt", "w") as f:
+        monkeypatch.setattr(sys, "stdout", f)
+        cli.text(["doc:" + d])
+    monkeypatch.undo()
+    assert readlog.reads(m) == {} and d in readlog.reads(m, bulk=True)
+
+
+def test_where_takes_fields_not_words(m, monkeypatch, capsys):
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    with pytest.raises(SystemExit):
+        cli.search(["all", "--where", "date<2026-03-01"])           # was: 0 documents, "exhaustive"
+    assert "field filters" in capsys.readouterr().err
+    cli.search(["all", "--where", "date:..2026-03-31"])
+    assert json.loads(capsys.readouterr().out.splitlines()[0])["matches"]["documents"] == 4

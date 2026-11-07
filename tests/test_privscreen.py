@@ -128,3 +128,6 @@ def test_the_levels(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("ADHOC_MATTER", str(m2.root))
     cli.ann(["privilege-screen", "marked"])
     assert json.loads(capsys.readouterr().out.splitlines()[-1]) == {"level": "marked", "held_back": 1}
+    cli.ann(["privilege-screen", "--list"])
+    rows = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert rows[1]["doc"] == letter and rows[1]["why"] == "tagged privileged by user:lawyer" and rows[1]["arrived"]["how"] == "collected"
