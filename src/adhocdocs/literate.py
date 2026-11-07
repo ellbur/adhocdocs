@@ -171,6 +171,7 @@ class Resolved:
     meta: dict | None = None        # a metadocument reference: what it names (metadocs.describe) and its docs
     search: dict | None = None      # a search reference: the search's header and its documents, run now
     listing: dict | None = None     # a list reference: the list file's header and items (a point's, if it names one)
+    unjudged: int = 0               # a search reference: passages proposed as against the claim that no one judged
 
     @property
     def quoted(self) -> bool:
@@ -198,6 +199,8 @@ class Resolved:
             r["new"] = self.new
         if self.low_confidence:
             r["low_confidence"] = True
+        if self.unjudged:
+            r["unjudged"] = self.unjudged
         return r
 
 
@@ -304,6 +307,38 @@ def run_search(m, ref: dict) -> tuple[dict, list[dict]]:
     return s.finish(*s.keyword(ref["search"]))
 
 
+def _place(m, loc):
+    p = locators.parse(loc, m.objects)
+    return p["doc"], (p.get("select") or {}).get("char")
+
+
+def _overlaps(a, b) -> bool:
+    return a[0] == b[0] and (a[1] is None or b[1] is None or (a[1][0] < b[1][1] and b[1][0] < a[1][1]))
+
+
+def judgments(m, ref: dict) -> list[dict]:
+    """A search reference's proposed passages (statements that tools found
+    going against the claim), each with how it was judged: "against", "not",
+    or None (not yet). A judgment is an --against or --not-against at the
+    same place (overlapping, in the same document)."""
+    marks = [("against", x) for x in ref.get("against") or []] + [("not", x) for x in ref.get("not_against") or []]
+    placed = []
+    for kind, x in marks:
+        try:
+            placed.append((kind, x, _place(m, x["loc"])))
+        except (locators.LocatorError, KeyError, ValueError):
+            continue
+    out = []
+    for p in ref.get("proposed") or []:
+        try:
+            here = _place(m, p["loc"])
+        except (locators.LocatorError, KeyError, ValueError):
+            continue
+        j = next(((kind, x) for kind, x, pl in placed if _overlaps(here, pl)), None)
+        out.append({**p, "judged": j[0] if j else None, "why": (j[1].get("why") if j else None)})
+    return out
+
+
 def _resolve_search(m, ref: dict) -> Resolved:
     """A search reference: the search behind a claim, kept so the reader can
     re-run it, see every document it found, and see which ones the author
@@ -324,7 +359,8 @@ def _resolve_search(m, ref: dict) -> Resolved:
             x for x in ([f"{added} more"] if added else []) + ([f"{gone} no longer"] if gone else []))
             + "; read the new ones against the claim, then page refs update")
         res.new = {**{k: v for k, v in ref.items() if not k.startswith("_")}, "docs": docs}
-    for a in ref.get("against") or []:
+    res.unjudged = sum(1 for j in judgments(m, ref) if not j["judged"])
+    for a in [*(ref.get("against") or []), *(ref.get("not_against") or [])]:
         try:
             if locators.resolve(m, locators.parse(a["loc"], m.objects))["status"] == "broken":
                 res.status, res.error = "broken", f"an 'against' locator no longer resolves: {a['loc'][:80]}"
@@ -649,6 +685,9 @@ def problems(results: list[dict]) -> list[dict]:
         elif r.get("low_confidence"):
             out.append({**r, "check": "low-confidence OCR: compare the quotation with the page image "
                                       "(its [check page N] marker opens it)"})
+        elif r.get("unjudged"):
+            out.append({**r, "check": f"{r['unjudged']} passage(s) proposed as against the claim, not judged: "
+                                      "read each, then page ref judge FILE ID LOC against|not --why \"…\""})
     return out
 
 
@@ -656,4 +695,6 @@ def summary(results: list[dict]) -> dict:
     """Counts for a one-line report: what's wrong, and what to check."""
     wrong = [r for r in results if "lint" in r or r.get("status") != "exact"]
     ocr = [r for r in results if not ("lint" in r or r.get("status") != "exact") and r.get("low_confidence")]
-    return {"problems": len(wrong), **({"check_ocr": [r["id"] for r in ocr]} if ocr else {})}
+    open_ = [r for r in results if r.get("unjudged")]
+    return {"problems": len(wrong), **({"check_ocr": [r["id"] for r in ocr]} if ocr else {}),
+            **({"unjudged": {r["id"]: r["unjudged"] for r in open_}} if open_ else {})}

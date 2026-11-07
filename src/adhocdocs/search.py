@@ -108,6 +108,12 @@ class Searcher:
             docs = [d for d in docs if d in want]
         if self.opts.where:
             node = Q.parse(self.opts.where)
+            loose = [l for l, _ in Q.leaves(node) if not isinstance(l, Q.Field)]
+            if loose:
+                # a --where of words, not fields, matches nothing and would look like an exhaustive empty result
+                raise ValueError(f"--where takes field filters (date:2026-02, date:2026-02-01..2026-02-28, "
+                                 f"date:..2026-03-01, custodian:smith-j, kind:email, from:…); "
+                                 f"{self.opts.where!r} has words that aren't one (search --help)")
             docs = [d for d in docs if self.eval_doc(node, d, [])[0]]
         for t in self.opts.tags:
             neg = t.startswith("-")

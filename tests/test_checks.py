@@ -51,7 +51,8 @@ def test_a_claim_and_what_it_was_checked_against(m, tmp_path):
     html_doc, results = pages.render(pages.Page(m, p))
     assert {x["id"]: x["status"] for x in results if "id" in x} == {"nr": "exact", "fl": "exact"}
     # a badge at the claim, and after the paragraph what it was checked against
-    assert "checked: 4 documents, read all 4: 1 against" in html_doc and "checked: 0 documents, nothing found" in html_doc
+    assert "checked: 4 documents, read all 4 (by the author's account): 1 against" in html_doc
+    assert "checked: 0 documents, nothing found" in html_doc
     assert html_doc.index("adhoc-check-badge") < html_doc.index("</p>") < html_doc.index("<details")
     # the two copies of one email are one row, and the one judged against comes first
     block = html_doc[html_doc.index('id="adhoc-check-nr"'):]
@@ -64,7 +65,7 @@ def test_a_claim_and_what_it_was_checked_against(m, tmp_path):
 def test_a_check_is_rerun_and_reports_new_documents(m, tmp_path):
     p = page_with(tmp_path, "She said so :checked{#nr}.")
     pages.add_search_ref(m, p, "nr", '"never received"', read=2)
-    assert "read 2 of 4: none against in those" in pages.render(pages.Page(m, p))[0]
+    assert "read 2 of 4 (by the author's account)" in pages.render(pages.Page(m, p))[0]
     ingest_paths(m, [CORPUS / "okafor-d" / "call-notes-bellwether-2026-03.txt"], "y", "c")
     m2 = Matter(m.root)
     res = {x["id"]: x for x in pages.Page(m2, p).check() if "id" in x}
@@ -96,7 +97,7 @@ def test_export_records_the_checks(m, tmp_path):
         assert c["query"] == '"never received"' and len(c["documents"]) == 4 and c["read"] == "all"
     import docx
     text = "\n".join(x.text for x in docx.Document(tmp_path / "o.docx").paragraphs)
-    assert "[checked: 4 documents, read all 4: none against]" in text and "<a" not in text
+    assert "[checked: 4 documents, read all 4 (by the author's account): none against" in text and "<a" not in text
 
 
 def test_the_documents_behind_a_point(m, tmp_path):
@@ -157,8 +158,8 @@ def test_an_absence_is_one_search_with_its_near_misses(m, tmp_path):
     near = hit(m, "may have been sitting in Q-3")
     pages.add_search_ref(m, p, "fl", "forklift", read="all", absent=True, against=[(near, "a pallet, but no photo")])
     html_doc, _ = pages.render(pages.Page(m, p))
-    assert "checked: 2 documents, read all 2: none is it" in html_doc
-    assert "checked: 0 documents, nothing found; 1 found otherwise" in html_doc and "may be it: a pallet, but no photo" in html_doc
+    assert "checked: 2 documents, read all 2 (by the author's account): none is it" in html_doc
+    assert "checked: 0 documents, nothing found: 1 may be it, found otherwise" in html_doc and "may be it: a pallet, but no photo" in html_doc
 
 
 def test_adding_what_a_condense_missed(m, tmp_path):
@@ -171,3 +172,76 @@ def test_adding_what_a_condense_missed(m, tmp_path):
     lists.write(f, header, items)
     cli.list_(["--matter", str(m.root), "add", str(f), docs[2][:20]])
     assert [lists.doc_of(i) for i in lists.read(f)[1]] == docs[:3]
+
+
+def test_what_was_read_comes_from_the_read_log(m, tmp_path, monkeypatch, capsys):
+    from adhocdocs import readlog
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    p = page_with(tmp_path, "She said so :checked{#nr}.")
+    pages.add_search_ref(m, p, "nr", '"never received"', read="all")
+    # the hit's own words aren't reading it; a passage around it, or the whole document, is
+    cli.text([hit(m, "never received")])
+    assert "(by the author's account)" not in pages.render(pages.Page(m, p))[0]
+    assert "0 of 4 read (the author says all)" in pages.render(pages.Page(m, p))[0]
+    kett = lists.doc_of({"loc": hit(m, "may have been sitting in Q-3")})
+    cli.text(["doc:" + kett])
+    capsys.readouterr()
+    html_doc = pages.render(pages.Page(m, p))[0]
+    assert "1 of 4 read (the author says all)" in html_doc and html_doc.count('class="adhoc-read"') == 1
+    # a copy read is read: the 3/9 email is in two mailboxes
+    past_due = [d for d in m.state.live_documents()
+                if m.objects.get_object(m.state.metadata[d]).get("name") == "2026-03-09_RE_INV-2026-0347_past-due.eml"]
+    cli.text(["doc:" + past_due[0]])
+    assert "3 of 4 read" in pages.render(pages.Page(m, p))[0]
+    assert len(readlog.path(m).read_text().splitlines()) == 3        # one line per read
+
+
+def test_proposed_against_and_judging_them(m, tmp_path):
+    p = page_with(tmp_path, "Bellwether never received it :checked{#nr}.")
+    r = pages.add_search_ref(m, p, "nr", '"never received"', read="all")
+    [prop] = r["proposed_not_judged"]                       # Voss's memo: Müller's words, rejected
+    assert prop["stance"] == "rejects" and prop["speaker"] == "Raymond Voss"
+    assert {x["id"]: x.get("unjudged") for x in pages.Page(m, p).check() if "id" in x} == {"nr": 1}
+    html_doc = pages.render(pages.Page(m, p))[0]
+    assert "1 proposed as against, not judged" in html_doc and "adhoc-check-pending" in html_doc
+    out = pages.judge_ref(m, p, "nr", prop["loc"], "not", "Voss quotes her to answer her; it is our side's memo")
+    assert out["proposed_not_judged"] == 0
+    html_doc = pages.render(pages.Page(m, p))[0]
+    assert "none against" in html_doc and "judged not against: Voss quotes her" in html_doc
+    pages.judge_ref(m, p, "nr", prop["loc"], "against", "changed my mind")       # a later judgment replaces it
+    ref = pages.Page(m, p).refs["nr"]
+    assert len(ref["against"]) == 1 and "not_against" not in ref
+    with pytest.raises(pages.PageError):
+        pages.judge_ref(m, p, "nr", prop["loc"], "against", "")
+
+
+def test_a_bulk_dump_is_not_a_reading(m, tmp_path, monkeypatch):
+    from adhocdocs import readlog
+    p = page_with(tmp_path, "She said so :checked{#nr}.")
+    pages.add_search_ref(m, p, "nr", '"never received"', read="all")
+    for d in sorted(m.state.live_documents()) * 6:             # a script running text over everything
+        readlog.record(m, d, None)
+    html_doc = pages.render(pages.Page(m, p))[0]
+    assert "0 of 4 read, 4 more only in a bulk dump (the author says all)" in html_doc
+    assert "only in a bulk dump</span>" in html_doc
+
+
+def test_text_written_to_a_file_is_not_a_reading(m, tmp_path, monkeypatch):
+    from adhocdocs import readlog
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    d = sorted(m.state.live_documents())[0]
+    import sys
+    with open(tmp_path / "dump.txt", "w") as f:
+        monkeypatch.setattr(sys, "stdout", f)
+        cli.text(["doc:" + d])
+    monkeypatch.undo()
+    assert readlog.reads(m) == {} and d in readlog.reads(m, bulk=True)
+
+
+def test_where_takes_fields_not_words(m, monkeypatch, capsys):
+    monkeypatch.setenv("ADHOC_MATTER", str(m.root))
+    with pytest.raises(SystemExit):
+        cli.search(["all", "--where", "date<2026-03-01"])           # was: 0 documents, "exhaustive"
+    assert "field filters" in capsys.readouterr().err
+    cli.search(["all", "--where", "date:..2026-03-31"])
+    assert json.loads(capsys.readouterr().out.splitlines()[0])["matches"]["documents"] == 4

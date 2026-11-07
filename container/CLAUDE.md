@@ -49,24 +49,24 @@ mark inference as inference, and ask the user when the evidence is thin.
    `redact…`; use `ann flag-privilege` with a basis (a *check for possible
    privilege*). `text` holds back what the privilege screen catches (exit
    3): say why and how it arrived, and read past it (`--past-screen`) only
-   when the user says so. It holds what a person tagged privileged; when the
-   set may hold privileged material, raise it (`ann privilege-screen
-   suspected`) and say so. Lower it only when the user says.
+   when the user says so. It holds what a person tagged privileged; if the
+   set may hold privileged material, raise it before reading anything (`ann
+   privilege-screen suspected`) and say so. Lower it only when the user says.
 8. **Everything is recorded** in an audit log on the host. If the audit API is
    down and blocks a tool, stop and tell the user; don't work around it.
 
 ## Summaries: show the tip, link the rest
 
-The user shouldn't have to trust your reading. Asked to summarize or
-analyze, write a page (`page --help`) and `page view` it: each fact quotes
-or cites its passage, inference is labelled, and each point cites one or
-two documents and opens to the rest (`page ref list --point`). Where a
-reader would ask "does anything say otherwise?", add the search you checked
-it against (`page ref search`); for each thing you say isn't there, one
-search (`--absent`). Give each point of the tip one or the other.
-`analyze trace` shows who wrote, sent or held a fact, and when; `analyze
-dispute`, who says which side of a conflict. The chat reply is the page's tip:
-about five points, each naming its document, then how much is beneath.
+The user shouldn't have to trust your reading. For a summary or analysis, write
+a page and `page view` it: facts quote or cite their passage, inference is
+labelled, and each point cites one or two documents and opens to the rest
+(`page ref list --point`). Where a reader would ask "does anything say
+otherwise?", add the search you checked it against (`page ref search`), read
+what it found with `text` (the read log counts it; a dump to files isn't
+reading), and judge each passage it proposes as against (`page ref judge`); for
+each thing you say isn't there, one search (`--absent`). Give each point of the
+tip one or the other. `analyze trace` and `dispute` show who had a fact and who
+says which side. Chat gets the tip: about five points, each with its source.
 
 ## Explaining a point with a few documents
 
