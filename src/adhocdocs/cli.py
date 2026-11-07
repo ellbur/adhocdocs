@@ -743,6 +743,8 @@ def text(argv=None):
                 continue
             out({"loc": locators.format(r["loc"]) if r.get("loc") else locators.format(part), "status": r["status"],
                  **({"text": r["text"]} if a.json and "text" in r else {})})
+            if a.json and "text" in r:
+                _log_read(m, r)
         return
     if a.locator.startswith(NAMES):
         for hit in resolve_name(m, a.locator):
@@ -751,12 +753,16 @@ def text(argv=None):
                 out({**hit, "status": r["status"], "screened": True})
                 continue
             out({**hit, "status": r["status"], **({"text": r["text"]} if a.json and "text" in r else {})})
+            if a.json and "text" in r:
+                _log_read(m, r)
         return
     r = locators.resolve(m, a.locator)
     if r["status"] != "broken" and r.get("loc"):
         _screened(m, r["loc"]["doc"], a.past_screen)
     if a.json:
         out(dict(r))
+        if "text" in r:
+            _log_read(m, r)
         return
     if r["status"] == "broken":
         raise locators.LocatorError(f"broken locator: {r['error']}")
@@ -778,10 +784,22 @@ def text(argv=None):
             print(m.objects.path(layer.text))
         else:
             sys.stdout.write(m.objects.get_text(layer.text))
+        _log_read(m, {"loc": {"doc": loc["doc"], "layer": layer.id}}, how="path" if a.path else "text")
         return
     sys.stdout.write(r["text"])
+    _log_read(m, r)
     if not r["text"].endswith("\n"):
         sys.stdout.write("\n")
+
+
+def _log_read(m, r, how="text"):
+    """Record what ``text`` showed (readlog.py), for the checks on pages."""
+    from . import readlog
+    loc = r.get("loc") or {}
+    if not loc.get("doc"):
+        return
+    sel = loc.get("select") or {}
+    readlog.record(m, loc["doc"], loc.get("layer"), sel.get("char") if "char" in sel else None, how)
 
 
 def _screened(m, doc, past=None, quiet=False) -> bool:
@@ -2346,7 +2364,11 @@ from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
 
 A claim can carry what it was checked against: `page ref search page.md
 nr '"never received" OR "not received"' --read all --against LOC --why "…"`
-records the search, and :checked{#nr} shows it after the claim as one line
+records the search, and the passages tools find denying the claim (the
+dispute tools, one side) as proposals. Read each and judge it: `page ref
+judge page.md nr LOC against|not --why "…"`; the page shows any left
+unjudged, and `page check` lists them. "Read" counts come from the read log (what `text` showed you), not
+from --read, which is kept as your account. :checked{#nr} shows it after the claim as one line
 ("checked: … 19 documents, read all 19: 1 against") that opens to every
 document it found, the ones judged against first, each with its snippet.
 The search re-runs whenever the page is checked or shown: if it finds other
@@ -2384,6 +2406,8 @@ def page(argv=None):
         argv[i:i + 2] = ["ref-search"]
     elif argv[i:i + 2] == ["ref", "list"]:
         argv[i:i + 2] = ["ref-list"]
+    elif argv[i:i + 2] == ["ref", "judge"]:
+        argv[i:i + 2] = ["ref-judge"]
     p = parser("page", PAGE_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("check")
@@ -2429,12 +2453,21 @@ def page(argv=None):
     s.add_argument("--against", action="append", default=[], metavar="LOC",
                    help="a passage that goes against the claim (repeat; pair each with --why)")
     s.add_argument("--why", action="append", default=[], help="why the --against passage at the same position does")
+    s.add_argument("--not-against", nargs=2, action="append", default=[], metavar=("LOC", "WHY"),
+                   help="a passage proposed as against the claim that, read, isn't (repeat)")
     s.add_argument("--read", help="how many of its documents you read for contrary statements: all, or a number")
     s.add_argument("--note", help="a line on what the check shows, e.g. what the search was meant to catch")
     s.add_argument("--absent", action="store_true",
                    help="the claim is that something isn't in the collection: what the search finds are near "
                         "misses, and --against marks any that may be it after all. One search per absent thing")
     s.add_argument("--replace", action="store_true")
+    s = sub.add_parser("ref-judge", help="page ref judge <file> <id> <loc> against|not --why \"…\": judge a passage "
+                                         "of a search reference")
+    s.add_argument("file")
+    s.add_argument("id")
+    s.add_argument("loc")
+    s.add_argument("verdict", choices=["against", "not"])
+    s.add_argument("--why", required=True)
     s = sub.add_parser("ref-list", help="page ref list <file> <id> <list file> [--point P]: the documents behind a point",
                        description="Reference a list file (a key set, a chronology), or one point of a key set, "
                        "shown with :listed{#id}: a count that opens to its documents, each with its why.")
@@ -2488,6 +2521,8 @@ def page(argv=None):
                 raise pages.PageError("give locators, or --words (with --in), not both")
             locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
             out(pages.add_ref(m, a.file, a.id, locs, a.replace))
+        elif a.cmd == "ref-judge":
+            out(pages.judge_ref(m, a.file, a.id, a.loc, a.verdict, a.why))
         elif a.cmd == "ref-list":
             out(pages.add_list_ref(m, a.file, a.id, a.list_file, a.point, a.replace))
         elif a.cmd == "ref-search":
@@ -2496,7 +2531,7 @@ def page(argv=None):
             read = None if a.read is None else "all" if a.read == "all" else int(a.read)
             out(pages.add_search_ref(m, a.file, a.id, a.query, a.where,
                                      list(zip(a.against, a.why + [None] * (len(a.against) - len(a.why)))),
-                                     read, a.note, a.replace, a.absent))
+                                     read, a.note, a.replace, a.absent, [tuple(x) for x in a.not_against]))
         elif a.cmd == "refs-update":
             for c in pages.update_refs(m, a.file):
                 out(c)

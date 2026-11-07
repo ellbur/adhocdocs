@@ -570,6 +570,12 @@ details.adhoc-check ol {{ margin: .4em 0; padding-left: 1.5em; }}
 details.adhoc-check li {{ margin: .3em 0; }}
 details.adhoc-check li.adhoc-against {{ border-left: 3px solid #c30; padding-left: .4em; }}
 .adhoc-check-why {{ color: #c30; }}
+.adhoc-check-not {{ color: #555; }}
+.adhoc-check-proposed {{ color: #555; font-size: .95em; }}
+.adhoc-check-open {{ color: #a60; font-size: .95em; font-weight: 600; }}
+.adhoc-check-badge.adhoc-check-pending {{ color: #a60; border-color: #e8c98a; }}
+.adhoc-read {{ color: #2a6; font-size: .85em; }}
+.adhoc-unread {{ color: #a60; font-size: .85em; }}
 .adhoc-list-badge {{ color: #36a; border-color: #bcd; }}
 .adhoc-list-why {{ color: #333; }}
 .adhoc-snippet {{ color: #333; font-size: .95em; }}
@@ -797,43 +803,30 @@ def find_words(m: Matter, where: str | None, words: list[str], view: str | None 
 CHECK_SHOWN = 40           # documents listed under a check; the rest are a re-run of the search away
 
 
-def checked_html(page: Page, r: Resolved) -> str:
+def checked_html(page: Page, r: Resolved) -> tuple[str, str]:
     """What a claim was checked against: the search, how much it covered, how
-    many documents it found, which the author read and judged to go against
-    the claim, and each document, openable, with a snippet of its first hit.
-    A <details>, so the claim reads as one line until the reader opens it."""
+    many documents it found, how many of them were read (from the read log,
+    readlog.py, where there is one: not the author's say-so), the passages
+    tools proposed as going against the claim and how each was judged, and
+    each document, openable, with a snippet of its first hit. A badge at the
+    claim, and a <details> after its paragraph."""
+    from . import metadocs, readlog
     ref, h, items = page.refs[r.id], r.search["header"], r.search["items"]
     cov, n = h.get("coverage") or {}, len(items)
+    absent = bool(ref.get("absent"))
+    mark_word = "may be it" if absent else "against"
     against = {}
     for a in ref.get("against") or []:
         against.setdefault(locators.parse(a["loc"], page.m.objects)["doc"], []).append(a)
-    read = ref.get("read")
-    mark_word = "may be it" if ref.get("absent") else "against"
-    if ref.get("absent"):
-        # the claim is that something isn't there: what the search finds are near misses, and the question
-        # is whether any of them is the thing after all
-        if not n:
-            verdict = "nothing found" + (f"; {len(against)} found otherwise" if against else "")
-        elif read == "all" or (isinstance(read, int) and read >= n):
-            verdict = f"read all {n}: " + (f"{len(against)} may be it" if against else "none is it")
-        elif isinstance(read, int):
-            verdict = f"read {read} of {n}: " + (f"{len(against)} may be it" if against else "none of those is it")
-        else:
-            verdict = f"{n} mention it, not read"
-    elif read == "all" or (isinstance(read, int) and read >= n):
-        verdict = (f"read all {n}: " if n else "nothing found") + (
-            (f"; {len(against)} against, found otherwise" if not n else f"{len(against)} against") if against
-            else "none against" if n else "")
-    elif isinstance(read, int):
-        verdict = f"read {read} of {n}: " + (f"{len(against)} against" if against else "none against in those")
-    else:
-        verdict = f"{len(against)} against" if against else "not read for contrary statements"
-    unsearched = (cov.get("documents") or 0) - (cov.get("searched") or 0)
-    scope = (f"over {cov.get('searched')} of {cov.get('documents')} documents"
-             + (f" ({unsearched} without searchable text)" if unsearched else "")) if cov else ""
-    rows = []
+    not_against = {}
+    for a in ref.get("not_against") or []:
+        not_against.setdefault(locators.parse(a["loc"], page.m.objects)["doc"], []).append(a)
+    proposals = {}
+    for p in literate.judgments(page.m, ref):
+        proposals.setdefault(locators.parse(p["loc"], page.m.objects)["doc"], []).append(p)
+    unjudged = sum(1 for ps in proposals.values() for p in ps if not p["judged"])
+
     # one row per item, however many copies (the same email in two mailboxes, a letter and its attachments)
-    from . import metadocs
     by_doc = dict(zip(r.search["docs"], items))
     try:
         units = [[locators.parse(x["loc"], page.m.objects)["doc"] for x in u["docs"]]
@@ -841,9 +834,76 @@ def checked_html(page: Page, r: Resolved) -> str:
         units = [[d for d in u if d in by_doc] or u for u in units]
     except (metadocs.MetaError, KeyError, ValueError):
         units = [[d] for d in r.search["docs"]]
-    units.sort(key=lambda u: not any(d in against for d in u))
-    for u in units[:CHECK_SHOWN]:
-        d = next((d for d in u if d in against), u[0])
+
+    # what was read: from the read log (a copy read is read), else the author's account
+    logged = readlog.exists(page.m)
+    log = readlog.reads(page.m) if logged else {}
+
+    def spans(d):
+        out = []
+        for hit in (by_doc.get(d) or {}).get("hits") or []:
+            loc = hit.get("loc") or {}
+            if isinstance(loc, dict) and "char" in (loc.get("select") or {}):
+                out.append((loc.get("layer"), *loc["select"]["char"]))
+        for p in proposals.get(d, []):
+            pl = locators.parse(p["loc"], page.m.objects)
+            if "char" in (pl.get("select") or {}):
+                out.append((pl.get("layer"), *pl["select"]["char"]))
+        return out
+    unit_read = [any(readlog.read_doc(log, d, spans(d)) for d in u) for u in units] if logged else [None] * len(units)
+    n_read = sum(len(u) for u, ok in zip(units, unit_read) if ok)
+
+    claimed = ref.get("read")
+    if logged:
+        read_part = (f"read all {n}" if n_read >= n else f"{n_read} of {n} read") if n else "nothing found"
+        if claimed == "all" and n_read < n or isinstance(claimed, int) and claimed > n_read:
+            read_part += f" (the author says {claimed})"
+    elif claimed == "all" or (isinstance(claimed, int) and claimed >= n):
+        read_part = f"read all {n} (by the author's account)" if n else "nothing found"
+    elif isinstance(claimed, int):
+        read_part = f"read {claimed} of {n} (by the author's account)"
+    else:
+        read_part = f"{n} mention it, not read" if absent else "not read for contrary statements"
+        if not n:
+            read_part = "nothing found"
+    if absent:
+        judged = f"{len(against)} may be it" if against else ("none is it" if n else "")
+    else:
+        judged = f"{len(against)} against" if against else ("none against" if n or proposals else "")
+    if against and not n:
+        judged += ", found otherwise"
+    verdict = read_part + (f": {judged}" if judged else "")
+    if unjudged:
+        verdict += f"; {unjudged} proposed as against, not judged"
+
+    unsearched = (cov.get("documents") or 0) - (cov.get("searched") or 0)
+    scope = (f"over {cov.get('searched')} of {cov.get('documents')} documents"
+             + (f" ({unsearched} without searchable text)" if unsearched else "")) if cov else ""
+
+    def judgments_html(d):
+        def shown_with_proposal(a):          # a judgment of a proposal is shown with the proposal
+            here = literate._place(page.m, a["loc"])
+            return any(literate._overlaps(here, literate._place(page.m, p["loc"])) for p in proposals.get(d, []))
+        out = "".join(f' <span class="adhoc-check-why">{mark_word}: {html.escape(a.get("why") or "")}</span>'
+                      for a in against.get(d, []) if not shown_with_proposal(a))
+        out += "".join(f' <span class="adhoc-check-not">not {mark_word}: {html.escape(a.get("why") or "")}</span>'
+                       for a in not_against.get(d, []) if not shown_with_proposal(a))
+        for p in proposals.get(d, []):
+            who = f" ({html.escape(p['speaker'])})" if p.get("speaker") else ""
+            state = ({"against": f'judged {mark_word}', "not": f"judged not {mark_word}"}[p["judged"]]
+                     + (f": {html.escape(p['why'])}" if p.get("why") else "")) if p["judged"] else "not judged"
+            cls = "adhoc-check-open" if not p["judged"] else "adhoc-check-proposed"
+            out += (f'<br><span class="{cls}">proposed: {html.escape(p.get("stance") or "against")}{who}, '
+                    f'<a href="loc:{html.escape(p["loc"])}">the passage</a> — {state}</span>')
+        return out
+
+    order = sorted(range(len(units)), key=lambda k: (not any(d in against for d in units[k]),
+                                                     not any(not p["judged"] for d in units[k] for p in proposals.get(d, [])),
+                                                     not any(d in proposals for d in units[k]), k))
+    rows = []
+    for k in order[:CHECK_SHOWN]:
+        u = units[k]
+        d = next((d for d in u if d in against), next((d for d in u if d in proposals), u[0]))
         it = by_doc.get(d) or {}
         hit = (it.get("hits") or [{}])[0]
         loc = locators.format(hit["loc"]) if hit.get("loc") else it.get("loc", "doc:" + d)
@@ -852,34 +912,40 @@ def checked_html(page: Page, r: Resolved) -> str:
         label = " · ".join(x for x in (info.get("subject") or info.get("title") or info.get("name") or d[:19],
                                        (info.get("date") or "")[:10], ", ".join(holders)) if x)
         copies = f' <span class="adhoc-mark">({len(u)} copies)</span>' if len(u) > 1 else ""
+        was_read = unit_read[k]
+        readmark = ('' if was_read is None else ' <span class="adhoc-read">read</span>' if was_read
+                    else ' <span class="adhoc-unread">not read</span>')
         snip = (hit.get("snippet") or {}).get("text") or ""
-        why = "".join(f' <span class="adhoc-check-why">{mark_word}: {html.escape(a.get("why") or "")}</span>'
-                      for x in u for a in against.get(x, []))
+        marks = "".join(judgments_html(x) for x in u)
         cls = ' class="adhoc-against"' if any(x in against for x in u) else ""
         rows.append(f'<li data-locator="{html.escape(loc)}"{cls}>'
-                    f'<a href="loc:{html.escape(loc)}">{html.escape(label)}</a>{copies}{why}'
+                    f'<a href="loc:{html.escape(loc)}">{html.escape(label)}</a>{copies}{readmark}{marks}'
                     f'<br><span class="adhoc-snippet" data-snippet="{html.escape(loc)}">{html.escape(snip)}</span></li>')
     shown_n = len(units)
-    for d, marks in against.items():        # judged against, but found some other way
-        if d in r.search["docs"]:
+    found = set(r.search["docs"])
+    for d in dict.fromkeys([*against, *proposals]):        # judged or proposed, but found some other way
+        if d in found:
             continue
-        loc = marks[0]["loc"]
+        loc = (against.get(d) or proposals.get(d))[0]["loc"]
         info = page.doc_meta(d)
         label = " · ".join(x for x in (info.get("title") or info.get("name") or d[:19], (info.get("date") or "")[:10]) if x)
-        why = "".join(f' <span class="adhoc-check-why">{mark_word}: {html.escape(a.get("why") or "")}</span>' for a in marks)
-        rows.insert(0, f'<li data-locator="{html.escape(loc)}" class="adhoc-against"><a href="loc:{html.escape(loc)}">'
-                       f'{html.escape(label)}</a>{why} <span class="adhoc-mark">(not found by this search)</span>'
+        rows.insert(0, f'<li data-locator="{html.escape(loc)}"{" class=\"adhoc-against\"" if d in against else ""}>'
+                       f'<a href="loc:{html.escape(loc)}">{html.escape(label)}</a>{judgments_html(d)} '
+                       f'<span class="adhoc-mark">(not found by this search)</span>'
                        f'<br><span class="adhoc-snippet" data-snippet="{html.escape(loc)}"></span></li>')
     more = (f'<p class="adhoc-mark">{shown_n - CHECK_SHOWN} more: <code>search {html.escape(json.dumps(h["query"], ensure_ascii=False))}</code></p>'
             if shown_n > CHECK_SHOWN else "")
     items_note = f" ({shown_n} once copies are folded)" if shown_n != n else ""
+    read_note = ('<p class="adhoc-mark">“Read” is from the read log: what <code>text</code> showed the author, '
+                 'whole or in passages that cover the hits. Reading done some other way isn\'t in it.</p>' if logged else "")
     note = f'<p class="adhoc-check-note">{html.escape(ref["note"])}</p>' if ref.get("note") else ""
     stale = ' <span class="adhoc-mark">(finds other documents now: see page check)</span>' if r.status == "re-anchored" else ""
-    badge = (f'<a class="adhoc-check-badge{" adhoc-check-against" if against else ""}" href="#adhoc-check-{r.id}" '
+    cls = " adhoc-check-against" if against else " adhoc-check-pending" if unjudged else ""
+    badge = (f'<a class="adhoc-check-badge{cls}" href="#adhoc-check-{r.id}" '
              f'title="what this was checked against">checked: {n} document{"s" * (n != 1)}, {verdict}{stale}</a>')
     block = (f'<details class="adhoc-check" id="adhoc-check-{r.id}" data-ref="{r.id}"><summary>the search: '
              f'<code>{html.escape(h["query"])}</code>, {scope}{items_note}</summary>'
-             f'{note}<ol data-sequence>{"".join(rows)}</ol>{more}</details>')
+             f'{note}{read_note}<ol data-sequence>{"".join(rows)}</ol>{more}</details>')
     return badge, block
 
 
@@ -938,10 +1004,30 @@ def add_list_ref(m: Matter, path: Path, rid: str, list_file: str, point=None, re
     return {"id": rid, "list": rel, "point": point, "documents": len(r.listing["docs"])}
 
 
+def propose(m, query: str) -> list[dict]:
+    """Passages that go against the claim a query describes, as the dispute
+    tools read them (dispute.py, one side): sentences that make the claim
+    and deny it, doubt it, or report it to reject it. Proposals, for the
+    author to judge; originals only, not their copies."""
+    from . import dispute
+    try:
+        res = dispute.dispute(m, [dispute.side("claim", query=query)])
+    except Exception:            # a query the dispute tools can't use: nothing proposed
+        return []
+    out = []
+    for st in res["statements"]:
+        if st.get("copy_of") or not str(st.get("camp") or "").startswith("not "):
+            continue
+        out.append({"loc": st["loc"], "stance": st["stance"],
+                    **({"speaker": st["speaker_name"]} if st.get("speaker_name") else {})})
+    return out
+
+
 def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, against=(), read=None, note=None,
-                   replace=False, absent=False) -> dict:
+                   replace=False, absent=False, not_against=()) -> dict:
     """A search reference: the search a claim was checked against, its
-    documents now, and the passages the author judged to go against it."""
+    documents now, the passages tools propose as going against it, and the
+    passages the author judged to go against it, or not."""
     if not literate.ID.match(rid):
         raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
     source = Path(path).read_text(encoding="utf-8")
@@ -954,18 +1040,28 @@ def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, agai
     except (locators.LocatorError, ValueError) as e:
         raise PageError(str(e))
     ref["docs"] = [locators.parse(it["loc"], m.objects)["doc"] for it in items]
-    marks = []
-    for loc, why in against:
-        try:
-            r = locators.resolve(m, loc if loc.lstrip().startswith("{") else "doc:" + loc.removeprefix("doc:"))
-        except (locators.LocatorError, ValueError) as e:
-            raise PageError(f"--against takes a locator: a search hit's loc (string or JSON, whole) or a document "
-                            f"hash; {loc[:60]!r} isn't one ({e})")
-        if r["status"] == "broken":
-            raise PageError(f"--against locator is broken: {r.get('error')}")
-        marks.append({"loc": locators.format(r["loc"]), **({"why": why} if why else {})})
+    def judged(pairs, flag):
+        out = []
+        for loc, why in pairs:
+            try:
+                r = locators.resolve(m, loc if loc.lstrip().startswith("{") or "#" in loc else "doc:" + loc.removeprefix("doc:"))
+            except (locators.LocatorError, ValueError) as e:
+                raise PageError(f"{flag} takes a locator: a search hit's loc (string or JSON, whole) or a document "
+                                f"hash; {loc[:60]!r} isn't one ({e})")
+            if r["status"] == "broken":
+                raise PageError(f"{flag} locator is broken: {r.get('error')}")
+            out.append({"loc": locators.format(r["loc"]), **({"why": why} if why else {})})
+        return out
+    marks = judged(against, "--against")
     if marks:
         ref["against"] = marks
+    nots = judged(not_against, "--not-against")
+    if nots:
+        ref["not_against"] = nots
+    if not absent:
+        proposed = propose(m, query)
+        if proposed:
+            ref["proposed"] = proposed
     if read is not None:
         ref["read"] = read
     if absent:
@@ -974,8 +1070,42 @@ def add_search_ref(m: Matter, path: Path, rid: str, query: str, where=None, agai
         ref["note"] = note
     refs = [r for r in refs if r["id"] != rid] + [ref]
     Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+    open_ = [j for j in literate.judgments(m, ref) if not j["judged"]]
     return {"id": rid, "search": query, "documents": len(ref["docs"]), "coverage": header.get("coverage"),
-            "against": len(marks), "read": read, **({"absent": True} if absent else {})}
+            "against": len(marks), "not_against": len(nots), "read": read, **({"absent": True} if absent else {}),
+            **({"proposed_not_judged": [{k: j[k] for k in ("loc", "stance", "speaker") if k in j} for j in open_]}
+               if open_ else {})}
+
+
+def judge_ref(m: Matter, path: Path, rid: str, loc: str, verdict: str, why: str) -> dict:
+    """Judge one passage of a search reference (one proposed, or any other):
+    ``against`` the claim, or ``not`` against it, with why. A later judgment
+    of the same place replaces an earlier one."""
+    if verdict not in ("against", "not"):
+        raise PageError("a judgment is against or not")
+    if not why:
+        raise PageError("say why (--why): it is shown with the judgment")
+    source = Path(path).read_text(encoding="utf-8")
+    _, refs, _, _ = literate.split(source)
+    ref = next((r for r in refs if r["id"] == rid), None)
+    if not ref or "search" not in ref:
+        raise PageError(f"no search reference {rid} (page ref search)")
+    try:
+        r = locators.resolve(m, loc if loc.lstrip().startswith("{") or "#" in loc else "doc:" + loc.removeprefix("doc:"))
+    except (locators.LocatorError, ValueError) as e:
+        raise PageError(f"not a locator: {loc[:60]!r} ({e})")
+    if r["status"] == "broken":
+        raise PageError(f"locator is broken: {r.get('error')}")
+    mark = {"loc": locators.format(r["loc"]), "why": why}
+    here = literate._place(m, mark["loc"])
+    for key in ("against", "not_against"):
+        ref[key] = [x for x in ref.get(key) or [] if not literate._overlaps(here, literate._place(m, x["loc"]))]
+        if not ref[key]:
+            ref.pop(key)
+    ref.setdefault("against" if verdict == "against" else "not_against", []).append(mark)
+    Path(path).write_text(literate.replace_refs(source, refs), encoding="utf-8", newline="\n")
+    open_ = [j for j in literate.judgments(m, ref) if not j["judged"]]
+    return {"id": rid, "judged": verdict, "loc": mark["loc"], "proposed_not_judged": len(open_)}
 
 
 def add_ref(m: Matter, path: Path, rid: str, locs: list, replace=False) -> dict:

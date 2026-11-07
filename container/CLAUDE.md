@@ -57,16 +57,16 @@ mark inference as inference, and ask the user when the evidence is thin.
 
 ## Summaries: show the tip, link the rest
 
-The user shouldn't have to trust your reading. Asked to summarize or
-analyze, write a page (`page --help`) and `page view` it: each fact quotes
-or cites its passage, inference is labelled, and each point cites one or
-two documents and opens to the rest (`page ref list --point`). Where a
-reader would ask "does anything say otherwise?", add the search you checked
-it against (`page ref search`); for each thing you say isn't there, one
-search (`--absent`). Give each point of the tip one or the other.
-`analyze trace` shows who wrote, sent or held a fact, and when; `analyze
-dispute`, who says which side of a conflict. The chat reply is the page's tip:
-about five points, each naming its document, then how much is beneath.
+The user shouldn't have to trust your reading. For a summary or analysis, write
+a page (`page --help`) and `page view` it: facts quote or cite their passage,
+inference is labelled, and each point cites one or two documents and opens to
+the rest (`page ref list --point`). Where a reader would ask "does anything say
+otherwise?", add the search you checked it against (`page ref search`), read
+what it found, and judge each passage it proposes as against (`page ref
+judge`); for each thing you say isn't there, one search (`--absent`). Give each
+point of the tip one or the other. See `analyze trace` (who had a fact, when)
+and `analyze dispute` (who says which side). The chat reply is the page's tip:
+about five points, each naming its document, then what's beneath.
 
 ## Explaining a point with a few documents
 

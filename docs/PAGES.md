@@ -112,6 +112,24 @@ through to its source.
   re-anchored until the author reads the new ones and runs `page refs
   update`.
 
+  Two parts of a check don't rest on the author's word:
+  - **What was read** comes from the read log (`readlog.py`). `text`
+    records every document or passage it shows Claude in
+    `workspace/.adhoc/reads.jsonl`. A document counts as read when it was
+    shown whole, or in a passage of at least 120 characters overlapping
+    one of its hits. A copy of a read document counts too. The line reads
+    "18 of 22 read", and adds "(the author says all)" when `--read`
+    claimed more. Each row is marked "read" or "not read". Without a log,
+    `--read` is shown as "by the author's account".
+  - **Passages against the claim are proposed by the tools.** `page ref
+    search` runs the claim's query as a one-sided dispute
+    ([DISPUTES.md](DISPUTES.md)). It keeps the sentences that deny, doubt,
+    or report and reject the claim as proposals, each with its stance and
+    speaker. The author judges each one with `page ref judge page.md nr
+    LOC against|not --why "…"`. Proposals left unjudged turn the line amber
+    ("1 proposed as against, not judged"), and `page check` lists them. The
+    reader sees what the tools found as well as what the author kept.
+
   A search reference has to be a keyword search, because a check must be
   exhaustive. Exports show the line, and the provenance file lists every
   document under `checks`.
