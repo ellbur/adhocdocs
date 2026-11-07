@@ -213,3 +213,14 @@ def test_proposed_against_and_judging_them(m, tmp_path):
     assert len(ref["against"]) == 1 and "not_against" not in ref
     with pytest.raises(pages.PageError):
         pages.judge_ref(m, p, "nr", prop["loc"], "against", "")
+
+
+def test_a_bulk_dump_is_not_a_reading(m, tmp_path, monkeypatch):
+    from adhocdocs import readlog
+    p = page_with(tmp_path, "She said so :checked{#nr}.")
+    pages.add_search_ref(m, p, "nr", '"never received"', read="all")
+    for d in sorted(m.state.live_documents()) * 6:             # a script running text over everything
+        readlog.record(m, d, None)
+    html_doc = pages.render(pages.Page(m, p))[0]
+    assert "0 of 4 read, 4 more only in a bulk dump (the author says all)" in html_doc
+    assert "only in a bulk dump</span>" in html_doc

@@ -2408,6 +2408,10 @@ def page(argv=None):
         argv[i:i + 2] = ["ref-list"]
     elif argv[i:i + 2] == ["ref", "judge"]:
         argv[i:i + 2] = ["ref-judge"]
+    elif argv[i:i + 1] == ["ref"]:
+        print(json.dumps({"error": "page ref what? page ref add | ref search | ref judge | ref list "
+                                   "(or ref-add, ref-search, ref-judge, ref-list); each has --help"}), file=sys.stderr)
+        sys.exit(2)
     p = parser("page", PAGE_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("check")

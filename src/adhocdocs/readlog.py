@@ -9,6 +9,10 @@ reading a hit when it overlaps it and is at least ``MIN_SPAN`` characters:
 the words of the hit alone aren't the passage. A copy of a document
 read counts as read (the same bytes, or the same email in two mailboxes).
 
+Reads that come in a burst (``BURST`` within ``BURST_SECONDS``: a script
+running ``text`` over many documents into files) are a dump, not a reading,
+and don't count; a check says how many of its documents were only dumped.
+
 The log only knows what went through ``text``. A layer file read some other
 way (``text --path`` and then the file, ``raw``) is recorded as a whole read
 where the tool can tell, and otherwise isn't: the count is a floor.
@@ -18,6 +22,8 @@ import json
 from datetime import datetime, timezone
 
 FILE = ".adhoc/reads.jsonl"
+BURST = 20              # this many reads within BURST_SECONDS is a dump to files, not a reading
+BURST_SECONDS = 60
 MIN_SPAN = 120          # a range shorter than this (the hit's own words) doesn't count as reading the passage
 
 
@@ -34,16 +40,36 @@ def record(m, doc: str, layer: str | None, span=None, how="text") -> None:
         f.write(json.dumps(row) + "\n")
 
 
-def reads(m) -> dict[str, list[tuple]]:
-    """Doc -> [(layer, span or None)]."""
-    out: dict[str, list[tuple]] = {}
+def _rows(m) -> list[dict]:
     p = path(m)
     if not p.exists():
-        return out
+        return []
+    rows = []
     for line in p.read_text(encoding="utf-8").splitlines():
         try:
             r = json.loads(line)
-        except ValueError:
+            r["_t"] = datetime.fromisoformat(r["at"]).timestamp()
+        except (ValueError, KeyError):
+            continue
+        rows.append(r)
+    # a burst (a script running text over many documents, into files) shows them to no one in particular
+    times = [r["_t"] for r in rows]
+    j = 0
+    for i, t in enumerate(times):
+        while times[j] < t - BURST_SECONDS:
+            j += 1
+        if i - j + 1 >= BURST:
+            for k in range(j, i + 1):
+                rows[k]["bulk"] = True
+    return rows
+
+
+def reads(m, bulk=False) -> dict[str, list[tuple]]:
+    """Doc -> [(layer, span or None)]: what was read, leaving out reads in a
+    bulk dump (``bulk=True``: only those)."""
+    out: dict[str, list[tuple]] = {}
+    for r in _rows(m):
+        if bool(r.get("bulk")) != bulk:
             continue
         out.setdefault(r["doc"], []).append((r.get("layer"), tuple(r["span"]) if r.get("span") else None))
     return out

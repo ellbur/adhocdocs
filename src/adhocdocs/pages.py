@@ -838,6 +838,7 @@ def checked_html(page: Page, r: Resolved) -> tuple[str, str]:
     # what was read: from the read log (a copy read is read), else the author's account
     logged = readlog.exists(page.m)
     log = readlog.reads(page.m) if logged else {}
+    dumped = readlog.reads(page.m, bulk=True) if logged else {}
 
     def spans(d):
         out = []
@@ -852,10 +853,14 @@ def checked_html(page: Page, r: Resolved) -> tuple[str, str]:
         return out
     unit_read = [any(readlog.read_doc(log, d, spans(d)) for d in u) for u in units] if logged else [None] * len(units)
     n_read = sum(len(u) for u, ok in zip(units, unit_read) if ok)
+    unit_dumped = [not ok and any(d in dumped for d in u) for u, ok in zip(units, unit_read)] if logged else [False] * len(units)
+    n_dumped = sum(len(u) for u, x in zip(units, unit_dumped) if x)
 
     claimed = ref.get("read")
     if logged:
         read_part = (f"read all {n}" if n_read >= n else f"{n_read} of {n} read") if n else "nothing found"
+        if n_dumped:
+            read_part += f", {n_dumped} more only in a bulk dump"
         if claimed == "all" and n_read < n or isinstance(claimed, int) and claimed > n_read:
             read_part += f" (the author says {claimed})"
     elif claimed == "all" or (isinstance(claimed, int) and claimed >= n):
@@ -914,6 +919,7 @@ def checked_html(page: Page, r: Resolved) -> tuple[str, str]:
         copies = f' <span class="adhoc-mark">({len(u)} copies)</span>' if len(u) > 1 else ""
         was_read = unit_read[k]
         readmark = ('' if was_read is None else ' <span class="adhoc-read">read</span>' if was_read
+                    else ' <span class="adhoc-unread">only in a bulk dump</span>' if unit_dumped[k]
                     else ' <span class="adhoc-unread">not read</span>')
         snip = (hit.get("snippet") or {}).get("text") or ""
         marks = "".join(judgments_html(x) for x in u)
@@ -937,7 +943,9 @@ def checked_html(page: Page, r: Resolved) -> tuple[str, str]:
             if shown_n > CHECK_SHOWN else "")
     items_note = f" ({shown_n} once copies are folded)" if shown_n != n else ""
     read_note = ('<p class="adhoc-mark">“Read” is from the read log: what <code>text</code> showed the author, '
-                 'whole or in passages that cover the hits. Reading done some other way isn\'t in it.</p>' if logged else "")
+                 'whole or in passages that cover the hits, one at a time. A script dumping many documents to '
+                 'files at once is a bulk dump, not a reading. Reading done some other way isn\'t in it.</p>'
+                 if logged else "")
     note = f'<p class="adhoc-check-note">{html.escape(ref["note"])}</p>' if ref.get("note") else ""
     stale = ' <span class="adhoc-mark">(finds other documents now: see page check)</span>' if r.status == "re-anchored" else ""
     cls = " adhoc-check-against" if against else " adhoc-check-pending" if unjudged else ""

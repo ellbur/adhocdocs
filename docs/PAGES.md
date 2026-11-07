@@ -121,6 +121,14 @@ through to its source.
     "18 of 22 read", and adds "(the author says all)" when `--read`
     claimed more. Each row is marked "read" or "not read". Without a log,
     `--read` is shown as "by the author's account".
+
+    A script that runs `text` over many documents and writes them to files
+    is a dump, not a reading. In the first trial with the read log, Claude
+    dumped 815 documents that way, and every check said "read all". So
+    reads that come in a burst (20 or more within a minute) don't count.
+    The line says "1 of 22 read, 21 more only in a bulk dump". Reading the
+    dumped files afterwards isn't visible to the tools, so the count is a
+    floor.
   - **Passages against the claim are proposed by the tools.** `page ref
     search` runs the claim's query as a one-sided dispute
     ([DISPUTES.md](DISPUTES.md)). It keeps the sentences that deny, doubt,
