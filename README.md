@@ -371,6 +371,7 @@ data system-wide, put `eng.traineddata` in
 - [DATES.md](docs/DATES.md): the date strip and date cards: hover a date to see what came before and after
 - [PAGES.md](docs/PAGES.md): literate pages that quote and cite documents
 - [VIEWER.md](docs/VIEWER.md): the document viewer
+- [SCREENSHOTS.md](docs/SCREENSHOTS.md): screenshots of the viewer, taken the same way every time, locally and in CI
 - [CONTAINER.md](docs/CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
 - [WINDOWS.md](docs/WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
 - [SYNC.md](docs/SYNC.md): syncing a matter across installations, peer to peer or through a hub

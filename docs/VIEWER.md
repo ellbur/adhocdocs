@@ -447,6 +447,9 @@ after a document opens, so wait for `view state` to show the page before
 taking the picture. Rendering is in software, so it is slower than on a
 desktop, but what it shows is the same.
 
+For screenshots taken the same way every time (for documentation, and in
+CI), see [SCREENSHOTS.md](SCREENSHOTS.md).
+
 ## Not built yet
 
 - Loose files aren't in the audit log: the viewer copies them in and out
