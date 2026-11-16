@@ -59,3 +59,16 @@ def test_replay_notices_another_prompt_and_extra_turns():
     r.answer(body("Find something else."))
     r.answer(body("And more."))
     assert [p["kind"] for p in r.report()["problems"]] == ["prompt", "extra request"]
+
+
+def test_federated_requests_leave_out_the_claude_code_beta():
+    incoming = {"Host": "127.0.0.1:3129", "x-api-key": "placeholder", "Content-Length": "10",
+                "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24",
+                "anthropic-version": "2023-06-01", "x-app": "cli"}
+    h = recorder.upstream_headers(incoming, {"authorization": "Bearer sk-ant-oat01-x"}, federated=True)
+    assert h["anthropic-beta"] == "interleaved-thinking-2025-05-14,effort-2025-11-24,oauth-2025-04-20"
+    assert h["authorization"] == "Bearer sk-ant-oat01-x" and "x-api-key" not in h and "Host" not in h
+    assert h["x-app"] == "cli" and h["accept-encoding"] == "identity"
+    # with an API key, Claude Code's betas go as it sent them
+    h = recorder.upstream_headers(incoming, {"x-api-key": "sk-ant-api-x"}, federated=False)
+    assert h["anthropic-beta"] == incoming["anthropic-beta"] and h["x-api-key"] == "sk-ant-api-x"
