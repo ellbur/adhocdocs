@@ -139,3 +139,30 @@ because Claude never typed it.
 - **Unbacked quotes in pages.** *Answered:* a lint warning
   ([PAGES.md](PAGES.md)).
 - **Seamless containers.** *Answered* in [CONTAINER.md](CONTAINER.md).
+
+## The design documents
+
+The design docs keep the reasons and decisions. Formats, schemas and usage
+live with the code: module docstrings and `--help`.
+
+- [GUIDE.md](GUIDE.md): prompts to try, and the tools used directly
+- [TOOLS.md](TOOLS.md): the tools, and which are built
+- [LOCATORS.md](LOCATORS.md): naming documents and places in them
+- [TEXTLAYERS.md](TEXTLAYERS.md): extracted text and its structure
+- [INDEXING.md](INDEXING.md): indexes, search, keeping indexes up to date
+- [LISTS.md](LISTS.md): document lists and the list display
+- [ANNOTATIONS.md](ANNOTATIONS.md): tags and notes
+- [ENTITIES.md](ENTITIES.md): the entity layer: hover a name to see who or what it is
+- [GRAPH.md](GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
+- [CHATS.md](CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
+- [DATA.md](DATA.md): files of unknown format: bytes, hex and interpretations
+- [TRACE.md](TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
+- [DISPUTES.md](DISPUTES.md): contrary claims: who holds which side and when, who switched, who kept to a side
+- [METADOCS.md](METADOCS.md): content at other scales than the document: threads, families, bundles
+- [RECEIVED.md](RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
+- [DATES.md](DATES.md): the date strip and date cards
+- [PAGES.md](PAGES.md): literate pages that quote and cite documents
+- [VIEWER.md](VIEWER.md): the document viewer
+- [CONTAINER.md](CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
+- [WINDOWS.md](WINDOWS.md): running on Windows (and macOS)
+- [SYNC.md](SYNC.md): syncing a matter across installations, peer to peer or through a hub
