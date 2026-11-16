@@ -35,8 +35,9 @@ jobs:
       SCENARIOS: ${{ inputs.scenarios }}
     steps:
       - name: Scenario names
+        # blank (every scenario) is fine
         run: |
-          if ! printf '%s' "$SCENARIOS" | grep -Eq '^[a-z0-9 _-]*$'; then
+          if [[ ! "$SCENARIOS" =~ ^[a-z0-9\ _-]*$ ]]; then
             echo "Scenario names are lowercase letters, digits, - and _, separated by spaces." >&2
             exit 1
           fi
