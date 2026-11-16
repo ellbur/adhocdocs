@@ -1,0 +1,71 @@
+# Checks Workload Identity Federation with Anthropic (docs/SCREENSHOTS.md):
+# that a job in the `recording` environment can exchange GitHub's OIDC token
+# for an Anthropic access token, and that Claude Code can authenticate with
+# the federation variables alone (no API key). Delete once recording works.
+name: anthropic-wif-test
+
+on:
+  push:
+    paths:
+      - ".github/workflows/anthropic-wif-test.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  wif:
+    runs-on: ubuntu-24.04
+    environment: recording
+    env:
+      # Not secrets: they name the rule; GitHub's token is what proves who we are.
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01LFv4oFVEoQbBZpvELuVXcy
+      ANTHROPIC_ORGANIZATION_ID: 4058960a-0194-49f4-9aba-c1ecd72eee63
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01S3T4sHCaBQrxS26ZShCG6Z
+      ANTHROPIC_WORKSPACE_ID: wrkspc_01M99kgeArpA3BQJ1iPSuuaP
+      ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/gha-jwt
+    steps:
+      - name: Fetch a GitHub OIDC token
+        # Each token can be exchanged once (its jti) and lasts about 5 minutes,
+        # so each step that exchanges one fetches its own.
+        run: |
+          fetch() {
+            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value
+          }
+          fetch > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          # The claims the federation rule matches (not secret; the signature is what matters).
+          cut -d. -f2 "$ANTHROPIC_IDENTITY_TOKEN_FILE" | tr '_-' '/+' | base64 -d 2>/dev/null \
+            | jq '{iss, sub, aud, repository, repository_owner, ref, environment}' || true
+
+      - name: Exchange it for an Anthropic access token
+        run: |
+          jwt=$(cat "$ANTHROPIC_IDENTITY_TOKEN_FILE")
+          jq -n --arg jwt "$jwt" '{
+            grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            assertion: $jwt,
+            federation_rule_id: env.ANTHROPIC_FEDERATION_RULE_ID,
+            organization_id: env.ANTHROPIC_ORGANIZATION_ID,
+            service_account_id: env.ANTHROPIC_SERVICE_ACCOUNT_ID,
+            workspace_id: env.ANTHROPIC_WORKSPACE_ID
+          }' | curl -sS https://api.anthropic.com/v1/oauth/token \
+                 -H "content-type: application/json" --data @- > "$RUNNER_TEMP/exchange.json"
+          jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' "$RUNNER_TEMP/exchange.json"
+          jq -e '.access_token | startswith("sk-ant-oat01-")' "$RUNNER_TEMP/exchange.json" > /dev/null
+
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Claude Code, authenticated by federation alone
+        run: |
+          # A fresh token: the first was used up by the exchange above.
+          curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r .value \
+            > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+          claude --version
+          claude -p "Reply with exactly the word: federated" --max-turns 1 | tee "$RUNNER_TEMP/reply.txt"
+          grep -qi federated "$RUNNER_TEMP/reply.txt"
