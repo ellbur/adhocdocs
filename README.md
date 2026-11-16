@@ -2,19 +2,17 @@
 
 Tools for working with evidentiary documents from Claude Code. 
 
-The idea is that we don't need a legal tech platform: Claude is already good at doing everything lawyers do. We just need to give Claude a way to display its results and isolate it so it's safe. Then you just interact with Claude like you would normally.
+The idea:
 
-These tools differ from other legal AI software in that they give Claude maximum freedom to customize its workflow, including by writing custom code for the analysis at hand.
+1. The most flexible and powerful solution puts a coding agent in charge; but
+2. A coding agent can delete files, misquote documents, comingle client matters, and do other undesirable things; so
+3. We enforce a separation between a ground truth and the coding agent's environment.
 
-You work with Claude in a sealed session that
-sees only one matter. You "ingest" outside documents into the matter, and Claude can do whatever it wants with them within the confines of its container.
+The result is maximum flexibility and power while ensuring that final work product is grounded in a pipeline that does not depend on AI.
 
-
-Claude searches, reads, tags, drafts and builds
+This workflow differs from other legal AI software in that they give Claude maximum freedom to customize its workflow, including by writing custom code for the analysis at hand. Claude searches, reads, tags, drafts and builds
 productions. A document viewer on your desktop shows you what Claude points
 at, and sends back what you select.
-
-It runs on Linux for now. Windows is in progress: see [WINDOWS.md](docs/WINDOWS.md).
 
 **This software is a proof of concept and is not intended or suitable for production use. Using this software with real client documents may violate professional obligations to safeguard client information.**
 
