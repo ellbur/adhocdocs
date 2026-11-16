@@ -31,6 +31,7 @@ import tomllib
 from pathlib import Path
 
 import fakeapi
+import recorder
 from harness import (BIN, HERE, REPO, STEPS_DOC, Failed, Pointer, Screen, Steps, Viewer, base_env,
                      copy_matter, doc_ids, log, make_matter)
 from adhocdocs import container
@@ -121,21 +122,33 @@ class Session:
 # -- one scenario --------------------------------------------------------------------------------
 
 def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human=True, accept=False,
-        turn_limit=600.0) -> dict:
+        turn_limit=600.0, record=False) -> dict:
+    """Replay a scenario's recording, or (``record``) record it: the same
+    session, with the Claude API (through recorder.py) answering instead of
+    fakeapi.py."""
     spec = tomllib.loads((SCENARIOS / f"{name}.toml").read_text(encoding="utf-8"))
     cassette_path = SCENARIOS / f"{name}.cassette.json"
-    if not cassette_path.exists():
-        raise Failed(f"{name} has no recording yet ({cassette_path.name}): record it first")
-    cassette = json.loads(cassette_path.read_text(encoding="utf-8"))
     pace = spec.get("pace", {})
     w, h = spec.get("screen", {}).get("size", [1600, 1000])
 
     here = tmp / name
     m = copy_matter(base, here)
     ids = doc_ids(m)
-    replay = fakeapi.Replay(cassette, fakeapi.Pace(pace.get("think", 1.2), pace.get("cps", 180.0),
-                                                   pace.get("tool", 0.4)),
-                            here / "api.log")
+    if record:
+        try:
+            replay = recorder.Recorder(here / "api.log")
+        except RuntimeError as e:
+            raise Failed(str(e))
+        log(f"  recording, with {replay.cred.kind}")
+        human = False            # the recording keeps what was said, not how fast it was typed
+    else:
+        if not cassette_path.exists():
+            raise Failed(f"{name} has no recording yet ({cassette_path.name}): record it first")
+        cassette = json.loads(cassette_path.read_text(encoding="utf-8"))
+        replay = fakeapi.Replay(cassette, fakeapi.Pace(pace.get("think", 1.2), pace.get("cps", 180.0),
+                                                       pace.get("tool", 0.4)),
+                                here / "api.log")
+    serve = recorder.serve if record else fakeapi.serve
     if direct:
         # Tool output says where the matter is; in a session that's /matter.
         replay.aliases = {str(m.root): "/matter"}
@@ -145,7 +158,7 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
     try:
         home = here / "viewer-home"
         if direct:
-            srv = fakeapi.serve(replay, listen="127.0.0.1:0")
+            srv = serve(replay, listen="127.0.0.1:0")
             port = srv.server_address[1]
             key = "sk-ant-replay-0000000000000000000000"
             seed_claude_home(m.root / "claude-home", str(m.root / "workspace"), key)
@@ -165,7 +178,7 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
             v = Viewer(m, screen, home, run=run_cmd, cwd=m.root / "workspace", sock=sock)
         else:
             api_sock = here / "api.sock"
-            srv = fakeapi.serve(replay, unix=str(api_sock))
+            srv = serve(replay, unix=str(api_sock))
             seed_claude_home(m.root / "claude-home", WORKSPACE_IN_SESSION, container.API_KEY_PLACEHOLDER)
             if os.geteuid() == 0:
                 # Podman as root (a container of its own, say) maps root to no one in the session;
@@ -179,7 +192,8 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
                         "--api-socket", str(api_sock), "--test-hooks", "--", "claude", *CLAUDE_ARGS]
             v = Viewer(m, screen, home, sock=sock, launcher=launcher, extra_env=podman_env(here))
         workdir = here / "work"
-        if spec.get("video", True):
+        video = spec.get("video", True) and not record
+        if video:
             screen.record(out / f"{name}.mp4", fps=spec.get("fps", 30))
         pointer = Pointer(screen, human=human)
         # Claude Code has started when its prompt shows
@@ -229,8 +243,13 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
     if accept:
         cassette_path.write_text(json.dumps(replay.accepted(), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         log(f"  wrote what the tools printed into {cassette_path.name}")
+    if record and not replay.problems:
+        version = (HERE / "claude-code-version").read_text(encoding="utf-8").strip()
+        cassette_path.write_text(json.dumps(replay.cassette(version), indent=1, ensure_ascii=False) + "\n",
+                                 encoding="utf-8")
+        log(f"  wrote {cassette_path.relative_to(REPO)}: {len(replay.turns)} turns, {len(replay.side)} side requests")
     report = {"scenario": name, **replay.report(), "shots": shots,
-              "video": f"{name}.mp4" if spec.get("video", True) else None}
+              "video": f"{name}.mp4" if video else None}
     (out / f"{name}.report.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     return report
 
@@ -249,9 +268,19 @@ def main():
     r.add_argument("--accept", action="store_true",
                    help="write what the tools printed into the recording, as the expected output: for a "
                         "recording written by hand, never to quiet a stale one (record it again)")
+    r = sub.add_parser("record", help="record scenarios: the same sessions with the Claude API answering, "
+                                      "written to scenarios/NAME.cassette.json (see recorder.py for the credential)")
+    r.add_argument("names", nargs="*", help="default: every scenario")
+    r.add_argument("--out", default="recorded", help="stills and logs from the recording session")
+    r.add_argument("--matter", help="the sample matter's directory, kept to reuse (each scenario works on a copy)")
+    r.add_argument("--direct", action="store_true", help="claude from this machine's PATH, not the session container")
+    r.add_argument("--display", default=":98")
+    r.add_argument("--turn-limit", type=float, default=900.0, help="seconds Claude's answer to a prompt may take")
     a = p.parse_args()
+    record = a.cmd == "record"
 
-    names = a.names or sorted(f.name.removesuffix(".cassette.json") for f in SCENARIOS.glob("*.cassette.json"))
+    pattern = "*.toml" if record else "*.cassette.json"
+    names = a.names or sorted(f.name.split(".")[0] for f in SCENARIOS.glob(pattern))
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="adhoc-scenario-"))
@@ -261,11 +290,18 @@ def main():
     for name in names:
         log(f"scenario {name}")
         try:
-            report = run(name, base, out, tmp, a.direct, a.display, human=not a.fast, accept=a.accept,
-                         turn_limit=a.turn_limit)
+            report = run(name, base, out, tmp, a.direct, a.display, human=not getattr(a, "fast", False),
+                         accept=getattr(a, "accept", False), turn_limit=a.turn_limit, record=record)
         except Failed as e:
             log(f"  failed: {e}")
             failed.append(name)
+            continue
+        if record:
+            if report["problems"]:
+                log(f"  not written: {json.dumps(report['problems'])[:500]}")
+                failed.append(name)
+            else:
+                log(f"  recorded: {report['turns_recorded']} turns")
             continue
         if report["problems"] or not report["complete"]:
             log(f"  stale: {len(report['problems'])} difference(s) from the recording"

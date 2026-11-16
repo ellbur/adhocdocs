@@ -8,8 +8,10 @@ Code beside it, replayed from recordings with no sign-in
 [`fakeapi.py`](../tools/screenshots/fakeapi.py), from
 [`scenarios/`](../tools/screenshots/scenarios)), locally or in CI
 ([`.github/workflows/screenshots.yml`](../.github/workflows/screenshots.yml)).
-Recording a scenario for real is not built yet: see
-[Not built yet](#not-built-yet).*
+Recording them is built too
+([`recorder.py`](../tools/screenshots/recorder.py), and the **Record
+sessions** workflow,
+[`record-sessions.yml`](../.github/workflows/record-sessions.yml)).*
 
 Screenshots for documentation should show the current version of the
 software, and show it the same way every time, so that a picture changes
@@ -205,16 +207,58 @@ The video of a replay isn't the same byte for byte from run to run
 (encoder timing, Claude Code's own "Worked for 6s"), but what happens in
 it, and when, is.
 
+## Recording
+
+A recording is the same session as a replay, with
+[`recorder.py`](../tools/screenshots/recorder.py) in fakeapi.py's place: it
+forwards Claude Code's requests to the Claude API, streams the answers
+back, and keeps them, with the prompt and tool output that led to each.
+The session still holds no credential; the recorder, on the host, does.
+
+**In CI** (the usual way): *Actions → Record sessions → Run workflow*,
+optionally naming scenarios (blank: all of them). The job waits for
+someone to approve the `recording` environment, then signs in with
+Workload Identity Federation: GitHub's signed token for this repository's
+`recording` environment, exchanged for a Claude API token that lasts
+minutes. No key is stored anywhere, and no other workflow, branch or fork
+can get one (the federation rule matches that environment only). It
+records, replays what it recorded as a check, and opens a pull request with
+the new recordings; the videos are in the run's `recorded-sessions`
+artifact. Watch them and read what Claude said before merging.
+
+Record again when the Screenshots workflow says a scenario is stale, when
+you add a scenario, and when you move to another Claude Code version
+([`claude-code-version`](../tools/screenshots/claude-code-version)).
+
+Setting it up, once:
+
+- In the Claude Console, a federation rule for GitHub Actions whose
+  subject is this repository's `recording` environment
+  (`repo:OWNER@ID/REPO@ID:environment:recording`: GitHub's subject carries
+  the owner's and repository's numeric IDs). Its IDs go in the workflow's
+  `env`; they aren't secrets.
+- In GitHub, the `recording` environment, with required reviewers.
+- In GitHub, Settings → Actions → General → Workflow permissions: *Allow
+  GitHub Actions to create and approve pull requests*.
+- The workflow on the default branch (GitHub offers *Run workflow* only
+  for those).
+
+**Locally**: `scenario.py record NAME` with `ANTHROPIC_API_KEY` set (or
+the federation variables and `ANTHROPIC_IDENTITY_TOKEN_FILE`); it writes
+`scenarios/NAME.cassette.json`. Recordings made in CI are the reference,
+since tool output (paths in particular) is what replays are checked
+against.
+
+**What a recording holds**: the model's answers (text, tool calls, and
+thinking blocks, whose text Claude Code doesn't show), the prompts, and what
+each tool printed. Not the requests themselves: no system prompt, no
+credential.
+
+`anthropic-wif-test.yml` checked that federation works for a job in the
+`recording` environment and that Claude Code signs in with it; it can go
+once a recording has been made.
+
 ## Not built yet
 
-- **Recording.** `scenario.py record NAME`: the same session with a
-  recorder on the API socket that forwards to Anthropic and keeps what
-  came back. It will run in CI as its own workflow, started by hand and
-  approved in the `recording` environment, authenticated by Workload
-  Identity Federation (no key stored anywhere; checked by
-  `anthropic-wif-test.yml`), and open a pull request with the new
-  recording. Until then, `forklift-list`'s recording is written by hand
-  (the model's side) to try the replay; `scenario.py replay --accept`
-  fills in what the tools print, for writing one that way.
 - **Editing the video**: speeding up long waits (OCR, a slow search)
   from the timestamps the replay logs, and marking clicks.
