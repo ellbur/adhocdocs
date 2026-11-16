@@ -17,8 +17,8 @@ Inside the session:
 /matter/workspace     read-write          pages, lists, indexes
 /home/adhoc/.claude   read-write          the matter's own Claude Code config and
                                           sign-in (``<matter>/claude-home``)
-/run/adhoc            sockets             the proxy, viewer and annotation APIs, and
-                                          the sockets of services Claude runs
+/run/adhoc            sockets             the proxy, viewer, annotation and sign-in APIs,
+                                          and the sockets of services Claude runs
 /run/adhoc-audit      read-only           the audit API's socket, alone: connecting
                                           works, replacing it doesn't
 ====================  ==================  ====================================
@@ -59,6 +59,9 @@ SESSION_ENV = {
     "ADHOC_ANN_SOCKET": "/run/adhoc/annotations.sock",
     "ADHOC_AUDIT_SOCKET": "/run/adhoc-audit/audit.sock",
     "CLAUDE_CONFIG_DIR": "/home/adhoc/.claude",
+    # Claude Code opens its sign-in page with $BROWSER: the user's own browser, once (adhocdocs.signin)
+    "BROWSER": "/usr/local/bin/adhoc-browser",
+    "ADHOC_SIGNIN_SOCKET": "/run/adhoc/signin.sock",
 }
 # Passed through by name, never stored: a user's own API key, set the normal way.
 PASS_THROUGH = ("ANTHROPIC_API_KEY",)
@@ -79,8 +82,11 @@ API_ENV = {
 }
 
 ACCOUNT_NOTICE = """\
-Signing in: Claude Code will show a link. Open it on this computer, sign in,
-and paste the code back. This matter keeps its own sign-in.
+Signing in: your browser opens on Anthropic's sign-in page. Sign in there and
+come back here. (If it doesn't open, Claude Code shows a link: open it, sign
+in, and paste the code back.) This matter keeps its own sign-in. The browser
+opens once per `adhoc open`: if you're signed out later, leave Claude Code and
+open the matter again.
 
 About your account and confidential documents (our reading, not legal advice):
 - Free, Pro and Max accounts fall under Anthropic's Consumer Terms. Chats
@@ -194,6 +200,7 @@ BRIDGED = {
     "annotations": ("/run/adhoc/annotations.sock", "annotations.sock"),
     "viewer": ("/run/adhoc/viewer.sock", "viewer.sock"),
     "audit": ("/run/adhoc-audit/audit.sock", "audit/audit.sock"),
+    "signin": ("/run/adhoc/signin.sock", "signin.sock"),
 }
 
 
@@ -321,6 +328,9 @@ def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here",
         started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
                                       "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
                                 m.root / "run" / "audit-api.log"))
+        started.append(spawn(py + ["adhocdocs.signin", "serve", "--socket", str(sockets / "signin.sock"),
+                                      "--sessions", str(sockets), "--audit", str(audit.root), "--session", session],
+                                m.root / "run" / "signin.log"))
         from . import pool as poolmod
         if poolmod.founded(m) and not os.environ.get("ADHOC_NO_SYNC"):
             # keep in step with the matter's other installations while working (adhocdocs.watch);
@@ -333,7 +343,7 @@ def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here",
                       *(["--test-hooks"] if test_hooks else [])] if viewer else []
         if viewer and not in_viewer:
             started.append(spawn(viewer_cmd, m.root / "run" / "viewer.log"))
-        for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
+        for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock", "signin.sock"):
             if not wait_for(sockets / sock):
                 raise ContainerError(f"{sock} did not start; see {m.root / 'run'}")
         if bridged:
