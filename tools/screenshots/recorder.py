@@ -23,6 +23,7 @@ The credential, the first that is there:
 import http.client
 import json
 import os
+import sys
 import threading
 import time
 import urllib.request
@@ -167,6 +168,8 @@ class Recorder:
         self.turn_end = threading.Event()
         self.aliases: dict[str, str] = {}
         self.problems: list[dict] = []
+        self.fatal: list[str] = []         # the API or the credential refused: no answer is coming
+        self.requests = 0
         self.lock = threading.Lock()
         self.log = open(log_path, "a", encoding="utf-8") if log_path else None
 
@@ -222,7 +225,9 @@ def handler_for(rec: Recorder):
                 headers.update(rec.cred.headers())
             except Exception as e:
                 rec.problems.append({"kind": "credential", "detail": str(e)})
+                rec.fatal.append(f"signing in ({rec.cred.kind}): {e}")
                 rec.note(error=str(e))
+                print(f"    api: signing in failed: {e}", file=sys.stderr, flush=True)
                 body = json.dumps({"type": "error", "error": {"type": "authentication_error",
                                                               "message": f"recorder: {e}"}}).encode()
                 self.send_response(401)
@@ -231,9 +236,21 @@ def handler_for(rec: Recorder):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            up = connect(900)
-            up.request(method, path, raw or None, headers)
-            r = up.getresponse()
+            try:
+                up = connect(900)
+                up.request(method, path, raw or None, headers)
+                r = up.getresponse()
+            except OSError as e:
+                rec.fatal.append(f"couldn't reach {UPSTREAM}: {e}")
+                print(f"    api: couldn't reach {UPSTREAM}: {e}", file=sys.stderr, flush=True)
+                body = json.dumps({"type": "error", "error": {"type": "api_error",
+                                                              "message": f"recorder: {e}"}}).encode()
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             ctype = r.getheader("content-type", "")
             self.send_response(r.status)
             for k in ("content-type", "request-id", "retry-after", "anthropic-ratelimit-requests-remaining"):
@@ -256,8 +273,11 @@ def handler_for(rec: Recorder):
                     msg.feed(chunk)
                 elif is_messages:
                     whole += chunk
-            rec.note(method=method, path=path.split("?")[0], status=r.status,
-                     main=fakeapi.is_main(body) if is_messages else None)
+            rec.requests += 1
+            kind = ("main" if fakeapi.is_main(body) else "side") if is_messages else ""
+            rec.note(method=method, path=path.split("?")[0], status=r.status, main=kind == "main" if kind else None)
+            # in the job's log, so a failed recording says why without its artifact
+            print(f"    api: {method} {path.split('?')[0]} {r.status} {kind}".rstrip(), file=sys.stderr, flush=True)
             if is_messages and r.status == 200:
                 if msg:
                     rec.keep(body, msg.result())
@@ -266,7 +286,10 @@ def handler_for(rec: Recorder):
                     rec.keep(body, {"content": m.get("content", []), "stop_reason": m.get("stop_reason"),
                                     "usage": m.get("usage") or {}})
             elif is_messages:
-                rec.problems.append({"kind": "API error", "status": r.status, "detail": whole[:500].decode("utf-8", "replace")})
+                detail = whole[:500].decode("utf-8", "replace")
+                rec.problems.append({"kind": "API error", "status": r.status, "detail": detail})
+                rec.fatal.append(f"the Claude API answered {r.status}: {detail}")
+                print(f"    api: {r.status}: {detail}", file=sys.stderr, flush=True)
 
         def do_POST(self):
             self.forward("POST")
