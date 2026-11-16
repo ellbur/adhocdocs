@@ -40,6 +40,10 @@ def connect(timeout: float) -> http.client.HTTPConnection:
     scheme, _, host = UPSTREAM.partition("://")
     return (http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection)(host, timeout=timeout)
 AUDIENCE = "https://api.anthropic.com"
+# A federated token is an OAuth access token (sk-ant-oat01-…): the API takes it with this beta
+# on each request, and the exchange with the federation one too (as Claude Code sends them).
+OAUTH_BETA = "oauth-2025-04-20"
+FEDERATION_BETA = "oidc-federation-2026-04-01"
 DROP_HEADERS = {"host", "content-length", "connection", "authorization", "x-api-key", "accept-encoding",
                 "proxy-connection", "keep-alive", "transfer-encoding"}
 
@@ -87,7 +91,8 @@ class Credential:
                 if self.fed["ANTHROPIC_WORKSPACE_ID"]:
                     body["workspace_id"] = self.fed["ANTHROPIC_WORKSPACE_ID"]
                 c = connect(30)
-                c.request("POST", "/v1/oauth/token", json.dumps(body), {"content-type": "application/json"})
+                c.request("POST", "/v1/oauth/token", json.dumps(body),
+                          {"content-type": "application/json", "anthropic-beta": f"{OAUTH_BETA},{FEDERATION_BETA}"})
                 r = c.getresponse()
                 data = json.loads(r.read() or b"{}")
                 if r.status != 200 or not data.get("access_token"):
@@ -223,6 +228,11 @@ def handler_for(rec: Recorder):
             headers["accept-encoding"] = "identity"
             try:
                 headers.update(rec.cred.headers())
+                if rec.cred.kind != "API key":
+                    betas = [b.strip() for k, v in headers.items() if k.lower() == "anthropic-beta"
+                             for b in v.split(",") if b.strip()]
+                    headers = {k: v for k, v in headers.items() if k.lower() != "anthropic-beta"}
+                    headers["anthropic-beta"] = ",".join(dict.fromkeys(betas + [OAUTH_BETA]))
             except Exception as e:
                 rec.problems.append({"kind": "credential", "detail": str(e)})
                 rec.fatal.append(f"signing in ({rec.cred.kind}): {e}")
