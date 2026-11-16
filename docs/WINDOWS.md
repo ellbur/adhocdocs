@@ -216,7 +216,7 @@ It writes `probe-report.json`, which is the useful thing to bring back.
    internet, and the viewer, annotation API and audit API all running.
    That's the bridge, the link and the volumes. Then `-- search …`,
    `-- ann tag …`, `-- view list …`.
-8. `uv run adhoc open <matter>`: sign in, then work through the README's
+8. `uv run adhoc open <matter>`: sign in, then try a few
    prompts. Check the audit log (`adhoc audit verify`), and that Ctrl+D
    cleans up the bridge container and volumes (`podman ps -a`,
    `podman volume ls`).
