@@ -63,6 +63,21 @@ SESSION_ENV = {
 # Passed through by name, never stored: a user's own API key, set the normal way.
 PASS_THROUGH = ("ANTHROPIC_API_KEY",)
 
+# Recording and replaying sessions for screenshots (tools/screenshots, docs/SCREENSHOTS.md):
+# the Claude API on a Unix socket on the host, mounted here, and relayed to this
+# port inside the session. The session then holds no credential of its own: on the
+# host, a recorder holds it (or a replay needs none).
+API_PORT = 3129
+API_SOCKET = "/run/adhoc-api.sock"
+API_KEY_PLACEHOLDER = "sk-ant-api-on-host-00000000000000000000"
+API_ENV = {
+    "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{API_PORT}",
+    "ANTHROPIC_API_KEY": API_KEY_PLACEHOLDER,
+    "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+}
+
 ACCOUNT_NOTICE = """\
 Signing in: Claude Code will show a link. Open it on this computer, sign in,
 and paste the code back. This matter keeps its own sign-in.
@@ -131,11 +146,13 @@ def _bind(src: Path, dst: str, ro=False, bridged=False) -> list[str]:
 
 
 def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple[str, str] | None = None,
-                 tty: bool | None = None) -> list[str]:
+                 tty: bool | None = None, api_socket: Path | None = None) -> list[str]:
     """The `podman run` arguments for a session. Pure, so it can be tested.
     With ``volumes`` (on Windows and macOS: :mod:`adhocdocs.bridge`), the
     socket directories are those two Podman volumes, shared with the bridge,
-    instead of host directories."""
+    instead of host directories. With ``api_socket``, Claude Code talks to the
+    Claude API through that socket on the host (recording or replaying a
+    session for screenshots) instead of through the proxy."""
     root = m.root
     bridged = volumes is not None
     env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
@@ -159,10 +176,13 @@ def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple
         args += ["-v", f"{sockets}:/run/adhoc"]
         # Read-only, so nothing in the session can put its own listener in the audit API's place.
         args += ["-v", f"{sockets / 'audit'}:/run/adhoc-audit:ro"]
+    if api_socket:
+        args += ["-v", f"{api_socket}:{API_SOCKET}"]
+        env.update(API_ENV)
     for k, v in env.items():
         args += ["-e", f"{k}={v}"]
     for k in PASS_THROUGH:
-        if os.environ.get(k):
+        if os.environ.get(k) and not api_socket:
             args += ["-e", k]          # podman copies the value from our environment
     return args + [IMAGE, *(["--", *command] if command else [])]
 
@@ -241,10 +261,14 @@ def _end_on_hangup():
         signal.signal(sig, end)
 
 
-def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here") -> int:
+def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here",
+                 api_socket: Path | None = None, test_hooks=False) -> int:
     """Run a session to its end. ``terminal``: ``here``, Claude Code in this
     process's terminal; ``beside`` or ``window``, in the viewer's own
-    terminal (adhocdocs.gui), beside the documents or in a window of its own."""
+    terminal (adhocdocs.gui), beside the documents or in a window of its own.
+    ``api_socket`` and ``test_hooks`` are for scripted screenshots
+    (tools/screenshots): the Claude API on a socket on the host, and a viewer
+    that says where things are on screen."""
     in_viewer = terminal in ("beside", "window")
     if in_viewer and not viewer:
         raise ContainerError("the viewer runs Claude Code's terminal here: leave out --no-viewer, or use --terminal here")
@@ -305,7 +329,8 @@ def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here")
                                  m.root / "run" / "sync.log"))
         from .view import annotate_command, viewer_binary
         viewer_cmd = [viewer_binary(), "--matter", str(m.root), "--user", user,
-                      "--socket", str(sockets / "viewer.sock"), "--annotate", annotate_command()] if viewer else []
+                      "--socket", str(sockets / "viewer.sock"), "--annotate", annotate_command(),
+                      *(["--test-hooks"] if test_hooks else [])] if viewer else []
         if viewer and not in_viewer:
             started.append(spawn(viewer_cmd, m.root / "run" / "viewer.log"))
         for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock"):
@@ -315,10 +340,11 @@ def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here")
             bridge = _start_bridge(name, sockets, volumes, started, m.root / "run" / "link.log")
         if first:
             notices.append(ACCOUNT_NOTICE)
-        args = session_args(m, name, sockets, command, volumes, tty=True if in_viewer else None)
+        args = session_args(m, name, sockets, command, volumes, tty=True if in_viewer else None, api_socket=api_socket)
         audit.append(session=session, source="launcher", kind="session-start", user=user, container=name,
                      image=IMAGE, image_id=image_id(), command=list(command) or None, viewer=viewer,
                      allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args,
+                     **({"api_socket": str(api_socket)} if api_socket else {}),
                      **({"bridge_args": bridge} if bridged else {}))
         if in_viewer:
             # The viewer is the terminal: it runs podman on a pseudo-terminal of its own,

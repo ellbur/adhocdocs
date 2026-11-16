@@ -75,11 +75,13 @@ struct Args {
     /// where the terminal starts: "beside" the documents, or in a "window" of its own
     dock: String,
     launcher: bool,
+    /// `locate` in the API: where things are on screen, for scripted screenshots (tools/screenshots)
+    test_hooks: bool,
 }
 
 fn args() -> Result<Args, String> {
     let mut a = Args { matter: PathBuf::new(), socket: None, user: std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or("user".into()), annotate: None,
-                      run: vec![], banner: String::new(), dock: "beside".into(), launcher: false };
+                      run: vec![], banner: String::new(), dock: "beside".into(), launcher: false, test_hooks: false };
     let mut it = std::env::args().skip(1);
     while let Some(x) = it.next() {
         match x.as_str() {
@@ -89,10 +91,11 @@ fn args() -> Result<Args, String> {
             "--annotate" => a.annotate = Some(it.next().ok_or("--annotate needs a command")?),
             "--banner" => a.banner = it.next().ok_or("--banner needs text")?,
             "--launcher" => a.launcher = true,
+            "--test-hooks" => a.test_hooks = true,
             "--dock" => a.dock = it.next().ok_or("--dock needs beside or window")?,
             "--run" => { a.run = it.by_ref().collect(); }
             "-h" | "--help" => {
-                println!("adhoc-viewer --matter <dir> [--socket <path>] [--user <id>] [--annotate <cmd>] [--banner <text>] [--run <command>…]\n\
+                println!("adhoc-viewer --matter <dir> [--socket <path>] [--user <id>] [--annotate <cmd>] [--banner <text>] [--test-hooks] [--run <command>…]\n\
                           adhoc-viewer --launcher --annotate <adhoc command>");
                 std::process::exit(0);
             }
@@ -170,6 +173,8 @@ struct App {
     job_tx: mpsc::Sender<Job>,
     proxy: EventLoopProxy<UserEvent>,
     term: Option<Session>,
+    /// started with --test-hooks: `locate` answers
+    test_hooks: bool,
 }
 
 /// The session's terminal, when the viewer runs it (`--run`).
@@ -351,6 +356,8 @@ impl App {
                 let _ = reply.send(json!({"history": h}));
             }
             "state" => self.gather(cmd, reply),
+            // Only for scripted screenshots: a viewer a session talks to doesn't have it.
+            "locate" if !self.test_hooks => { let _ = reply.send(json!({"error": "unknown command locate"})); }
             "clear-marks" | "clear-highlights" if pane_arg.is_none() => self.gather(cmd, reply),
             _ => {
                 let win = if let Some(p) = &pane_arg {
@@ -621,6 +628,7 @@ fn main() {
         title: format!("adhocdocs: {}", root_name), user: a.user.clone(), job_tx, proxy: proxy.clone(),
         term: (!a.run.is_empty()).then(|| Session { argv: a.run.clone(), banner: a.banner.clone(), term: None, win: "w1".into(),
                                                      alone: None, attached_once: false, ended_by_user: false }),
+        test_hooks: a.test_hooks,
     };
     app.open_window(&event_loop);
     if a.dock == "window" && app.term.is_some() {
@@ -709,7 +717,7 @@ fn main() {
                         let Some(w) = app.windows.get_mut(&win) else { return };
                         w.ready = true;
                         let _ = w.webview.evaluate_script(&format!("adhoc.config({})",
-                            json!({"user": format!("user:{}", app.user), "window": win})));
+                            json!({"user": format!("user:{}", app.user), "window": win, "test_hooks": app.test_hooks})));
                         for (seq, cmd) in w.queued.drain(..) {
                             let _ = w.webview.evaluate_script(&format!("adhoc.command({}, {})", seq, cmd));
                         }

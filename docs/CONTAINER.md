@@ -187,6 +187,18 @@ Code. Hooks are Claude Code's own published mechanism for this.
 matter, mounts, read-only state, allowlist and viewer status, and nothing
 about credentials.
 
+**Recorded and replayed sessions (screenshots only).** `adhoc open` has two
+options that aren't in its help: `--api-socket PATH` mounts a Unix socket
+from the host at `/run/adhoc-api.sock`, the session relays `127.0.0.1:3129`
+to it, and Claude Code is pointed there (`ANTHROPIC_BASE_URL`) with a
+placeholder key; `--test-hooks` starts the viewer with `locate`, which says
+where things are on screen. They exist so that tools/screenshots can record
+a session (the host side holds the credential) and replay it (no credential
+and no network at all): see [SCREENSHOTS.md](SCREENSHOTS.md). Nothing in the
+session can set them, the session still has no network of its own, its
+`ANTHROPIC_API_KEY` is never passed through with them, and the audit log's
+`session-start` records the socket.
+
 ## Decided
 
 - Sign in once per matter, with per-matter `claude-home/`; never once per

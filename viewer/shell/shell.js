@@ -3468,6 +3468,13 @@ const commands = {
     adhoc.tile = c.layout === "tabs" || c.layout === "single" ? null : c.layout; renderTabs(); return {};
   },
   async state() { return snapshot(); },
+  // Where something is on screen, for scripted screenshots (tools/screenshots); the host
+  // answers it only when started with --test-hooks. By {selector}, {text} (the smallest
+  // stretch of text containing it, inside the selector's matches if both), or both;
+  // within {pane} if given; {nth} picks among the matches in document order, and
+  // {scroll: true} scrolls it to the middle of its pane first. Returns its box in the
+  // window's CSS pixels, and how many matched.
+  async locate(c) { return locate(c); },
   async selection() {
     const p = focusedPane();
     const entity = p?.kind === "document" ? p.selectionEntity() : null;
@@ -3490,6 +3497,68 @@ const commands = {
   },
 };
 
+// -- locate (scripted screenshots only) -------------------------------------------------------
+
+function locate(c) {
+  const scope = c.pane ? pane(c.pane)?.root : document.body;
+  if (!scope) throw new Error("no pane " + c.pane);
+  if (!c.selector && !c.text) throw new Error("locate needs a selector or text");
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  const want = c.text ? norm(c.text) : null;
+  // the scope and every frame inside it, with where each frame's viewport is in the window
+  const roots = [];
+  const visit = (root, ox, oy) => {
+    roots.push({ root, ox, oy });
+    for (const f of root.querySelectorAll("iframe")) {
+      const d = f.contentDocument;
+      if (!d?.body) continue;
+      const r = f.getBoundingClientRect();
+      visit(d.body, ox + r.left + f.clientLeft, oy + r.top + f.clientTop);
+    }
+  };
+  visit(scope, 0, 0);
+  const found = [];       // {rect, node, ox, oy}
+  for (const { root, ox, oy } of roots) {
+    const within = c.selector ? [...root.querySelectorAll(c.selector)] : [root];
+    if (c.selector && root.matches?.(c.selector)) within.unshift(root);
+    for (const e of within) {
+      if (!want) { found.push({ node: e, ox, oy }); continue; }
+      // text in one text node: the exact stretch; else the smallest element holding it
+      let hit = false;
+      const tw = e.ownerDocument.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+      for (let t = tw.nextNode(); t; t = tw.nextNode()) {
+        const i = t.data.indexOf(c.text);
+        if (i < 0) continue;
+        const range = e.ownerDocument.createRange();
+        range.setStart(t, i); range.setEnd(t, i + c.text.length);
+        found.push({ node: range, el: t.parentElement, ox, oy });
+        hit = true;
+      }
+      if (hit) continue;
+      let best = null;
+      for (const d of [e, ...e.querySelectorAll("*")]) {
+        if (norm(d.textContent || "").includes(want) && (!best || best.contains(d))) best = d;
+      }
+      if (best) found.push({ node: best, ox, oy });
+    }
+  }
+  const box = (f) => {
+    const r = f.node.getBoundingClientRect();
+    return { x: r.left + f.ox, y: r.top + f.oy, width: r.width, height: r.height };
+  };
+  const shown = (f) => {
+    const b = box(f);
+    return b.width > 0 && b.height > 0 && b.x + b.width > 0 && b.y + b.height > 0 && b.x < innerWidth && b.y < innerHeight;
+  };
+  const pool = c.scroll ? found.filter((f) => { const b = box(f); return b.width > 0 && b.height > 0; }) : found.filter(shown);
+  const f = pool.at(c.nth || 0);        // negative: from the end
+  if (!f) throw new Error(`nothing matches ${JSON.stringify({ selector: c.selector, text: c.text, pane: c.pane })}` +
+                          (found.length ? ` on screen (${found.length} elsewhere; scroll: true brings one into view)` : ""));
+  if (c.scroll) (f.el || f.node).scrollIntoView({ block: "center", inline: "nearest" });
+  const b = box(f);
+  return { ...b, cx: b.x + b.width / 2, cy: b.y + b.height / 2, count: pool.length, dpr: devicePixelRatio };
+}
+
 adhoc.command = async (seq, cmd) => {
   let result;
   try {
@@ -3506,6 +3575,10 @@ adhoc.command = async (seq, cmd) => {
 };
 adhoc.config = (c) => {
   adhoc.user = c.user; adhoc.window = c.window || "w1";
+  if (c.test_hooks) {             // scripted screenshots (tools/screenshots): a steady terminal cursor
+    adhoc.testHooks = true;
+    if (window.adhocTerm?.term) window.adhocTerm.term.options.cursorBlink = false;
+  }
   // the first window opens on the overview; Claude's commands then open panes beside it
   if (adhoc.window === "w1" && !adhoc.panes.length) openHome();
 };

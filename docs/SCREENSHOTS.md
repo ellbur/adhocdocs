@@ -1,10 +1,15 @@
 # Screenshots
 
-*Status: step 1 is built: screenshots of the viewer, without Claude, taken
-by [`tools/screenshots/shoot.py`](../tools/screenshots/shoot.py) from the
-shot list [`shots.toml`](../tools/screenshots/shots.toml), locally or in CI
+*Status: built: still shots of the viewer
+([`shoot.py`](../tools/screenshots/shoot.py), from
+[`shots.toml`](../tools/screenshots/shots.toml)), and scenarios with Claude
+Code beside it, replayed from recordings with no sign-in
+([`scenario.py`](../tools/screenshots/scenario.py),
+[`fakeapi.py`](../tools/screenshots/fakeapi.py), from
+[`scenarios/`](../tools/screenshots/scenarios)), locally or in CI
 ([`.github/workflows/screenshots.yml`](../.github/workflows/screenshots.yml)).
-See [Not built yet](#not-built-yet).*
+Recording a scenario for real is not built yet: see
+[Not built yet](#not-built-yet).*
 
 Screenshots for documentation should show the current version of the
 software, and show it the same way every time, so that a picture changes
@@ -27,10 +32,11 @@ shot (about 5 seconds each), and writes `screenshots/NAME.png`, an
 hash. `--only NAME …` takes some of them. `--matter DIR` keeps the sample
 matter in DIR and reuses it next time.
 
-In CI, the **Screenshots** workflow does the same on every push to `main`,
-on pull requests that touch the viewer, the Python code, the corpus or the
-shot list, and on demand (*Run workflow*). The pictures are the run's
-`screenshots` artifact.
+In CI, the **Screenshots** workflow takes the stills and replays every
+scenario on pushes and pull requests that touch the viewer, the Python
+code, the container, the corpus or `tools/screenshots/`, and on demand
+(*Run workflow*). The pictures and videos are the run's `screenshots`
+artifact.
 
 ## Writing a shot
 
@@ -56,8 +62,20 @@ steps = [
 | `sh = "…"` | a shell command, with the matter's tools on `PATH` and `ADHOC_MATTER` set, in a directory of the shot's own |
 | `key = "ctrl+f Down"` | keys, as xdotool names them |
 | `type = "text"` | text typed into whatever has focus |
-| `click = [x, y]`, `move = [x, y]` | a click, or the pointer moved (for hover cards) |
-| `sleep = 0.5` | a pause |
+| `click = TARGET` | a click there (`double = true` beside it: a double click) |
+| `hover = TARGET` | the pointer there, then a pause for a hover card (`wait = 1.5` beside it) |
+| `wheel = 3` | scrolling at the pointer, in notches (negative: up) |
+| `pause = 0.5` | a pause |
+| `prompt = "…"` | (scenarios) typed at Claude's prompt, then Enter; waits for the answer |
+| `shot = "name"` | (scenarios) a still, now (`caption = "…"` beside it) |
+
+A `TARGET` is `[x, y]` on the screen, or what is there:
+`{ text = "Mar 3, 2026", pane = "p3" }`, `{ selector = ".pane-head" }`, or
+both (the text inside those elements), with `nth` (counting from 0, or from
+the end when negative), `scroll = true` to bring it into view first, and
+`at = [fx, fy]` for a point inside its box other than the middle. The
+viewer answers where it is (the `locate` command, only in a viewer started
+with `--test-hooks`), so a step keeps working when the layout moves.
 
 `{doc:COLLECTION/FILE}` is a document's locator, by its path under
 `corpus/` (`{doc:public/scotus-coinbase-v-suski-2024.pdf}`); the file name
@@ -97,24 +115,106 @@ A different machine, or a newer WebKitGTK, can still draw some pixels
 differently. CI's runner is fixed at Ubuntu 24.04, so its pictures are
 the reference.
 
+## Scenarios: Claude Code beside the viewer
+
+A scenario shows a session: someone asks Claude for something, Claude
+answers and works the viewer, and they look at what it shows. Claude Code
+needs a sign-in and gives a different answer each time, so a scenario is
+**recorded once and replayed**:
+
+- **The recording** (`scenarios/NAME.cassette.json`) holds what the model
+  answered, turn by turn, and what each tool printed when it was made.
+- **The replay** runs the real Claude Code, in the real session container
+  (`adhoc open`), pointed at [`fakeapi.py`](../tools/screenshots/fakeapi.py)
+  instead of the Claude API. It answers each request with the next
+  recorded turn, streamed at a pace set for watching (`[pace]` in the
+  scenario). Claude Code's tool calls (`search`, `view`, …) really run,
+  against the code as it is now, so the viewer shows what they do today.
+  Nothing talks to Anthropic, and nothing needs a secret.
+- **Stale recordings fail.** Before answering, the replay compares what
+  Claude Code sends with the recording: the prompt typed, and each tool's
+  output (times, temporary paths and IDs that carry a time aside). Any
+  difference means the software changed under the recording, so Claude's
+  recorded words may describe something no longer on screen: the scenario
+  fails, and its `NAME.report.json` says where. Record it again.
+
+```sh
+uv run python tools/screenshots/scenario.py replay [NAME …] --out screenshots
+```
+
+writes `NAME.mp4` (the whole session, pointer included), `NAME-SHOT.png`
+for each `shot` step, and `NAME.report.json`; on a failure, also
+`NAME.failed.png`, what the screen showed. It needs Podman and the session
+image built with the Claude Code version the recordings were made with
+([`claude-code-version`](../tools/screenshots/claude-code-version)):
+
+```sh
+podman build --build-arg CLAUDE_CODE_VERSION="$(cat tools/screenshots/claude-code-version)" \
+  -f container/Containerfile -t localhost/adhocdocs:latest .
+```
+
+`--direct` runs the `claude` on this machine in the viewer's terminal
+instead of the container: quicker for working on a scenario, but not what
+users run. `--fast` drops the human pacing, for a quick check.
+
+A scenario file is its steps (above) with `prompt` steps among them:
+
+```toml
+caption = "Asking Claude for documents on a topic: a list beside the chat."
+
+[pace]
+think = 1.2        # seconds before an answer starts
+cps = 180          # characters a second, for Claude's text
+typing_ms = 45     # between keys, typing a prompt
+
+[[step]]
+prompt = "Which documents mention the forklift recertification? Show them to me as a list."
+
+[[step]]
+click = { text = "Dock 4 forklift recertification", pane = "p2" }
+
+[[step]]
+hover = { text = "Mar 3, 2026", pane = "p3" }
+wait = 1.5
+
+[[step]]
+shot = "date-card"
+```
+
+**How a scenario's session is set up**, the same for recording and replay:
+
+- **A fresh copy of the sample matter**, so what one scenario writes (lists,
+  tags) can't change what another's tools print. Its indexes are built
+  before the session starts, rather than by the session in the background,
+  whose timing would show in search results.
+- **Claude Code past its first run**: its settings in the matter's
+  `claude-home/` say the welcome, the theme, the API key and the workspace
+  trust are done.
+- **Its tools allowed, nothing asked** (`--permission-mode dontAsk`, with
+  allow rules). Auto mode, Claude Code's default, checks each tool call on
+  Anthropic's side, which can't happen through a recorder or a replay.
+- **The API through a socket on the host** (`adhoc open --api-socket`,
+  [CONTAINER.md](CONTAINER.md)): the session holds no credential.
+- **Typed like a person**: prompts at an even typing pace, the pointer
+  gliding along a gentle curve and pausing before a click. (Still shots
+  jump the pointer instead, so nothing it passes over can leave a hover
+  card behind.) The terminal's cursor doesn't blink under `--test-hooks`,
+  so the screen can settle.
+
+The video of a replay isn't the same byte for byte from run to run
+(encoder timing, Claude Code's own "Worked for 6s"), but what happens in
+it, and when, is.
+
 ## Not built yet
 
-The shots above show the viewer only. Claude Code's terminal beside it
-needs a session, and a session needs a Claude login, which CI can't do.
-The plan:
-
-- **Record once, replay in CI.** A session is recorded from a scripted
-  list of prompts (on a developer's machine, with a real login). In CI,
-  the real Claude Code runs against a small local server
-  (`ANTHROPIC_BASE_URL`) that replays the recorded model responses in
-  order, so its tool calls (`view`, `search`, …) really run against the
-  current code and the viewer shows what they do now. Nothing in CI talks
-  to Anthropic, and the prompts can be typed into the terminal at an even
-  pace.
-- **Stale recordings fail loudly.** When a replayed tool call's output
-  differs from what was recorded (a command renamed, a count changed), CI
-  says which scenario to record again, rather than showing Claude
-  describing output that is no longer on the screen.
-- **Videos,** with ffmpeg recording the virtual screen and the pacing
-  (typing speed, pauses) set by the scenario rather than by how long
-  things took.
+- **Recording.** `scenario.py record NAME`: the same session with a
+  recorder on the API socket that forwards to Anthropic and keeps what
+  came back. It will run in CI as its own workflow, started by hand and
+  approved in the `recording` environment, authenticated by Workload
+  Identity Federation (no key stored anywhere; checked by
+  `anthropic-wif-test.yml`), and open a pull request with the new
+  recording. Until then, `forklift-list`'s recording is written by hand
+  (the model's side) to try the replay; `scenario.py replay --accept`
+  fills in what the tools print, for writing one that way.
+- **Editing the video**: speeding up long waits (OCR, a slow search)
+  from the timestamps the replay logs, and marking clicks.
