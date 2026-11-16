@@ -54,18 +54,26 @@ jobs:
           jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' "$RUNNER_TEMP/exchange.json"
           jq -e '.access_token | startswith("sk-ant-oat01-")' "$RUNNER_TEMP/exchange.json" > /dev/null
 
-      - name: The API with a federated token, without and with the OAuth beta
-        # Which one a recorder must send (tools/screenshots/recorder.py): prints each status and error.
+      - name: The API with a federated token, by model and max_tokens
+        # A recording's first request (Claude Code's: Opus 5.5, max_tokens 128000) was refused for
+        # "credit balance too low" while a small Haiku one went through. Which of the two matters?
+        # Each asks for two words; max_tokens is only the ceiling.
         run: |
           token=$(jq -r .access_token "$RUNNER_TEMP/exchange.json")
-          ask() {
-            curl -sS -o "$RUNNER_TEMP/out.json" -w "%{http_code}" https://api.anthropic.com/v1/messages \
+          ask() {   # model max_tokens
+            code=$(curl -sS -o "$RUNNER_TEMP/out.json" -w "%{http_code}" https://api.anthropic.com/v1/messages \
               -H "authorization: Bearer $token" -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" "$@" \
-              -d '{"model": "claude-haiku-5-5", "max_tokens": 16, "messages": [{"role": "user", "content": "Say ok."}]}'
+              -H "anthropic-beta: oauth-2025-04-20" -H "content-type: application/json" \
+              -d "{\"model\": \"$1\", \"max_tokens\": $2, \"messages\": [{\"role\": \"user\", \"content\": \"Say ok.\"}]}")
+            echo "$1 max_tokens=$2: $code $(jq -c '.error.message // [.content[]?.text]' "$RUNNER_TEMP/out.json")"
           }
-          echo "without: $(ask) $(jq -c '.error // .content' "$RUNNER_TEMP/out.json")"
-          echo "with oauth-2025-04-20: $(ask -H 'anthropic-beta: oauth-2025-04-20') $(jq -c '.error // .content' "$RUNNER_TEMP/out.json")"
+          ask claude-haiku-5-5 16
+          ask claude-haiku-5-5 64000
+          ask claude-sonnet-5-5 16
+          ask claude-sonnet-5-5 128000
+          ask claude-opus-5-5 16
+          ask claude-opus-5-5 32000
+          ask claude-opus-5-5 128000
 
       - name: Install Claude Code
         run: |
