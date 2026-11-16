@@ -2,19 +2,21 @@
 
 Tools for working with evidentiary documents from Claude Code. 
 
+**This software is a proof of concept and is not intended or suitable for production use.**
+
 The idea:
 
 1. The most flexible and powerful solution puts a coding agent in charge; but
 2. A coding agent can delete files, misquote documents, comingle client matters, and do other undesirable things; so
-3. We enforce a separation between a ground truth and the coding agent's environment.
+3. We enforce a **separation between a ground truth and the coding agent's environment**.
 
-The result is maximum flexibility and power while ensuring that final work product is grounded in a pipeline that does not depend on AI.
+The result is maximum **flexibility and power** while ensuring that final work product is **grounded in a pipeline that does not depend on AI**.
 
 This workflow differs from other legal AI software in that they give Claude maximum freedom to customize its workflow, including by writing custom code for the analysis at hand. Claude searches, reads, tags, drafts and builds
 productions. A document viewer on your desktop shows you what Claude points
 at, and sends back what you select.
 
-**This software is a proof of concept and is not intended or suitable for production use. Using this software with real client documents may violate professional obligations to safeguard client information.**
+This software also improves on web-based document review platforms by using a local syncing model with a fast Rust GUI, so that the software never slows you down when skimming through large document repositories.
 
 ## Setting up
 
