@@ -1,6 +1,6 @@
 # adhocdocs
 
-Tools for working with evidentiary documents from Claude Code. 
+Tools for working with evidentiary documents from Claude Code.
 
 **This software is a proof of concept and is not intended or suitable for production use.**
 
@@ -12,368 +12,44 @@ The idea:
 
 The result is maximum **flexibility and power** while ensuring that final work product is **grounded in a pipeline that does not depend on AI**.
 
-This workflow differs from other legal AI software in that they give Claude maximum freedom to customize its workflow, including by writing custom code for the analysis at hand. Claude searches, reads, tags, drafts and builds
-productions. A document viewer on your desktop shows you what Claude points
-at, and sends back what you select.
+<a href="docs/screenshots/viewer.png"><img src="docs/screenshots/viewer.png" alt="The viewer: search results beside an email, with Claude's highlight and the links it rests on"></a>
 
-This software also improves on web-based document review platforms by using a local syncing model with a fast Rust GUI, so that the software never slows you down when skimming through large document repositories.
+<table>
+<tr>
+<td width="33%" valign="top"><a href="docs/screenshots/entities.png"><img src="docs/screenshots/thumbs/entities.png" alt="Entity hover card"></a><br><b>Entities</b> · hover a name</td>
+<td width="33%" valign="top"><a href="docs/screenshots/dates.png"><img src="docs/screenshots/thumbs/dates.png" alt="Date card"></a><br><b>Dates</b> · what came before and after</td>
+<td width="33%" valign="top"><a href="docs/screenshots/evidence.png"><img src="docs/screenshots/thumbs/evidence.png" alt="Highlights and evidence panel"></a><br><b>Evidence</b> · what a passage supports</td>
+</tr>
+<tr>
+<td valign="top"><a href="docs/screenshots/pages.png"><img src="docs/screenshots/thumbs/pages.png" alt="A chronology page with quotations"></a><br><b>Pages</b> · quotes that are references</td>
+<td valign="top"><a href="docs/screenshots/timeline.png"><img src="docs/screenshots/thumbs/timeline.png" alt="Timeline in lanes"></a><br><b>Chronologies</b> · timelines in lanes</td>
+<td valign="top"><a href="docs/screenshots/graph.png"><img src="docs/screenshots/thumbs/graph.png" alt="Relationship graph"></a><br><b>Relationships</b> · links and their evidence</td>
+</tr>
+<tr>
+<td valign="top"><a href="docs/screenshots/trace.png"><img src="docs/screenshots/thumbs/trace.png" alt="Tracing a fact"></a><br><b>Traces</b> · who knew, and how</td>
+<td valign="top"><a href="docs/screenshots/disputes.png"><img src="docs/screenshots/thumbs/disputes.png" alt="Dispute view"></a><br><b>Disputes</b> · who says which side</td>
+<td valign="top"><a href="docs/screenshots/threads.png"><img src="docs/screenshots/thumbs/threads.png" alt="Email thread"></a><br><b>Threads</b> · replies, copies, versions</td>
+</tr>
+<tr>
+<td valign="top"><a href="docs/screenshots/scans.jpg"><img src="docs/screenshots/thumbs/scans.png" alt="OCR'd scan with a highlight"></a><br><b>Scans</b> · OCR, quoted to the page</td>
+<td valign="top"><a href="docs/screenshots/spreadsheets.png"><img src="docs/screenshots/thumbs/spreadsheets.png" alt="Spreadsheet grid with a highlighted row"></a><br><b>Spreadsheets</b> · cells as citations</td>
+<td valign="top"><a href="docs/screenshots/tags.png"><img src="docs/screenshots/thumbs/tags.png" alt="Tag palette"></a><br><b>Tags</b> · hotkeys for review</td>
+</tr>
+</table>
 
-## Setting up
+## Setup
 
-You need [uv](https://docs.astral.sh/uv/), which brings its own Python.
-Then, from a clone of this repository:
-
-```sh
-uv run adhoc setup
-```
-
-This checks for everything else first and, if anything is missing, says
-what to install:
-
-- rootless [Podman](https://podman.io/), for the session container
-- Rust via [rustup](https://rustup.rs/) (the viewer pins its version), clang,
-  a C toolchain and WebKitGTK 4.1, to build the viewer
-- `tesseract` with English data, to OCR scanned pages when you add documents
-
-Then it builds the viewer and the session image. The first run takes a few
-minutes; later runs reuse what's built and finish quickly, so run it again
-after pulling changes. `uv run adhoc setup --check` only checks.
-
-The image is built on your machine. It installs Claude Code with
-Anthropic's official installer. To pick up a newer Claude Code, run
-`uv run adhoc setup --no-cache`.
-
-The commands below run from the clone. A matter can live anywhere.
-
-### Without a command line
-
-Setting up also puts **adhocdocs** in your desktop's applications menu (on
-Linux). It opens the launcher, which does what the commands below do:
-
-- **New matter…** makes a matter in a folder you choose, and **Try the
-  sample matter** makes one from the sample documents.
-- **Add documents…** adds files, folders or a manifest, with their
-  collection and custodian, and shows how many are in so far.
-- **Open with Claude** starts a session. Claude Code needs a terminal, and
-  the launcher gives it one: beside the documents in the viewer's window,
-  in a window of its own (it can move back while it runs), or in your
-  terminal program. Pick which under *Where Claude Code runs*.
-- The ⋯ menu views a matter's documents without Claude, or shows its
-  folder, or Claude's workspace, in your file manager.
-
-It also says if anything is missing, and runs the rest of the setup for
-you. Start it from a terminal with `uv run adhoc gui`.
-
-## Making a matter
-
-A matter is a directory that holds one case's documents, your tags and
-notes, and Claude's work. Create it and add documents on your own machine,
-outside any session:
+You need [uv](https://docs.astral.sh/uv/). From a clone:
 
 ```sh
-uv run adhoc init ~/matters/smith-v-jones
-uv run adhoc --matter ~/matters/smith-v-jones ingest \
-    --custodian smith-j --collection smith-laptop-2026-03 /path/to/smith-files
-```
-
-Adding documents works for these formats:
-- PDF, including scans, which are OCRed
-- images
-- email (`.eml`, `.mbox`, Outlook `.msg` and `.pst`/`.ost`), with attachments
-- chat messages: Slack exports, WhatsApp exports and RSMF (how Teams,
-  iMessage and other chats are usually produced), each conversation a
-  document per day ([CHATS.md](docs/CHATS.md))
-- `.docx` and `.xlsx`
-- CSV, HTML and text
-- JSON, JSON Lines and XML, kept as their text
-- zip archives
-
-Files in any other format go in too. Nothing extracts text from them, but
-Claude can inspect their bytes, quote them as hex, and work out and show
-its own reading of them, always marked as its reading
-([DATA.md](docs/DATA.md)).
-
-Originals are kept exactly as given, and identical files are stored once.
-Zip archives, mailboxes (`.mbox`, `.pst`) and chat exports are read a member at a
-time, including when one is inside another or attached to an email, so
-they can be larger than memory. If an ingest is interrupted, run the same command
-again: it finishes the job without adding anything twice.
-Add more documents at any time; the session catches its indexes up when it
-starts. Each `ingest` names the collection the files came from. The
-custodian is optional.
-
-A production served on you (a volume of load files, page images, natives
-and text) goes in with `ingest-production`. Each record becomes one
-document, named by its Bates numbers. Run it with `--check` first to see
-how the load file was read ([RECEIVED.md](docs/RECEIVED.md)):
-
-```sh
-uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp." --check
-uv run adhoc --matter ~/matters/smith-v-jones ingest-production ACME_VOL001 --party "Acme Corp."
-```
-
-A later overlay `.dat` that corrects fields goes in with
-`overlay-production`. A volume that reproduces earlier numbers goes in with
-`ingest-production … --replaces ACME_VOL001`.
-
-To try it out, make a matter from the sample documents in `corpus/`. It
-holds a fictional supply dispute, buried the way real ones are in several
-hundred irrelevant documents (marketing email, calendar invitations, office
-chatter, drafts of unclear origin), plus some real public-domain court and
-government documents:
-
-```sh
+uv run adhoc setup                       # says what else to install, then builds
 uv run adhoc init ~/matters/demo
 uv run adhoc --matter ~/matters/demo ingest --manifest corpus/manifest.toml
+uv run adhoc open ~/matters/demo         # Claude Code, the viewer, and an audit log
 ```
 
-[corpus/manifest.toml](corpus/manifest.toml) lists the collections and
-their custodians. Write one like it to add several collections of your own
-in one command. Paths in it are relative to the manifest. Every entry is
-checked before anything is added.
-
-## Starting a session
-
-```sh
-uv run adhoc open ~/matters/demo
-```
-
-This starts three things:
-
-- **Claude Code**, in a container that holds only this matter. Its
-  documents are read-only; its workspace (`<matter>/workspace`) is
-  writable. It has no internet access: only Claude's own sign-in and API
-  hosts are reachable.
-- **The viewer**, a window on your desktop showing this matter's documents.
-- **An audit log** on your machine, outside the container, recording every
-  prompt, every command Claude runs, and every network connection.
-
-Claude Code runs in the terminal you started it from. To have the viewer
-show it instead, add `--terminal beside` (in the viewer's window, beside
-the documents) or `--terminal window` (in a window of its own); `--terminal
-app` opens a window of your terminal program
-([VIEWER.md](docs/VIEWER.md#claude-code-in-the-viewer)).
-
-When you leave Claude Code (`/exit` or Ctrl+D), the container and viewer
-close. To pick up an earlier conversation, run `uv run adhoc open
-~/matters/demo -- claude --resume`.
-
-Indexes build in the background when a session starts. Keyword search is
-ready within seconds. Semantic search over a new matter takes a few
-minutes; until then, Claude's searches say what they couldn't yet cover.
-
-### Signing in
-
-The first time you open a matter, Claude Code asks you to sign in:
-
-1. Choose to sign in with your Claude account (or an Anthropic Console
-   account for API billing).
-2. Claude Code shows a link. It can't open a browser from inside the
-   container, so open the link yourself, on this computer.
-3. Sign in, copy the code the page gives you, and paste it back into the
-   terminal.
-
-Each matter keeps its own sign-in in `<matter>/claude-home`, so you sign in
-once per matter, not every session. adhocdocs never reads or copies your
-credentials. If you use an API key instead, set `ANTHROPIC_API_KEY` before
-`adhoc open`; it is passed through and not saved.
-
-**Before you sign in, consider which account to use.** Free, Pro and Max
-accounts are under Anthropic's Consumer Terms, which allow chats to be used
-for training unless you opt out in your privacy settings. Team, Enterprise
-and API accounts are under the Commercial Terms, which don't. Which to use
-for client documents is your (or your firm's) decision.
-
-### Working with Claude
-
-Talk to Claude in plain language. It knows the tools (a guide is built into
-the container) and will open things in the viewer as it goes. Some prompts
-to try on the sample matter:
-
-**Finding things**
-
-- *"What is this dispute about? Give me a short summary with the key documents."*
-- *"Find every document that mentions invoice INV-2026-0347 and list them in date order."*
-- *"Who signed for the delivery, and what evidence is there that the goods arrived?"*
-- *"Search for 'never received' within ten words of 'pallet'. Did you search everything?"*
-- *"What did Kettering say in the deposition about the proof of delivery? Show me the page and line."*
-- *"Highlight everything in the supply agreement that bears on delivery and risk of loss."* Then step through the passages with the Prev/Next buttons above the document (or `]` and `[`); each one's label says why Claude picked it.
-
-**Organizing**
-
-- *"Make tags hot, privileged and responsive, with hotkeys h, p and r."*
-- *"Find the few documents that establish the proof of delivery and save them as a set. Say what each one adds, and show me which others just repeat them."*
-- *"What does the set need to show: shipped, delivered, signed for, disputed? Is any of those without a document?"*
-- Later: *"Show me the proof-of-delivery set again,"* or *"Tag its key documents as hot."*
-- *"Reconstruct the email threads about the past-due invoice. Are any messages missing?"*
-- *"Which documents are near-duplicates or versions of each other? Show me a redline of the two memos."*
-- *"Who are the people in this case, and how do they relate to each other?"*
-- *"Who is José Ibáñez? Show me every document that mentions him."*
-- *"Trace the pallet in Q-3: who knew about it, when, and how did each of them hear? Where does it turn up with no record of how it got there?"* ([TRACE.md](docs/TRACE.md))
-- *"Bellwether says the shipment was never received; Harrowgate says it arrived. Who says which, and when? Who said both, who changed their story, and who kept to it after a colleague said otherwise?"* ([DISPUTES.md](docs/DISPUTES.md))
-- Hover over an underlined name in the viewer to see who or what it is. Click one and ask *"Who's this?"*: Claude answers and records it, so the next hover reminds you.
-- *"Add the key people and companies in this dispute to the entities, with a line on each."*
-- *"Record who works for whom, who signed what, and who handled the delivery, as links with their evidence."* Then a hover card lists each entity's connections; click one to go on to the next entity.
-- *"Draw who is involved in which transactions."* Or: *"Draw Ames's connections, two steps out, with the documents they rest on."*
-- *"How is Voss connected to Kettering Freight? Show me the documents for each step."*
-- *"Which of the facts we've recorded have no document behind them?"*
-- *"Make me a page on Ibáñez: what connects him to the delivery, with the documents quoted."*
-- *"Show me Ames's part in this on a timeline."* Each of Ames's links sits at its date; click one to see the document it rests on.
-- *"Who in the emails isn't in the entities yet? Add the ones who matter, and draw who corresponds with Kettering."*
-- *"Show me this memo's earlier drafts, and the thread this email belongs to."* A document's link bar lists its replies, quotations and versions too.
-- *"Search the conversations about the proof of delivery, attachments included, one result per conversation,"* or *"Tag the whole conversation hot, attachments and all."*
-- *"What is this document part of?"* A pane lists its thread, family, copies, versions and bundles, each with its parts. Or: *"Show me the whole thread, with the preview."*
-- *"Which PDFs are really several documents scanned together? Split scan-batch.pdf into its letters, and show me where you'd cut and why."* Then *"Keep pages 7 and 8 together, put the misfiled page 14 with the first letter, and save that as the letters split."*
-- *"Set up issues for delivery, damages and notice, and file the entities and notes under them."* Then press `F` in the viewer to see one issue at a time.
-- Hover over a date, in a document or its date strip, to see where it falls: the thread, documents near it, and the nearest events before and after. Click one and ask *"What else happened then?"*
-
-**Writing**
-
-- *"Write a chronology of the dispute as a page, quoting the documents for each entry."* Its entries then appear on the date cards.
-- *"Add the turning points of the dispute to the entities as dated events."*
-- *"Show me a timeline of the emails, one lane per thread."* Or: *"…of the chronology entries."*
-- *"Draft a memo on whether the goods were delivered, with quotations, and export it to Word."*
-- *"In the memo, show the signature line of the delivery receipt as a picture, and the aging report rows as a table."*
-- *"What is this .dat file? If you can decode it, show me the records as a table, and chart the amounts by month."*
-
-Claude's quotations in pages are references to the documents, not retyped
-text. So an export can show where every quote came from, and a quote that
-no longer matches its document is flagged.
-
-**Producing**
-
-- *"Flag anything in Delacroix's files that might be privileged, with your reasons, for me to review."*
-- *"Produce everything tagged responsive with Bates prefix SMITH, withhold what I tagged privileged, and give me the privilege log."*
-- *"Make exhibits for the Kettering deposition from the hot documents, oldest first, and give me the exhibit list in Word."*
-
-**With the viewer.** Select text, a region of a page, or cells in a
-spreadsheet, then ask about it:
-
-- *"What is this?"* or *"Find other documents that say the same thing as what I selected."*
-- *"Show me the list of hot documents."* Then step through them in the viewer with `]` and `[`.
-- *"Make me a review form for these documents with a responsive/not responsive choice."* Then tick your answers in the viewer and ask Claude to record them.
-
-In the viewer, press `?` for its keys. `t` opens the tag palette, tag
-hotkeys tag the current selection or document, and `N` adds a note. `W`
-moves the focused pane into a window of its own, for example to keep a list
-on one screen and its documents on another. Your
-tags and notes are recorded as yours, and Claude's as Claude's. Claude
-can't change yours.
-
-Everything Claude writes goes to `<matter>/workspace`: pages, lists,
-exports and productions. Open them from there on your own machine.
-
-### Syncing between machines
-
-A matter can live on several machines, say your laptop, a colleague's
-desktop and a firm server, each with a full copy that works offline.
-Documents, tags, notes, entities and published work sync between them.
-Each workspace stays private: to share a page or chronology, ask Claude to
-publish it (or `adhoc publish`), and it appears in `<matter>/work/`
-everywhere.
-
-```sh
-# on your machine: an invitation, and be reachable while they join
-uv run adhoc --matter ~/matters/demo sync invite --user me --address mylaptop.local:7480
-uv run adhoc --matter ~/matters/demo sync serve --listen 0.0.0.0:7480
-
-# on theirs: join into a new directory
-uv run adhoc sync join <code> ~/matters/demo --name "Dana's desktop"
-
-# later, on either: once, or keep in step as things change
-uv run adhoc --matter ~/matters/demo sync now
-uv run adhoc --matter ~/matters/demo sync watch
-```
-
-While a session is open (`adhoc open`), it keeps in step on its own.
-
-With a hub (an always-on server, which holds matters encrypted so it can't
-read them: `adhoc hub --help`), push the matter to it once with `adhoc sync
-push <code>`. Invitations then go through the hub, and
-everyone syncs through it, whoever else is offline. Treat invitation and hub
-codes as passwords. Details: [SYNC.md](docs/SYNC.md).
-
-### Afterwards
-
-```sh
-uv run adhoc --matter ~/matters/demo audit sessions   # what each session did
-uv run adhoc --matter ~/matters/demo audit show --kind prompt --kind tool
-uv run adhoc --matter ~/matters/demo audit verify     # the log is intact
-```
-
-## Using the tools directly
-
-Every tool also works outside a session, on the host, with `--matter` or
-`ADHOC_MATTER` naming the matter. Each prints JSON and has `--help`. These
-commands exercise them on the sample matter:
-
-```sh
-export ADHOC_MATTER=~/matters/demo
-uv run idx update                       # build the indexes (semantic search takes a few minutes)
-uv run idx status
-uv run search '"never received" w/10 pallet'
-uv run search 'who signed for the delivery' --index hybrid
-uv run search grep 'PN 44-B/7'
-uv run search '"never received"' --list nr.list.jsonl
-uv run list cat nr.list.jsonl
-uv run search '"proof of delivery" OR POD' --list pod.list.jsonl
-uv run list condense nr.list.jsonl pod.list.jsonl --out pod.set.list.jsonl   # a key set: repeats folded away
-uv run list point pod.set.list.jsonl delivered "The pallet reached Dock 4" && uv run list points pod.set.list.jsonl
-uv run list ls                          # the workspace's lists and sets
-uv run text "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
-uv run analyze threads
-uv run analyze groups                   # near-duplicates and versions
-uv run analyze people                   # from email headers and names in the documents
-uv run analyze people --person ibanez --list jose.list.jsonl   # every document that names him
-uv run analyze trace --query 'pallet AND (q-3 OR quarantine)' --list q3.list.jsonl   # who knew, when, and how
-uv run view trace q3.list.jsonl                 # the trace as a time DAG: what came from what, in strands
-uv run graph path "Raymond Voss" "Rita Ames"   # how two entities connect, with the evidence for each step
-uv run graph export --format mermaid           # the entities and their links, for a diagram
-uv run search '"past due"' --grain new          # one result per thing written, not per email that quotes it
-uv run meta of "$(uv run search '"past due"' | sed -n 2p | jq -r .loc)"   # its thread, family, copies, versions, bundles
-uv run page ref add memo.md nr "$(uv run search '"never received"' --by hit | sed -n 2p | jq -c .loc)"
-uv run page export memo.md --format docx -o memo.docx      # memo.md quotes with :q{#nr}
-uv run page docs memo.md --list memo.list.jsonl            # the documents memo.md cites
-uv run adhoc view && uv run view list nr.list.jsonl        # the viewer, outside a session
-uv run adhoc ann-api &                                     # the annotation API, then:
-uv run ann define-tag hot && uv run ann tag hot <doc>
-uv run adhoc status                                        # inside a session: mounts, network, services
-```
-
-Tests:
-
-```sh
-uv run pytest                           # ADHOC_TEST_SEMANTIC=1 to include semantic search
-(cd viewer && cargo test)
-```
-
-[tools/corpus/SOURCES.md](tools/corpus/SOURCES.md) lists every sample
-file's source and the facts the tests check. If `tesseract` has no English
-data system-wide, put `eng.traineddata` in
-`~/.cache/adhocdocs/models/tessdata/`.
+Or `uv run adhoc gui` for a launcher that does the same.
 
 ## Design
 
-- [DESIGN.md](docs/DESIGN.md): principles
-- [TOOLS.md](docs/TOOLS.md): the tools, and which are built
-- [LOCATORS.md](docs/LOCATORS.md): naming documents and places in them
-- [TEXTLAYERS.md](docs/TEXTLAYERS.md): extracted text and its structure
-- [INDEXING.md](docs/INDEXING.md): indexes, search, keeping indexes up to date
-- [LISTS.md](docs/LISTS.md): document lists and the list display
-- [ANNOTATIONS.md](docs/ANNOTATIONS.md): tags and notes
-- [ENTITIES.md](docs/ENTITIES.md): the entity layer: hover a name to see who or what it is
-- [GRAPH.md](docs/GRAPH.md): links between entities and their evidence, the graph, diagrams, and issues (facets)
-- [CHATS.md](docs/CHATS.md): chat messages: Slack, WhatsApp and RSMF, a document per conversation per day
-- [TRACE.md](docs/TRACE.md): tracing a fact: where it appears, how it travelled, who knew it when, and the gaps
-- [DISPUTES.md](docs/DISPUTES.md): contrary claims: who holds which side and when, who is on both, who switched, who kept to a side despite a colleague
-- [METADOCS.md](docs/METADOCS.md): content at other scales than the document: threads, families, what a message adds, bundles
-- [RECEIVED.md](docs/RECEIVED.md): productions served on us: load files in, Bates and control numbers as names
-- [DATES.md](docs/DATES.md): the date strip and date cards: hover a date to see what came before and after
-- [PAGES.md](docs/PAGES.md): literate pages that quote and cite documents
-- [VIEWER.md](docs/VIEWER.md): the document viewer
-- [CONTAINER.md](docs/CONTAINER.md): the container, sign-in, the audit log, and Anthropic's terms
-- [WINDOWS.md](docs/WINDOWS.md): running on Windows (and macOS): the bridge into Podman's VM
-- [SYNC.md](docs/SYNC.md): syncing a matter across installations, peer to peer or through a hub
-
-The design docs keep the reasons and decisions. Formats, schemas and usage
-live with the code: module docstrings and `--help`.
+[docs/DESIGN.md](docs/DESIGN.md)
