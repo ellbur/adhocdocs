@@ -1,0 +1,79 @@
+# Screenshots and videos of adhocdocs, taken the same way every time on a
+# virtual screen (tools/screenshots/, docs/SCREENSHOTS.md): still shots of
+# the viewer, then scenarios with Claude Code beside it, replayed from their
+# recordings. Nothing here talks to Anthropic, and nothing needs a secret.
+# Everything is uploaded as the run's "screenshots" artifact, with
+# index.html to look through the stills.
+name: Screenshots
+
+on:
+  push:
+    paths: &paths
+      - "viewer/**"
+      - "src/**"
+      - "container/**"
+      - "corpus/**"
+      - "tools/screenshots/**"
+      - ".github/workflows/screenshots.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev clang pkg-config build-essential \
+            xvfb xdotool imagemagick x11-utils jq ffmpeg \
+            tesseract-ocr tesseract-ocr-eng \
+            fonts-dejavu-core fonts-liberation
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Cache the viewer's build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            viewer/target
+          key: viewer-${{ runner.os }}-${{ hashFiles('viewer/Cargo.lock', 'viewer/rust-toolchain.toml') }}-${{ hashFiles('viewer/src/**', 'viewer/shell/**') }}
+          restore-keys: |
+            viewer-${{ runner.os }}-${{ hashFiles('viewer/Cargo.lock', 'viewer/rust-toolchain.toml') }}-
+
+      - name: Build the viewer
+        working-directory: viewer
+        run: cargo build --release --locked
+
+      - name: Python environment
+        run: uv sync --locked
+
+      - name: The sample matter
+        # made once, for the stills and (a copy each) for the scenarios
+        run: uv run python -c "import sys; sys.path.insert(0, 'tools/screenshots'); import harness, os, pathlib; harness.make_matter(pathlib.Path('/tmp/shots/sample-matter'), {**os.environ, **harness.base_env()})"
+
+      - name: Still shots
+        run: uv run python tools/screenshots/shoot.py --matter /tmp/shots/sample-matter --out screenshots
+
+      - name: The session image
+        # Claude Code at the version the recordings were made with (tools/screenshots/claude-code-version)
+        run: |
+          podman build --build-arg CLAUDE_CODE_VERSION="$(cat tools/screenshots/claude-code-version)" \
+            -f container/Containerfile -t localhost/adhocdocs:latest .
+
+      - name: Scenarios, replayed
+        run: uv run python tools/screenshots/scenario.py replay --matter /tmp/shots/sample-matter --out screenshots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: warn

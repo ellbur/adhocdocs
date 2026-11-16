@@ -1,0 +1,38 @@
+# Ask Claude for the documents about a topic, get them as a list beside the
+# chat, and read one: click a row, hover its date for what happened around it.
+caption = "Asking Claude for documents on a topic: a list beside the chat, read by clicking through."
+
+[screen]
+size = [1600, 1000]
+
+[pace]
+think = 1.2        # seconds before an answer starts
+cps = 180          # characters a second, for Claude's text
+typing_ms = 45     # between keys, typing a prompt
+
+[[step]]
+prompt = "Which documents mention the forklift recertification? Show them to me as a list."
+
+[[step]]
+shot = "answer"
+caption = "Claude searched, and opened what it found as a list beside the chat."
+
+[[step]]
+hover = { text = "Dock 4 forklift recertification", pane = "p2" }
+
+[[step]]
+click = { text = "Dock 4 forklift recertification", pane = "p2" }
+
+[[step]]
+pause = 1.5
+
+[[step]]
+hover = { text = "Mar 3, 2026", pane = "p3" }
+wait = 1.5
+
+[[step]]
+shot = "date-card"
+caption = "Hovering an email's date: what else happened around it."
+
+[[step]]
+pause = 1.5

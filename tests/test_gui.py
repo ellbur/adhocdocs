@@ -87,7 +87,7 @@ def test_open_in_a_terminal_program(tmp_path, monkeypatch, capsys):
 def test_where_claude_code_runs(tmp_path, monkeypatch):
     m = Matter.create(tmp_path / "m")
     calls = []
-    monkeypatch.setattr(container, "open_session", lambda m, user, viewer, command, terminal: calls.append(terminal) or 0)
+    monkeypatch.setattr(container, "open_session", lambda m, user, viewer, command, terminal, **kw: calls.append(terminal) or 0)
     for args, isatty, want in [([], True, "here"), ([], False, "beside"), (["--terminal", "window"], True, "window"),
                                (["--terminal", "here"], False, "here")]:
         monkeypatch.setattr(sys.stdin, "isatty", lambda: isatty, raising=False)

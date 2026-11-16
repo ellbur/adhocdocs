@@ -32,7 +32,10 @@ COPY container/audit-hook /usr/local/bin/adhoc-audit-hook
 RUN useradd --create-home --uid 1000 --shell /bin/bash adhoc
 USER adhoc
 ENV HOME=/home/adhoc PATH=/home/adhoc/.local/bin:$PATH
-RUN curl -fsSL https://claude.ai/install.sh | bash
+# A version, to pin one (recorded sessions replay against the version that recorded them);
+# empty for the latest.
+ARG CLAUDE_CODE_VERSION=
+RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION}
 
 WORKDIR /matter/workspace
 ENTRYPOINT ["/usr/local/bin/adhoc-session"]

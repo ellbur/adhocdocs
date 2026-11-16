@@ -96,7 +96,9 @@ def _open(a, container) -> int:
         return 0
     if a.hold and sys.stdout.isatty():
         print(f"\033]0;adhocdocs: {m.root.name}: Claude Code\007", end="", flush=True)      # the terminal window's title
-    code = container.open_session(m, a.user, not a.no_viewer, a.command, terminal)
+    code = container.open_session(m, a.user, not a.no_viewer, a.command, terminal,
+                                  api_socket=Path(a.api_socket).resolve() if a.api_socket else None,
+                                  test_hooks=a.test_hooks)
     if code and a.hold:
         print(f"\nThe session ended with exit status {code}.", file=sys.stderr)
         _hold()
@@ -169,6 +171,9 @@ def adhoc(argv=None):
     s.add_argument("--hold", action="store_true", help="if the session fails, wait for Enter before exiting "
                                                        "(for a terminal window that would close)")
     s.add_argument("command", nargs="*", help="run this instead of claude (after --)")
+    # scripted screenshots only (tools/screenshots): the Claude API on a socket on the host, and a viewer that locates
+    s.add_argument("--api-socket", help=argparse.SUPPRESS)
+    s.add_argument("--test-hooks", action="store_true", help=argparse.SUPPRESS)
     s = sub.add_parser("gui", help="open the launcher: make matters, add documents and open sessions without a command line")
     s.add_argument("--install", action="store_true", help="only add adhocdocs to the desktop's application menu")
     s = sub.add_parser("matters", help="the matters on this user's list (the launcher's), most recent first")

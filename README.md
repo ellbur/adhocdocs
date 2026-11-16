@@ -53,3 +53,5 @@ Or `uv run adhoc gui` for a launcher that does the same.
 ## Design
 
 [docs/DESIGN.md](docs/DESIGN.md)
+
+For details see module docstrings and `--help`.

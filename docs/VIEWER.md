@@ -447,6 +447,13 @@ after a document opens, so wait for `view state` to show the page before
 taking the picture. Rendering is in software, so it is slower than on a
 desktop, but what it shows is the same.
 
+For screenshots taken the same way every time (for documentation, and in
+CI), see [SCREENSHOTS.md](SCREENSHOTS.md). A viewer started with
+`--test-hooks` also answers `locate` (`{"cmd": "locate", "text": …,
+"selector": …, "pane": …}`): where that is on screen, so a script can point
+at it; and its terminal's cursor doesn't blink, so the screen can settle.
+Sessions don't start it that way.
+
 ## Not built yet
 
 - Loose files aren't in the audit log: the viewer copies them in and out

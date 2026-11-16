@@ -65,7 +65,9 @@
       if (w) dock.style.width = w;
       T.term = new Terminal({
         fontFamily: '"DejaVu Sans Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace', fontSize: 13,
-        lineHeight: 1.1, scrollback: 5000, cursorBlink: true, allowProposedApi: true, macOptionIsMeta: true,
+        lineHeight: 1.1, scrollback: 5000, allowProposedApi: true, macOptionIsMeta: true,
+        // a steady cursor for scripted screenshots, so the screen can settle (--test-hooks)
+        cursorBlink: !window.adhoc?.testHooks,
         theme: themeColors(),
       });
       T.fit = new FitAddon.FitAddon();

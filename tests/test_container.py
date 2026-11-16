@@ -65,6 +65,19 @@ def test_session_args(tmp_path, monkeypatch):
     assert container.slug(m).startswith("adhoc-smith-v-jones-")
 
 
+def test_session_args_with_api_socket(tmp_path, monkeypatch):
+    # recording or replaying for screenshots: the API on a host socket, and no real key in the session
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+    m = Matter.create(tmp_path / "m")
+    args = container.session_args(m, "s1", tmp_path / "run", api_socket=tmp_path / "api.sock")
+    joined = " ".join(args)
+    assert f"{tmp_path / 'api.sock'}:{container.API_SOCKET}" in joined
+    assert f"ANTHROPIC_BASE_URL=http://127.0.0.1:{container.API_PORT}" in joined
+    assert f"ANTHROPIC_API_KEY={container.API_KEY_PLACEHOLDER}" in joined
+    assert "-e ANTHROPIC_API_KEY " not in joined + " " and "sk-secret" not in joined
+    assert "--network none" in joined
+
+
 def test_relay_over_unix_socket(tmp_path):
     async def run():
         async def echo(r, w):
