@@ -297,9 +297,13 @@ def handler_for(rec: Recorder):
                                     "usage": m.get("usage") or {}})
             elif is_messages:
                 detail = whole[:500].decode("utf-8", "replace")
-                rec.problems.append({"kind": "API error", "status": r.status, "detail": detail})
+                # what was asked, to tell why it was refused (nothing secret: no headers' values but the betas)
+                asked = {"request_id": r.getheader("request-id"), "model": body.get("model"),
+                         "max_tokens": body.get("max_tokens"), "speed": body.get("speed"),
+                         "betas": headers.get("anthropic-beta"), "path": path}
+                rec.problems.append({"kind": "API error", "status": r.status, "detail": detail, "asked": asked})
                 rec.fatal.append(f"the Claude API answered {r.status}: {detail}")
-                print(f"    api: {r.status}: {detail}", file=sys.stderr, flush=True)
+                print(f"    api: {r.status}: {detail}\n    api: the request: {json.dumps(asked)}", file=sys.stderr, flush=True)
 
         def do_POST(self):
             self.forward("POST")
