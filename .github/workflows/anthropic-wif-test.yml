@@ -54,6 +54,19 @@ jobs:
           jq 'with_entries(if (.key | test("token$")) then .value = "<redacted>" else . end)' "$RUNNER_TEMP/exchange.json"
           jq -e '.access_token | startswith("sk-ant-oat01-")' "$RUNNER_TEMP/exchange.json" > /dev/null
 
+      - name: The API with a federated token, without and with the OAuth beta
+        # Which one a recorder must send (tools/screenshots/recorder.py): prints each status and error.
+        run: |
+          token=$(jq -r .access_token "$RUNNER_TEMP/exchange.json")
+          ask() {
+            curl -sS -o "$RUNNER_TEMP/out.json" -w "%{http_code}" https://api.anthropic.com/v1/messages \
+              -H "authorization: Bearer $token" -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" "$@" \
+              -d '{"model": "claude-haiku-5-5", "max_tokens": 16, "messages": [{"role": "user", "content": "Say ok."}]}'
+          }
+          echo "without: $(ask) $(jq -c '.error // .content' "$RUNNER_TEMP/out.json")"
+          echo "with oauth-2025-04-20: $(ask -H 'anthropic-beta: oauth-2025-04-20') $(jq -c '.error // .content' "$RUNNER_TEMP/out.json")"
+
       - name: Install Claude Code
         run: |
           curl -fsSL https://claude.ai/install.sh | bash

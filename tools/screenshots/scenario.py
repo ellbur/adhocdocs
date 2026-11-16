@@ -110,12 +110,18 @@ class Session:
         steps.v.screen.xdotool("type", "--delay", steps.typing_delay_ms if steps.pointer.human else 5, text)
         time.sleep(0.4 if steps.pointer.human else 0.1)
         steps.v.screen.xdotool("key", "Return")
-        t = time.time()
+        t = said = time.time()
         while not self.api.turn_end.wait(1):
+            if self.api.fatal:
+                raise Failed(self.api.fatal[0])
             if not steps.v.alive():
                 raise Failed("the session ended while Claude was answering")
             if time.time() - t > self.turn_limit:
                 raise Failed(f"Claude's answer to {text[:40]!r} didn't finish within {self.turn_limit:.0f} s")
+            if time.time() - said >= 60:
+                said = time.time()
+                n = getattr(self.api, "requests", getattr(self.api, "n", 0))
+                log(f"    still waiting for Claude: {time.time() - t:.0f} s, {n} API requests so far")
         steps.v.screen.settle(least=0.5, quiet=1.5, limit=30)
 
 
@@ -295,6 +301,12 @@ def main():
         except Failed as e:
             log(f"  failed: {e}")
             failed.append(name)
+            # the logs' ends, here, so CI's log says what happened without the artifact
+            for f in (f"{name}.api.log", f"{name}.viewer.log", f"{name}.run-viewer.log", f"{name}.run-proxy.log"):
+                if (out / f).exists():
+                    lines = (out / f).read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+                    if lines:
+                        log(f"  --- {f} (end)\n" + "\n".join("    " + x[:300] for x in lines))
             continue
         if record:
             if report["problems"]:

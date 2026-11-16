@@ -195,6 +195,7 @@ class Replay:
         self.lock = threading.Lock()
         self.log = open(log_path, "a", encoding="utf-8") if log_path else None
         self.n = 0
+        self.fatal: list[str] = []         # (the recorder's: a replay always answers)
         # set when a main-conversation answer that doesn't call a tool has been sent: Claude's turn is over
         self.turn_end = threading.Event()
         self.aliases: dict[str, str] = {}     # host paths -> what a session sees (/matter)

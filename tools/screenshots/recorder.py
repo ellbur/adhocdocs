@@ -23,6 +23,7 @@ The credential, the first that is there:
 import http.client
 import json
 import os
+import sys
 import threading
 import time
 import urllib.request
@@ -39,6 +40,10 @@ def connect(timeout: float) -> http.client.HTTPConnection:
     scheme, _, host = UPSTREAM.partition("://")
     return (http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection)(host, timeout=timeout)
 AUDIENCE = "https://api.anthropic.com"
+# A federated token is an OAuth access token (sk-ant-oat01-…): the API takes it with this beta
+# on each request, and the exchange with the federation one too (as Claude Code sends them).
+OAUTH_BETA = "oauth-2025-04-20"
+FEDERATION_BETA = "oidc-federation-2026-04-01"
 DROP_HEADERS = {"host", "content-length", "connection", "authorization", "x-api-key", "accept-encoding",
                 "proxy-connection", "keep-alive", "transfer-encoding"}
 
@@ -86,7 +91,8 @@ class Credential:
                 if self.fed["ANTHROPIC_WORKSPACE_ID"]:
                     body["workspace_id"] = self.fed["ANTHROPIC_WORKSPACE_ID"]
                 c = connect(30)
-                c.request("POST", "/v1/oauth/token", json.dumps(body), {"content-type": "application/json"})
+                c.request("POST", "/v1/oauth/token", json.dumps(body),
+                          {"content-type": "application/json", "anthropic-beta": f"{OAUTH_BETA},{FEDERATION_BETA}"})
                 r = c.getresponse()
                 data = json.loads(r.read() or b"{}")
                 if r.status != 200 or not data.get("access_token"):
@@ -167,6 +173,8 @@ class Recorder:
         self.turn_end = threading.Event()
         self.aliases: dict[str, str] = {}
         self.problems: list[dict] = []
+        self.fatal: list[str] = []         # the API or the credential refused: no answer is coming
+        self.requests = 0
         self.lock = threading.Lock()
         self.log = open(log_path, "a", encoding="utf-8") if log_path else None
 
@@ -220,9 +228,16 @@ def handler_for(rec: Recorder):
             headers["accept-encoding"] = "identity"
             try:
                 headers.update(rec.cred.headers())
+                if rec.cred.kind != "API key":
+                    betas = [b.strip() for k, v in headers.items() if k.lower() == "anthropic-beta"
+                             for b in v.split(",") if b.strip()]
+                    headers = {k: v for k, v in headers.items() if k.lower() != "anthropic-beta"}
+                    headers["anthropic-beta"] = ",".join(dict.fromkeys(betas + [OAUTH_BETA]))
             except Exception as e:
                 rec.problems.append({"kind": "credential", "detail": str(e)})
+                rec.fatal.append(f"signing in ({rec.cred.kind}): {e}")
                 rec.note(error=str(e))
+                print(f"    api: signing in failed: {e}", file=sys.stderr, flush=True)
                 body = json.dumps({"type": "error", "error": {"type": "authentication_error",
                                                               "message": f"recorder: {e}"}}).encode()
                 self.send_response(401)
@@ -231,9 +246,21 @@ def handler_for(rec: Recorder):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            up = connect(900)
-            up.request(method, path, raw or None, headers)
-            r = up.getresponse()
+            try:
+                up = connect(900)
+                up.request(method, path, raw or None, headers)
+                r = up.getresponse()
+            except OSError as e:
+                rec.fatal.append(f"couldn't reach {UPSTREAM}: {e}")
+                print(f"    api: couldn't reach {UPSTREAM}: {e}", file=sys.stderr, flush=True)
+                body = json.dumps({"type": "error", "error": {"type": "api_error",
+                                                              "message": f"recorder: {e}"}}).encode()
+                self.send_response(502)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             ctype = r.getheader("content-type", "")
             self.send_response(r.status)
             for k in ("content-type", "request-id", "retry-after", "anthropic-ratelimit-requests-remaining"):
@@ -256,8 +283,11 @@ def handler_for(rec: Recorder):
                     msg.feed(chunk)
                 elif is_messages:
                     whole += chunk
-            rec.note(method=method, path=path.split("?")[0], status=r.status,
-                     main=fakeapi.is_main(body) if is_messages else None)
+            rec.requests += 1
+            kind = ("main" if fakeapi.is_main(body) else "side") if is_messages else ""
+            rec.note(method=method, path=path.split("?")[0], status=r.status, main=kind == "main" if kind else None)
+            # in the job's log, so a failed recording says why without its artifact
+            print(f"    api: {method} {path.split('?')[0]} {r.status} {kind}".rstrip(), file=sys.stderr, flush=True)
             if is_messages and r.status == 200:
                 if msg:
                     rec.keep(body, msg.result())
@@ -266,7 +296,14 @@ def handler_for(rec: Recorder):
                     rec.keep(body, {"content": m.get("content", []), "stop_reason": m.get("stop_reason"),
                                     "usage": m.get("usage") or {}})
             elif is_messages:
-                rec.problems.append({"kind": "API error", "status": r.status, "detail": whole[:500].decode("utf-8", "replace")})
+                detail = whole[:500].decode("utf-8", "replace")
+                # what was asked, to tell why it was refused (nothing secret: no headers' values but the betas)
+                asked = {"request_id": r.getheader("request-id"), "model": body.get("model"),
+                         "max_tokens": body.get("max_tokens"), "speed": body.get("speed"),
+                         "betas": headers.get("anthropic-beta"), "path": path}
+                rec.problems.append({"kind": "API error", "status": r.status, "detail": detail, "asked": asked})
+                rec.fatal.append(f"the Claude API answered {r.status}: {detail}")
+                print(f"    api: {r.status}: {detail}\n    api: the request: {json.dumps(asked)}", file=sys.stderr, flush=True)
 
         def do_POST(self):
             self.forward("POST")
