@@ -176,6 +176,7 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
                    "CLAUDE_CONFIG_DIR": str(m.root / "claude-home"), "ADHOC_MATTER": str(m.root),
                    "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}", "ANTHROPIC_API_KEY": key,
                    "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                   "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",       # as in the container (container.API_ENV)
                    "DISABLE_TELEMETRY": "1"}
             (here / "claude-user").mkdir(exist_ok=True)
             sock = here / "viewer.sock"
