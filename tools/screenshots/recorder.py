@@ -246,9 +246,10 @@ def diagnose(body: dict, headers: dict, path: str):
     capped at 16 tokens (each costs next to nothing), and print which go through, so the job's
     log says what about the request is refused."""
     system = system_text(body)
+    agent = next((v for k, v in headers.items() if k.lower() == "user-agent"), "")
     print(f"    api: diagnosing: system prompt {len(system)} chars, starting {system[:100]!r}; "
-          f"{len(body.get('tools') or [])} tools; metadata {sorted((body.get('metadata') or {}))}",
-          file=sys.stderr, flush=True)
+          f"{len(body.get('tools') or [])} tools; metadata {sorted((body.get('metadata') or {}))}; "
+          f"user agent {agent!r}", file=sys.stderr, flush=True)
     first_line = system.split("\n", 1)[0]
     marker = "x-anthropic-billing-header:"
     blocks = body.get("system")
@@ -256,8 +257,18 @@ def diagnose(body: dict, headers: dict, path: str):
         unmarked = [b for b in blocks if not (isinstance(b, dict) and str(b.get("text", "")).startswith(marker))]
     else:
         unmarked = re.sub(r"^x-anthropic-billing-header:[^\n]*?cc_entrypoint=[^;]*;\s*", "", system)
+    # The entry point: interactive Claude Code says `cli` (in the marker and its user agent), a
+    # headless one (claude -p, which goes through with federation) `sdk-cli`.
+    def headless(s):
+        return s.replace("cc_entrypoint=cli;", "cc_entrypoint=sdk-cli;") if isinstance(s, str) else s
+    blocks_headless = ([{**b, "text": headless(b.get("text"))} if isinstance(b, dict) else b for b in blocks]
+                       if isinstance(blocks, list) else headless(blocks))
+    agent_headless = {"user-agent": agent.replace(", cli)", ", sdk-cli)")} if agent else {}
     variants = {
         "as sent": {},
+        "entry point sdk-cli in the marker": {"system": blocks_headless},
+        "entry point sdk-cli in the user agent": {"_headers": agent_headless},
+        "entry point sdk-cli in both": {"system": blocks_headless, "_headers": agent_headless},
         "without the billing marker": {"system": unmarked or None},
         "without the system prompt": {"system": None},
         "without the tools": {"tools": None},
@@ -271,14 +282,18 @@ def diagnose(body: dict, headers: dict, path: str):
         b = {**body, "stream": False, "max_tokens": 16}
         b.pop("thinking", None)
         b.pop("context_management", None)
+        h = {k: v for k, v in headers.items() if not (change.get("_headers") and k.lower() == "user-agent")}
+        h.update(change.get("_headers") or {})
         for k, v in change.items():
+            if k == "_headers":
+                continue
             if v is None:
                 b.pop(k, None)
             else:
                 b[k] = v
         try:
             c = connect(120)
-            c.request("POST", path, json.dumps(b), {**headers, "content-type": "application/json"})
+            c.request("POST", path, json.dumps(b), {**h, "content-type": "application/json"})
             r = c.getresponse()
             data = json.loads(r.read() or b"{}")
             said = (data.get("error") or {}).get("message") or "".join(
