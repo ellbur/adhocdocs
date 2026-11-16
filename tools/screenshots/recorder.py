@@ -23,6 +23,7 @@ The credential, the first that is there:
 import http.client
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -194,6 +195,7 @@ class Recorder:
         self.aliases: dict[str, str] = {}
         self.problems: list[dict] = []
         self.fatal: list[str] = []         # the API or the credential refused: no answer is coming
+        self.diagnosed = False
         self.requests = 0
         self.lock = threading.Lock()
         self.log = open(log_path, "a", encoding="utf-8") if log_path else None
@@ -231,6 +233,59 @@ class Recorder:
         return {"version": 1, "claude_code": claude_code, "model": self.model,
                 "recorded": time.strftime("%Y-%m-%d"), **({"note": note} if note else {}),
                 "turns": self.turns, "side": self.side}
+
+
+def system_text(body: dict) -> str:
+    s = body.get("system") or ""
+    return s if isinstance(s, str) else " ".join(b.get("text", "") for b in s if isinstance(b, dict))
+
+
+def diagnose(body: dict, headers: dict, path: str):
+    """A federated request refused for "credit balance too low" (as Claude Code's are, while
+    plainer ones with the same token go through): send it again a few ways, non-streaming and
+    capped at 16 tokens (each costs next to nothing), and print which go through, so the job's
+    log says what about the request is refused."""
+    system = system_text(body)
+    print(f"    api: diagnosing: system prompt {len(system)} chars, starting {system[:100]!r}; "
+          f"{len(body.get('tools') or [])} tools; metadata {sorted((body.get('metadata') or {}))}",
+          file=sys.stderr, flush=True)
+    first_line = system.split("\n", 1)[0]
+    marker = "x-anthropic-billing-header:"
+    blocks = body.get("system")
+    if isinstance(blocks, list):
+        unmarked = [b for b in blocks if not (isinstance(b, dict) and str(b.get("text", "")).startswith(marker))]
+    else:
+        unmarked = re.sub(r"^x-anthropic-billing-header:[^\n]*?cc_entrypoint=[^;]*;\s*", "", system)
+    variants = {
+        "as sent": {},
+        "without the billing marker": {"system": unmarked or None},
+        "without the system prompt": {"system": None},
+        "without the tools": {"tools": None},
+        "without the metadata": {"metadata": None},
+        "without system prompt and tools": {"system": None, "tools": None},
+        "system prompt: its first line only": {"system": first_line},
+        "system prompt: all but its first line": {"system": system[len(first_line):].strip() or None},
+        "Haiku instead": {"model": "claude-haiku-5-5"},
+    }
+    for label, change in variants.items():
+        b = {**body, "stream": False, "max_tokens": 16}
+        b.pop("thinking", None)
+        b.pop("context_management", None)
+        for k, v in change.items():
+            if v is None:
+                b.pop(k, None)
+            else:
+                b[k] = v
+        try:
+            c = connect(120)
+            c.request("POST", path, json.dumps(b), {**headers, "content-type": "application/json"})
+            r = c.getresponse()
+            data = json.loads(r.read() or b"{}")
+            said = (data.get("error") or {}).get("message") or "".join(
+                x.get("text", "") for x in data.get("content", []) if isinstance(x, dict))
+            print(f"    api: diagnosing: {label}: {r.status} {said[:120]!r}", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"    api: diagnosing: {label}: {e}", file=sys.stderr, flush=True)
 
 
 def handler_for(rec: Recorder):
@@ -316,8 +371,11 @@ def handler_for(rec: Recorder):
                          "max_tokens": body.get("max_tokens"), "speed": body.get("speed"),
                          "betas": headers.get("anthropic-beta"), "path": path}
                 rec.problems.append({"kind": "API error", "status": r.status, "detail": detail, "asked": asked})
-                rec.fatal.append(f"the Claude API answered {r.status}: {detail}")
                 print(f"    api: {r.status}: {detail}\n    api: the request: {json.dumps(asked)}", file=sys.stderr, flush=True)
+                if "credit balance" in detail and rec.cred.kind != "API key" and not rec.diagnosed:
+                    rec.diagnosed = True
+                    diagnose(body, headers, path)      # before the scenario stops on the error below
+                rec.fatal.append(f"the Claude API answered {r.status}: {detail}")
 
         def do_POST(self):
             self.forward("POST")

@@ -76,6 +76,9 @@ API_ENV = {
     "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
     "DISABLE_AUTOUPDATER": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    # No claude.ai billing marker at the head of the system prompt: it's for a claude.ai login,
+    # and a recorder's federated token with it is refused for "credit balance too low".
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
 }
 
 ACCOUNT_NOTICE = """\
