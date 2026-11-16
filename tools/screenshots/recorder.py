@@ -44,6 +44,26 @@ AUDIENCE = "https://api.anthropic.com"
 # on each request, and the exchange with the federation one too (as Claude Code sends them).
 OAUTH_BETA = "oauth-2025-04-20"
 FEDERATION_BETA = "oidc-federation-2026-04-01"
+# Betas Claude Code sends, believing it has an API key, that a federated token's request is refused
+# for: with `claude-code-20250219`, the API answers "Your credit balance is too low" though the
+# organization has credit (anthropic-wif-test.yml tries each beta alone). Claude Code signing in
+# with federation itself doesn't run into it.
+FEDERATED_DROP_BETAS = {"claude-code-20250219"}
+
+
+def upstream_headers(incoming: dict, credential: dict, federated: bool) -> dict:
+    """The headers a request goes to the API with: the client's, less hop-by-hop ones and its
+    own credential, plus ours; and for a federated token, the OAuth beta and not the betas
+    it's refused for."""
+    headers = {k: v for k, v in incoming.items() if k.lower() not in DROP_HEADERS}
+    headers["accept-encoding"] = "identity"
+    headers.update(credential)
+    if federated:
+        betas = [b.strip() for k, v in headers.items() if k.lower() == "anthropic-beta"
+                 for b in v.split(",") if b.strip() and b.strip() not in FEDERATED_DROP_BETAS]
+        headers = {k: v for k, v in headers.items() if k.lower() != "anthropic-beta"}
+        headers["anthropic-beta"] = ",".join(dict.fromkeys(betas + [OAUTH_BETA]))
+    return headers
 DROP_HEADERS = {"host", "content-length", "connection", "authorization", "x-api-key", "accept-encoding",
                 "proxy-connection", "keep-alive", "transfer-encoding"}
 
@@ -224,15 +244,9 @@ def handler_for(rec: Recorder):
             n = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(n) if n else b""
             path = self.path
-            headers = {k: v for k, v in self.headers.items() if k.lower() not in DROP_HEADERS}
-            headers["accept-encoding"] = "identity"
             try:
-                headers.update(rec.cred.headers())
-                if rec.cred.kind != "API key":
-                    betas = [b.strip() for k, v in headers.items() if k.lower() == "anthropic-beta"
-                             for b in v.split(",") if b.strip()]
-                    headers = {k: v for k, v in headers.items() if k.lower() != "anthropic-beta"}
-                    headers["anthropic-beta"] = ",".join(dict.fromkeys(betas + [OAUTH_BETA]))
+                headers = upstream_headers(dict(self.headers.items()), rec.cred.headers(),
+                                           federated=rec.cred.kind != "API key")
             except Exception as e:
                 rec.problems.append({"kind": "credential", "detail": str(e)})
                 rec.fatal.append(f"signing in ({rec.cred.kind}): {e}")

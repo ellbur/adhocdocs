@@ -254,6 +254,15 @@ thinking blocks, whose text Claude Code doesn't show), the prompts, and what
 each tool printed. Not the requests themselves: no system prompt, no
 credential.
 
+**One beta is left out.** In a recording, Claude Code believes it has an
+API key and sends the betas it sends with one, among them
+`claude-code-20250219`. With a federated token, a request carrying that
+beta is refused, "Your credit balance is too low to access the Anthropic
+API", though the organization has credit; every other beta goes through
+(`anthropic-wif-test.yml` tries each alone). So the recorder sends federated
+requests without it, and with the OAuth beta that such a token goes with.
+Claude Code signing in with federation itself doesn't meet this.
+
 `anthropic-wif-test.yml` checked that federation works for a job in the
 `recording` environment and that Claude Code signs in with it; it can go
 once a recording has been made.
