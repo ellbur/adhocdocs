@@ -145,6 +145,7 @@ because Claude never typed it.
 The design docs keep the reasons and decisions. Formats, schemas and usage
 live with the code: module docstrings and `--help`.
 
+- [GUIDE.md](GUIDE.md): prompts to try, and the tools used directly
 - [TOOLS.md](TOOLS.md): the tools, and which are built
 - [LOCATORS.md](LOCATORS.md): naming documents and places in them
 - [TEXTLAYERS.md](TEXTLAYERS.md): extracted text and its structure
