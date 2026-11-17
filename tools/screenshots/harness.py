@@ -231,6 +231,17 @@ class Pointer:
         if self.human:
             time.sleep(0.1)
 
+    def drag(self, x0: float, y0: float, x1: float, y1: float):
+        """Press at one point, move to the other, release: selecting text."""
+        self.move(x0, y0)
+        if self.human:
+            time.sleep(0.15)
+        self.screen.xdotool("mousedown", 1)
+        self.move(x1, y1)
+        self.screen.xdotool("mouseup", 1)
+        if self.human:
+            time.sleep(0.1)
+
     def wheel(self, notches: int):
         """Scroll at the pointer: positive is down."""
         button = 5 if notches > 0 else 4
@@ -325,17 +336,22 @@ class Viewer:
             self.screen.settle(least=0.2, quiet=0.3, limit=5)
             self.screen.xdotool("windowsize", w, self.screen.w, self.screen.h)
 
-    def locate(self, target: dict) -> tuple[float, float]:
-        """Where on the screen a target is: ``{text, selector, pane, nth,
-        scroll, at}`` (``at``: [fx, fy], a point inside its box as fractions;
-        the middle by default)."""
+    def box(self, target: dict) -> dict:
+        """A target's box on the screen ({x, y, width, height}): ``{text,
+        selector, pane, nth, scroll}``. The windows fill the screen from its
+        top left, so the window's CSS pixels are the screen's."""
         q = {k: v for k, v in target.items() if k in ("text", "selector", "pane", "nth", "scroll")}
         r = self.command({"cmd": "locate", **q})
         if target.get("scroll"):
             self.screen.settle(least=0.3, quiet=0.3, limit=5)
             r = self.command({"cmd": "locate", **{**q, "scroll": False}})
+        return r
+
+    def locate(self, target: dict) -> tuple[float, float]:
+        """Where on the screen a target is: a point inside its box (``at``:
+        [fx, fy] as fractions of it; the middle by default)."""
+        r = self.box(target)
         fx, fy = target.get("at", [0.5, 0.5])
-        # The windows fill the screen from its top left, so the window's CSS pixels are the screen's.
         return r["x"] + r["width"] * fx, r["y"] + r["height"] * fy
 
     def close(self):
@@ -356,6 +372,7 @@ STEPS_DOC = """Steps: each a table with one of these keys.
     key = "bracketright"          keys, as xdotool names them (space-separated for several)
     type = "text"                 typed into whatever has focus
     click = TARGET                a left click (double = true: a double click)
+    select = TARGET               the target's text selected, by dragging across it
     hover = TARGET                the pointer there, then a pause while a hover card comes up (wait = seconds)
     wheel = 3                     scroll at the pointer, notches (negative: up)
     pause = 0.5                   seconds (sleep = … is the same)
@@ -389,7 +406,7 @@ class Steps:
 
     def run(self, step: dict):
         kinds = [k for k in step if k in ("view", "sh", "key", "type", "click", "hover", "move", "wheel",
-                                          "pause", "sleep", "prompt", "shot")]
+                                          "select", "pause", "sleep", "prompt", "shot")]
         if len(kinds) != 1:
             raise Failed(f"a step has one of the step keys: {step}")
         kind = kinds[0]
@@ -415,6 +432,13 @@ class Steps:
             self.pointer.move(*self.where(arg))
             if kind == "hover":
                 time.sleep(float(step.get("wait", 1.0)))
+        elif kind == "select":
+            # Drag across the text, from just inside its left edge to just inside its right one.
+            if not isinstance(arg, dict):
+                raise Failed("select takes a target found by text or selector, not a point")
+            b = self.v.box({k: expand(v, self.ids) if isinstance(v, str) else v for k, v in arg.items()})
+            y = b["y"] + b["height"] / 2
+            self.pointer.drag(b["x"] + 1, y, b["x"] + b["width"] - 1, y)
         elif kind == "wheel":
             self.pointer.wheel(int(arg))
         elif kind in ("pause", "sleep"):

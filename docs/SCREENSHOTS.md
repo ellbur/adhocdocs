@@ -33,10 +33,18 @@ hash. `--only NAME …` takes some of them. `--matter DIR` keeps the sample
 matter in DIR and reuses it next time.
 
 In CI, the **Screenshots** workflow takes the stills and replays every
-scenario on pushes and pull requests that touch the viewer, the Python
-code, the container, the corpus or `tools/screenshots/`, and on demand
-(*Run workflow*). The pictures and videos are the run's `screenshots`
-artifact.
+scenario:
+
+- **once a week** (Monday morning, UTC), if `main` has changed since the
+  last successful run;
+- on merges to `main` and pull requests that add or change a scenario
+  (`tools/screenshots/scenarios/`), so a new one is checked before it's
+  merged;
+- and on demand (*Run workflow*).
+
+Other changes don't start it, so a change that makes a recording stale is
+found by the next weekly run. The pictures and videos are the run's
+`screenshots` artifact.
 
 ## Writing a shot
 
@@ -64,6 +72,7 @@ steps = [
 | `type = "text"` | text typed into whatever has focus |
 | `click = TARGET` | a click there (`double = true` beside it: a double click) |
 | `hover = TARGET` | the pointer there, then a pause for a hover card (`wait = 1.5` beside it) |
+| `select = TARGET` | a drag across it, selecting its text (a `text` target selects just that text) |
 | `wheel = 3` | scrolling at the pointer, in notches (negative: up) |
 | `pause = 0.5` | a pause |
 | `prompt = "…"` | (scenarios) typed at Claude's prompt, then Enter; waits for the answer |
@@ -158,8 +167,8 @@ podman build --build-arg CLAUDE_CODE_VERSION="$(cat tools/screenshots/claude-cod
 ```
 
 `--direct` runs the `claude` on this machine in the viewer's terminal
-instead of the container: quicker for working on a scenario, but not what
-users run. `--fast` drops the human pacing, for a quick check.
+instead of the container, with the matter's annotation API beside it as
+a session has: quicker for working on a scenario, but not what users run. `--fast` drops the human pacing, for a quick check.
 
 A scenario file is its steps (above) with `prompt` steps among them:
 
@@ -183,6 +192,22 @@ wait = 1.5
 
 [[step]]
 shot = "date-card"
+```
+
+**Starting later in the session.** The video starts at the first
+`[[step]]`: Claude Code starting up isn't in it. `[[setup]]` steps, before
+them, run off camera, quickly (prompts typed at once, answers not paced):
+use them for work the scenario needs done but isn't about, such as Claude
+writing the chronology a timeline scenario then shows. Their turns are
+recorded and checked like the rest. `lead = 0.8` is how long the video
+holds before the first step.
+
+```toml
+[[setup]]
+prompt = "Write a chronology of the key events about the Q-3 pallet, as a list with dates."
+
+[[step]]
+prompt = "Show it to me as a timeline."
 ```
 
 **How a scenario's session is set up**, the same for recording and replay:
@@ -244,7 +269,7 @@ this repository, by its Claude, and checked by running them:
 4. **Look** at the video and the stills, and at what the tools printed;
    change the steps or Claude's side, and run it again.
 5. **Commit.** The Screenshots workflow replays it in the session
-   container on every change; if a tool prints anything else there (paths
+   container on the pull request, then weekly; if a tool prints anything else there (paths
    are read as `/matter`), the scenario is stale and fails.
 
 Write it again when the Screenshots workflow says a scenario is stale,

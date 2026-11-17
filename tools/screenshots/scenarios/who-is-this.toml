@@ -1,0 +1,44 @@
+# The entity layer's main loop: select a name you don't know, ask Claude
+# "Who's this?", and Claude looks the person up, answers, and records them as
+# an entity, so the name is underlined from then on and hovering it says who
+# it is.
+caption = "Asking Claude who someone is: it answers, and the name is marked from then on."
+
+[screen]
+size = [1600, 1000]
+
+[pace]
+think = 1.2
+cps = 180
+typing_ms = 45
+
+# Off camera: the user has the Dock 4 camera review notes open.
+[[setup]]
+view = ["open", "{doc:kettering-t/dock4-camera-review-notes.txt}", "--new-pane"]
+
+[[step]]
+pause = 1.0
+
+[[step]]
+select = { text = "Jose Ibanez", pane = { kind = "document" } }
+
+[[step]]
+pause = 0.8
+
+[[step]]
+prompt = "Who's this?"
+
+[[step]]
+shot = "answer"
+caption = "Claude read the selection, looked him up across the documents, and recorded him as an entity."
+
+[[step]]
+hover = { text = "Jose Ibanez", pane = { kind = "document" } }
+wait = 1.8
+
+[[step]]
+shot = "entity-card"
+caption = "His name is now underlined: hovering it shows who he is and what Claude said."
+
+[[step]]
+pause = 1.5
