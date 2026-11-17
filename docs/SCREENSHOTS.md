@@ -8,10 +8,8 @@ Code beside it, replayed from recordings with no sign-in
 [`fakeapi.py`](../tools/screenshots/fakeapi.py), from
 [`scenarios/`](../tools/screenshots/scenarios)), locally or in CI
 ([`.github/workflows/screenshots.yml`](../.github/workflows/screenshots.yml)).
-Recording them is built too
-([`recorder.py`](../tools/screenshots/recorder.py), and the **Record
-sessions** workflow,
-[`record-sessions.yml`](../.github/workflows/record-sessions.yml)).*
+Recordings are written in a development session and only replayed in CI:
+see [Writing a recording](#writing-a-recording).*
 
 Screenshots for documentation should show the current version of the
 software, and show it the same way every time, so that a picture changes
@@ -72,10 +70,14 @@ steps = [
 | `shot = "name"` | (scenarios) a still, now (`caption = "…"` beside it) |
 
 A `TARGET` is `[x, y]` on the screen, or what is there:
-`{ text = "Mar 3, 2026", pane = "p3" }`, `{ selector = ".pane-head" }`, or
-both (the text inside those elements), with `nth` (counting from 0, or from
-the end when negative), `scroll = true` to bring it into view first, and
-`at = [fx, fy]` for a point inside its box other than the middle. The
+`{ text = "Mar 3, 2026", pane = { kind = "document" } }`,
+`{ selector = ".pane-head" }`, or both (the text inside those elements),
+with `nth` (counting from 0, or from the end when negative), `scroll =
+true` to bring it into view first, and `at = [fx, fy]` for a point inside
+its box other than the middle. A `pane` is described by its `kind`
+(`document`, `list`, `timeline`, `graph`, `custom`, `home`, `files`) and a
+part of its `title`, the newest that matches (or `nth`), or named by its ID
+(`"p3"`), which depends on what opened first. The
 viewer answers where it is (the `locate` command, only in a viewer started
 with `--test-hooks`), so a step keeps working when the layout moves.
 
@@ -207,65 +209,61 @@ The video of a replay isn't the same byte for byte from run to run
 (encoder timing, Claude Code's own "Worked for 6s"), but what happens in
 it, and when, is.
 
-## Recording
+## Writing a recording
 
-A recording is the same session as a replay, with
-[`recorder.py`](../tools/screenshots/recorder.py) in fakeapi.py's place: it
-forwards Claude Code's requests to the Claude API, streams the answers
-back, and keeps them, with the prompt and tool output that led to each.
-The session still holds no credential; the recorder, on the host, does.
+CI only replays: nothing there talks to Anthropic or holds a credential.
+Recordings are written in a development session, a Claude Code session on
+this repository, by its Claude, and checked by running them:
 
-**In CI** (the usual way): *Actions → Record sessions → Run workflow*,
-optionally naming scenarios (blank: all of them). The job waits for
-someone to approve the `recording` environment, then signs in with
-Workload Identity Federation: GitHub's signed token for this repository's
-`recording` environment, exchanged for a Claude API token that lasts
-minutes. No key is stored anywhere, and no other workflow, branch or fork
-can get one (the federation rule matches that environment only). It
-records, replays what it recorded as a check, and opens a pull request with
-the new recordings; the videos are in the run's `recorded-sessions`
-artifact. Watch them and read what Claude said before merging.
+1. **The steps** (`scenarios/NAME.toml`): the prompts, and what the person
+   then does in the viewer. Point at things by what they are, not where
+   they are (`{ text = "…", pane = { kind = "list" } }`), so the steps
+   survive another layout, or panes opening in another order.
+2. **Claude's side** (`scenarios/NAME.cassette.json`): for each turn, what
+   Claude says and the tool calls it makes, as Claude Code makes them
+   (`Bash`, with a `command` and a `description`), ending each prompt with
+   an answer:
 
-Record again when the Screenshots workflow says a scenario is stale, when
-you add a scenario, and when you move to another Claude Code version
+   ```json
+   {"version": 1, "claude_code": "2.1.325", "model": "claude-opus-5-5",
+    "turns": [
+     {"prompt": "Which documents mention …?", "results": [],
+      "response": {"content": [
+        {"type": "text", "text": "I'll search the matter for it …"},
+        {"type": "tool_use", "id": "toolu_01", "name": "Bash",
+         "input": {"command": "search '…' --list f.list.jsonl > /dev/null && view list f.list.jsonl",
+                   "description": "…"}}], "stop_reason": "tool_use"}},
+     {"results": [],
+      "response": {"content": [{"type": "text", "text": "Five documents …"}],
+                   "stop_reason": "end_turn"}}]}
+   ```
+3. **Run it** with what the tools print:
+   `scenario.py replay NAME --direct --accept` replays it here, runs every
+   tool call for real, and writes what each printed into the recording
+   (`results`): from then on, what it must print.
+4. **Look** at the video and the stills, and at what the tools printed;
+   change the steps or Claude's side, and run it again.
+5. **Commit.** The Screenshots workflow replays it in the session
+   container on every change; if a tool prints anything else there (paths
+   are read as `/matter`), the scenario is stale and fails.
+
+Write it again when the Screenshots workflow says a scenario is stale,
+and when you move to another Claude Code version
 ([`claude-code-version`](../tools/screenshots/claude-code-version)).
 
-Setting it up, once:
+A recording holds what Claude said and did, the prompts, and what each
+tool printed: no system prompt, no credential.
 
-- In the Claude Console, a federation rule for GitHub Actions whose
-  subject is this repository's `recording` environment
-  (`repo:OWNER@ID/REPO@ID:environment:recording`: GitHub's subject carries
-  the owner's and repository's numeric IDs). Its IDs go in the workflow's
-  `env`; they aren't secrets.
-- In GitHub, the `recording` environment, with required reviewers.
-- In GitHub, Settings → Actions → General → Workflow permissions: *Allow
-  GitHub Actions to create and approve pull requests*.
-- The workflow on the default branch (GitHub offers *Run workflow* only
-  for those).
-
-**Locally**: `scenario.py record NAME` with `ANTHROPIC_API_KEY` set (or
-the federation variables and `ANTHROPIC_IDENTITY_TOKEN_FILE`); it writes
-`scenarios/NAME.cassette.json`. Recordings made in CI are the reference,
-since tool output (paths in particular) is what replays are checked
-against.
-
-**What a recording holds**: the model's answers (text, tool calls, and
-thinking blocks, whose text Claude Code doesn't show), the prompts, and what
-each tool printed. Not the requests themselves: no system prompt, no
-credential.
-
-**One beta is left out.** In a recording, Claude Code believes it has an
-API key and sends the betas it sends with one, among them
-`claude-code-20250219`. With a federated token, a request carrying that
-beta is refused, "Your credit balance is too low to access the Anthropic
-API", though the organization has credit; every other beta goes through
-(`anthropic-wif-test.yml` tries each alone). So the recorder sends federated
-requests without it, and with the OAuth beta that such a token goes with.
-Claude Code signing in with federation itself doesn't meet this.
-
-`anthropic-wif-test.yml` checked that federation works for a job in the
-`recording` environment and that Claude Code signs in with it; it can go
-once a recording has been made.
+**Recording from the API** ([`recorder.py`](../tools/screenshots/recorder.py),
+`scenario.py record NAME`) is there for when a key is at hand
+(`ANTHROPIC_API_KEY`): the same session, with the Claude API answering
+through the recorder, which holds the key outside the session. It was
+tried in CI with Workload Identity Federation and set aside: every request
+that identified as interactive Claude Code was refused, "Your credit
+balance is too low to access the Anthropic API", though the workspace had
+credit, while the same request as headless Claude Code went through
+(reported on
+[anthropics/claude-code-action#1888](https://github.com/anthropics/claude-code-action/issues/1888)).
 
 ## Not built yet
 

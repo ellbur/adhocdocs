@@ -47,7 +47,7 @@ OAUTH_BETA = "oauth-2025-04-20"
 FEDERATION_BETA = "oidc-federation-2026-04-01"
 # Betas Claude Code sends, believing it has an API key, that a federated token's request is refused
 # for: with `claude-code-20250219`, the API answers "Your credit balance is too low" though the
-# organization has credit (anthropic-wif-test.yml tries each beta alone). Claude Code signing in
+# organization has credit (a test tried each beta alone). Claude Code signing in
 # with federation itself doesn't run into it.
 FEDERATED_DROP_BETAS = {"claude-code-20250219"}
 

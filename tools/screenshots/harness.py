@@ -363,8 +363,9 @@ STEPS_DOC = """Steps: each a table with one of these keys.
     shot = "name"                 (scenarios) a still picture now
 
 A TARGET is [x, y] on the screen, or a table that finds it:
-{text = "…", selector = "css", pane = "p2", nth = 0, scroll = false, at = [0.5, 0.5]}
-(viewer `locate`: the text, an element, or the text within elements).
+{text = "…", selector = "css", pane = {kind = "list", title = "…"}, nth = 0, scroll = false,
+at = [0.5, 0.5]} (viewer `locate`: the text, an element, or the text within elements; a pane by
+its kind and part of its title, the newest that matches, or by its ID, "p2").
 Other keys in a step's table go with it: { click = {...}, double = true }.
 """
 

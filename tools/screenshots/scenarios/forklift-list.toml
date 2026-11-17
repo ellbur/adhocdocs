@@ -17,17 +17,19 @@ prompt = "Which documents mention the forklift recertification? Show them to me 
 shot = "answer"
 caption = "Claude searched, and opened what it found as a list beside the chat."
 
+# Panes by what they are, not their IDs (which depend on what opened first):
+# the list Claude opened, and then the email that opens beside it.
 [[step]]
-hover = { text = "Dock 4 forklift recertification", pane = "p2" }
+hover = { text = "Dock 4 forklift recertification", pane = { kind = "list" } }
 
 [[step]]
-click = { text = "Dock 4 forklift recertification", pane = "p2" }
+click = { text = "Dock 4 forklift recertification", pane = { kind = "list" } }
 
 [[step]]
 pause = 1.5
 
 [[step]]
-hover = { text = "Mar 3, 2026", pane = "p3" }
+hover = { text = "Mar 3, 2026", pane = { kind = "document", title = "Dock 4" } }
 wait = 1.5
 
 [[step]]
