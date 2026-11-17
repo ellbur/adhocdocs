@@ -28,9 +28,9 @@ jobs:
     timeout-minutes: 120
     env:
       # Not secrets: they name the federation rule; GitHub's signed token is what proves who we are.
-      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01LFv4oFVEoQbBZpvELuVXcy
+      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01RQ8H1TGq1jrpQPU1USQNVc
       ANTHROPIC_ORGANIZATION_ID: 4058960a-0194-49f4-9aba-c1ecd72eee63
-      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01S3T4sHCaBQrxS26ZShCG6Z
+      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01GW7npfayKyshbYHbBo1ptL
       ANTHROPIC_WORKSPACE_ID: wrkspc_01M99kgeArpA3BQJ1iPSuuaP
       SCENARIOS: ${{ inputs.scenarios }}
     steps:
