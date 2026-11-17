@@ -2,13 +2,15 @@
 # virtual screen (tools/screenshots/, docs/SCREENSHOTS.md): still shots of
 # the viewer, then scenarios with Claude Code beside it, replayed from their
 # recordings. Nothing here talks to Anthropic, and nothing needs a secret.
-# Everything is uploaded as the run's "screenshots" artifact, with
-# index.html to look through the stills.
+# Everything is uploaded as the run's "screenshots" artifact. A good run on
+# main is also published on GitHub Pages (https://ellbur.github.io/adhocdocs/):
+# a page with the videos and stills, each file at a fixed address the README
+# shows; a failed run or a pull request leaves the last good one there.
 name: Screenshots
 
 # When: once a week, if main has changed since the last successful run;
-# on merges and pull requests that add or change a scenario (so a new one is
-# checked before it's merged); and by hand (Run workflow).
+# on merges and pull requests that add or change a scenario or this workflow
+# (so a new one is checked before it's merged); and by hand (Run workflow).
 on:
   schedule:
     - cron: "23 9 * * 1"        # Mondays, 09:23 UTC
@@ -16,6 +18,7 @@ on:
     branches: [main]
     paths: &scenarios
       - "tools/screenshots/scenarios/**"
+      - ".github/workflows/screenshots.yml"
   pull_request:
     paths: *scenarios
   workflow_dispatch:
@@ -103,3 +106,29 @@ jobs:
           name: screenshots
           path: screenshots/
           if-no-files-found: warn
+
+      - name: The page
+        run: uv run python tools/screenshots/site.py --from screenshots --out site
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          path: site/
+
+  pages:
+    # Only a good run on main replaces what's published.
+    needs: screenshots
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
