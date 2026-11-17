@@ -2,7 +2,8 @@
 
 *Status: built: [`container/`](../container) (the image),
 [`container.py`](../src/adhocdocs/container.py) (`adhoc open`, `adhoc image
-build`, `adhoc status`) and [`proxy.py`](../src/adhocdocs/proxy.py). The mounts
+build`, `adhoc status`), [`proxy.py`](../src/adhocdocs/proxy.py) and
+[`signin.py`](../src/adhocdocs/signin.py) (signing in with the browser). The mounts
 are listed in `container.py`'s docstring.*
 
 Claude Code can run any code, so the only way to be sure it sees one
@@ -119,10 +120,50 @@ container on both networks. `--network none` is simpler and needs no
 network kernel modules, and the proxy joins the viewer and annotation API as
 a host service on a socket.
 
-**Sign-in:** inside the container, through Anthropic's flow. Claude Code
-shows a URL, the user signs in on the host and pastes back the code. With
-`claude-home/` per matter, this happens **once per matter**. adhocdocs never
-reads, copies or sends what Claude Code writes there. It only provides the
+**Sign-in:** inside the container, through Anthropic's flow, in the user's
+own browser. With `claude-home/` per matter, this happens **once per
+matter**.
+
+Claude Code opens its sign-in page with `$BROWSER`, sending the browser back
+to `http://localhost:<port>/callback`, where it waits. The session has no
+browser and no network, so `$BROWSER` there is `adhoc-browser`, which asks
+the host. The host opens the page in the user's browser if it is Anthropic's
+sign-in page with a callback to localhost, and then answers on that port on
+the host, passing the one callback carrying this sign-in's `state` to Claude
+Code's port in the session (through `svc-signin.sock`, like the viewer's
+services). Without this, or if it fails, Claude Code shows the link and asks
+for the code to be pasted back, as before; the user can always do that.
+
+The host opens the browser **once per `adhoc open`**: the first acceptable
+request is the only one, whether or not it works. A user signed out
+mid-session leaves Claude Code and opens the matter again (or pastes the
+code). This, with what the host passes on, keeps the session from using the
+browser to reach anything or anyone:
+
+- It can show the user only Anthropic's sign-in page, once.
+- The callback goes into the session as a request line and a `Host` header:
+  the browser's cookies and other headers stay on the host. A request
+  without the right `state` (which would end Claude Code's sign-in) and
+  anything but `/callback` are answered by the host and go no further.
+- What the browser gets back is the host's: Claude Code's redirect if it is
+  to an Anthropic site over HTTPS, else a fixed page. Nothing the session
+  writes is shown or run in the browser. Then the port closes.
+- Each step goes in the audit log (`source: signin`), with host names and
+  ports, never the URL's query or the callback's code.
+
+*Our reading:* this doesn't collect, store or intermediate credentials. The
+user signs in on Anthropic's own page in their own browser, and the code it
+issues goes to the unmodified Claude Code that asked for it, which alone
+holds the PKCE verifier needed to use it. Unlike the TLS the proxy passes
+through, the host does see the callback's code as it passes it on (it must
+read the request to check its `state`), but doesn't log or keep it, and
+can't use it. Still, it is the step to check with Anthropic. No sign-in method is
+removed or hidden. It relies on Claude Code using `$BROWSER` and a localhost
+callback, which its documentation doesn't promise; if that changes, sign-in
+falls back to pasting the code.
+
+**What Claude Code keeps:** adhocdocs never reads, copies or sends what
+Claude Code writes in `claude-home/`. It only provides the
 directory, as any computer provides a home. That also keeps transcripts
 (which contain document text) with their matter, and `claude --resume` works
 within a matter. This is the one interpretation the design depends on. If
@@ -202,7 +243,8 @@ session can set them, the session still has no network of its own, its
 ## Decided
 
 - Sign in once per matter, with per-matter `claude-home/`; never once per
-  machine.
+  machine. In the user's own browser, opened by the host once per `adhoc
+  open`; pasting the code always works too.
 - Inform about account types, recommend nothing.
 - Podman, rootless.
 - No network in the session; a host-name-filtering pass-through proxy on the
