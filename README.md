@@ -10,11 +10,13 @@ The idea:
 2. A coding agent can delete files, misquote documents, comingle client matters, and do other undesirable things; so
 3. We enforce a **separation between a ground truth and the coding agent's environment**.
 
+The real work is in the interface: giving the agent tools for presenting data that leave freedom for unexpected situations while remaining verifiable.
+
 The result is maximum **flexibility and power** while ensuring that final work product is **grounded in a pipeline that does not depend on AI**.
 
 <img src="docs/screenshots/chronology-dates.gif" alt="Claude Code beside the viewer: asked to show a chronology it wrote as a timeline, Claude opens it; clicking an event opens the email it rests on, and hovering a date there shows the chronology's events around it">
 
-*Claude shows its chronology as a timeline. An event opens the email it rests on, and a date in that email shows its place among the events.*
+*Chronological linking between documents.*
 
 <table>
 <tr>
@@ -41,16 +43,11 @@ The result is maximum **flexibility and power** while ensuring that final work p
 
 ## Setup
 
-You need [uv](https://docs.astral.sh/uv/). From a clone:
+Using [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv run adhoc setup                       # says what else to install, then builds
-uv run adhoc init ~/matters/demo
-uv run adhoc --matter ~/matters/demo ingest --manifest corpus/manifest.toml
-uv run adhoc open ~/matters/demo         # Claude Code, the viewer, and an audit log
+uv run adhoc gui
 ```
-
-Or `uv run adhoc gui` for a launcher that does the same.
 
 ## Design
 
