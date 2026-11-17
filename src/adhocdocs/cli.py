@@ -2604,6 +2604,16 @@ the user hovers to see what they are and clicks to select one. `view
 selection` then has "entity": {"known": [...]} or {"suggested": {...}}.
 See `ann --help` for the entity list.
 
+When the user asks about a name or a date in what they're reading ("who's
+this?", "what else happened then?"), answer in the viewer as well as in
+words: `view card "José Ibáñez"` opens that entity's card where the
+document names it (the selection, if it does), as if the user had hovered
+it, with its summary, connections and the passages it rests on, so they
+can check what you said against them. Define or edit the entity first if
+the card would be empty or out of date. `view card --at LOC` shows the
+card for the mention or date at LOC; with neither, the selection's. It
+stays until the user moves on (Escape, a click, another name).
+
 Timelines: `view timeline FILE` shows a list file's items by date, in
 lanes (--lanes group, custodian, from, kind). For a chronology, give items
 their own fields "date" (YYYY-MM-DD, YYYY-MM or YYYY) and "event" (the
@@ -2710,6 +2720,13 @@ def view(argv=None):
     s.add_argument("--pane")
     s = sub.add_parser("clear-highlights")
     s.add_argument("--pane")
+    s = sub.add_parser("card", help="show the user an entity's card (or a date's) where the document they're "
+                                    "reading names it, as if they had hovered it: an answer they can check")
+    s.add_argument("entity", nargs="?", help="an entity (ID, name or alias); default: what --at names, "
+                                             "or the user's selection")
+    s.add_argument("--at", metavar="LOC", help="the mention to show it at (a locator to a stretch of text); "
+                                               "default: the selection if it names the entity, else the first in view")
+    s.add_argument("--pane", help="a document pane (default: the focused one)")
     s = sub.add_parser("sequence", help="give a document pane an ordered list to step through")
     s.add_argument("locs", nargs="*", help="locators, a list file (--list), or - for stdin")
     s.add_argument("--list", dest="list_file")
@@ -2830,7 +2847,13 @@ def view(argv=None):
         viewmod.serve(m, a.name, a.command)
         return
     c = {"cmd": a.cmd}
-    if a.cmd in ("open", "highlight"):
+    if a.cmd == "card":
+        if a.entity:
+            from . import entities as entmod
+            from .annotations import Annotations
+            c["entity"] = entmod.resolve(m, a.entity, list(Annotations.load(m).entities.values()))["entity"]
+        c.update(pane=a.pane, loc=loc(a.at) if a.at else None)
+    elif a.cmd in ("open", "highlight"):
         c["loc"] = loc(a.loc)
         c.update(pane=a.pane, label=getattr(a, "label", None))
         if a.cmd == "open":

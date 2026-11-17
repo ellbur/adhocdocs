@@ -1,8 +1,8 @@
 # The entity layer's main loop: select a name you don't know, ask Claude
-# "Who's this?", and Claude looks the person up, answers, and records them as
-# an entity, so the name is underlined from then on and hovering it says who
-# it is.
-caption = "Asking Claude who someone is: it answers, and the name is marked from then on."
+# "Who's this?", and Claude looks the person up, records them as an entity,
+# and answers with their card, open at the name (view card): the summary and
+# the passages it rests on, there to check. The person opens one.
+caption = "Asking Claude who someone is: it answers with the person's card, citing the passages to check."
 
 [screen]
 size = [1600, 1000]
@@ -30,15 +30,25 @@ prompt = "Who's this?"
 
 [[step]]
 shot = "answer"
-caption = "Claude read the selection, looked him up across the documents, and recorded him as an entity."
+caption = "Claude recorded him as an entity and opened his card at his name: a summary, and the passages it rests on."
 
 [[step]]
-hover = { text = "Jose Ibanez", pane = { kind = "document" } }
-wait = 1.8
+pause = 1.2
+
+# checking it: the deposition passage the card cites
+[[step]]
+click = { selector = "#entity-card .ec-see", nth = 1 }
+
+# out of the way of the text, so no card opens under the pointer
+[[step]]
+hover = { selector = ".side-h", pane = { kind = "document" } }
 
 [[step]]
-shot = "entity-card"
-caption = "His name is now underlined: hovering it shows who he is and what Claude said."
+pause = 1.2
+
+[[step]]
+shot = "evidence"
+caption = "A passage the card cites, opened and highlighted: Kettering's deposition."
 
 [[step]]
 pause = 1.5
