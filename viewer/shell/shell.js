@@ -3499,9 +3499,23 @@ const commands = {
 
 // -- locate (scripted screenshots only) -------------------------------------------------------
 
+// A pane named by its ID ("p2"), or described: {kind, title, nth}. kind is the pane's kind
+// (document, list, timeline, graph, custom, home, files), title a part of its title; nth picks
+// among the matches in the order they opened, the newest by default (-1).
+function findPane(spec) {
+  if (typeof spec === "string") return pane(spec);
+  const t = (p) => ($(".pane-title", p.root)?.textContent || "").trim();
+  const hits = adhoc.panes.filter((p) => (!spec.kind || p.kind === spec.kind) &&
+    (!spec.title || t(p).toLowerCase().includes(String(spec.title).toLowerCase())));
+  const p = hits.at(spec.nth ?? -1);
+  if (!p) throw new Error(`no pane like ${JSON.stringify(spec)}; the panes: ` +
+    adhoc.panes.map((x) => `${x.id} ${x.kind} "${t(x)}"`).join(", "));
+  return p;
+}
+
 function locate(c) {
-  const scope = c.pane ? pane(c.pane)?.root : document.body;
-  if (!scope) throw new Error("no pane " + c.pane);
+  const scope = c.pane ? findPane(c.pane)?.root : document.body;
+  if (!scope) throw new Error("no pane " + JSON.stringify(c.pane));
   if (!c.selector && !c.text) throw new Error("locate needs a selector or text");
   const norm = (s) => s.replace(/\s+/g, " ").trim();
   const want = c.text ? norm(c.text) : null;
