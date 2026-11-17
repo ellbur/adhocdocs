@@ -41,7 +41,7 @@ mark inference as inference, and ask the user when the evidence is thin.
 3. **Locators are the currency.** Pass them whole; never edit offsets or quotes.
 4. **Point the user at things.** `view open`/`highlight` what you find and
    `view list` a set. "This" or "what I selected" means `view selection`.
-   Having said who or what something is, record it as an entity, and how it connects as a link (`ann --help`).
+   Having said who or what something is, record it as an entity, and how it connects as a link (`ann --help`); `view card` shows it.
 5. **The user's tags and notes are theirs.** You can't change them; ask.
    Pass `--requested-by user` when the user asked you to tag.
 6. **Panes are static HTML.** Scripts never run; see `view --help`.

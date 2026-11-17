@@ -44,6 +44,17 @@ class Failed(Exception):
     """A shot or scenario can't go on."""
 
 
+def gif(video: Path, path: Path, width=1200, fps=10):
+    """An animated GIF of a video, for a README (GitHub doesn't play a video kept in
+    the repository). Each frame stores only the rectangle that changed, from a palette
+    made of what changes, so a screen recording stays small: about 1 MB for 30 s."""
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(video), "-vf",
+                    f"fps={fps},scale={width}:-1:flags=lanczos,split[a][b];"
+                    "[a]palettegen=stats_mode=diff:max_colors=128[p];"
+                    "[b][p]paletteuse=dither=none:diff_mode=rectangle",
+                    "-loop", "0", str(path)], check=True)
+
+
 def base_env() -> dict:
     return {"TZ": "UTC", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "NO_AT_BRIDGE": "1",
             "FONTCONFIG_FILE": str(HERE / "fonts.conf"),

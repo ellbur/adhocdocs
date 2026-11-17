@@ -78,7 +78,13 @@ An entity is defined (added to the list, with a summary) in three ways:
 1. **The user asks about it.** "Who's this?" Claude answers in the
    conversation, then records the entity with a summary and a recap of the
    answer. This is the main path. The definition is written when someone
-   wanted it, and it carries what Claude found.
+   wanted it, and it carries what Claude found. Then Claude opens the
+   entity's card where the document names it (`view card ENTITY`), as if the
+   user had hovered it. Its summary and the passages it rests on are there to
+   check, a click away, rather than only in the chat. A card Claude opens
+   has a blue outline. It stays until the user moves on: Escape, a click
+   elsewhere, or resting on another name. `view card --at LOC` does the
+   same for a date ("what else happened then?").
 2. **Claude identifies key players** in an analysis (a cast of characters,
    a chronology, a summary of the dispute). It adds the handful that matter,
    ten or so, with a summary each, and says so in a line. It doesn't add

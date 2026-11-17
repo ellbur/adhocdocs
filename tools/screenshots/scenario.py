@@ -33,7 +33,7 @@ from pathlib import Path
 import fakeapi
 import recorder
 from harness import (BIN, HERE, REPO, STEPS_DOC, Failed, Pointer, Screen, Steps, Viewer, base_env,
-                     copy_matter, doc_ids, log, make_matter)
+                     copy_matter, doc_ids, gif, log, make_matter)
 from adhocdocs import container
 from adhocdocs.portable import spawn, stop
 
@@ -42,6 +42,7 @@ WORKSPACE_IN_SESSION = "/matter/workspace"
 # Tools allowed outright (settings.json, below) and nothing asked. Auto mode, the default,
 # checks each tool call on Anthropic's side, which can't happen through a recorder or a
 # replay; and the interactive start takes the mode from here, not from settings.
+HOST_SIGNIN = "/home/claude/.claude/remote"
 CLAUDE_ARGS = ["--permission-mode", "dontAsk"]
 
 
@@ -195,6 +196,12 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
                 raise Failed(f"the annotation API didn't start; see {here / 'ann-api.log'}")
             env["ADHOC_ANN_SOCKET"] = str(ann_sock)
             run_cmd = ["env", "-i", *[f"{k}={val}" for k, val in env.items()], claude, *CLAUDE_ARGS]
+            # In a Claude Code cloud session, Claude Code also finds that session's own sign-in
+            # at a fixed path, whatever its environment says, and warns on screen that two
+            # are set. The replayed one must use only the replay's: an empty directory there.
+            if Path(HOST_SIGNIN).is_dir() and os.geteuid() == 0 and shutil.which("unshare"):
+                run_cmd = ["unshare", "-m", "--propagation", "private", "sh", "-c",
+                           'mount -t tmpfs none "$0" && exec "$@"', HOST_SIGNIN, *run_cmd]
             v = Viewer(m, screen, home, run=run_cmd, cwd=m.root / "workspace", sock=sock)
         else:
             api_sock = here / "api.sock"
@@ -287,8 +294,10 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
         cassette_path.write_text(json.dumps(replay.cassette(version), indent=1, ensure_ascii=False) + "\n",
                                  encoding="utf-8")
         log(f"  wrote {cassette_path.relative_to(REPO)}: {len(replay.turns)} turns, {len(replay.side)} side requests")
+    if video:
+        gif(out / f"{name}.mp4", out / f"{name}.gif")
     report = {"scenario": name, **replay.report(), "shots": shots,
-              "video": f"{name}.mp4" if video else None}
+              "video": f"{name}.mp4" if video else None, "gif": f"{name}.gif" if video else None}
     (out / f"{name}.report.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     return report
 

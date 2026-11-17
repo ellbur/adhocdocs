@@ -155,8 +155,10 @@ needs a sign-in and gives a different answer each time, so a scenario is
 uv run python tools/screenshots/scenario.py replay [NAME …] --out screenshots
 ```
 
-writes `NAME.mp4` (the whole session, pointer included), `NAME-SHOT.png`
-for each `shot` step, and `NAME.report.json`; on a failure, also
+writes `NAME.mp4` (the whole session, pointer included), `NAME.gif` (the
+same, as an animated GIF about 1 MB for 30 seconds, for the README: GitHub
+doesn't play a video kept in the repository), `NAME-SHOT.png` for each
+`shot` step, and `NAME.report.json`; on a failure, also
 `NAME.failed.png`, what the screen showed. It needs Podman and the session
 image built with the Claude Code version the recordings were made with
 ([`claude-code-version`](../tools/screenshots/claude-code-version)):
@@ -168,7 +170,10 @@ podman build --build-arg CLAUDE_CODE_VERSION="$(cat tools/screenshots/claude-cod
 
 `--direct` runs the `claude` on this machine in the viewer's terminal
 instead of the container, with the matter's annotation API beside it as
-a session has: quicker for working on a scenario, but not what users run. `--fast` drops the human pacing, for a quick check.
+a session has: quicker for working on a scenario, but not what users run.
+In a Claude Code cloud session, the replayed Claude Code is kept from
+seeing that session's own sign-in (an empty directory mounted over where
+Claude Code looks for it), so it doesn't warn on screen that two are set. `--fast` drops the human pacing, for a quick check.
 
 A scenario file is its steps (above) with `prompt` steps among them:
 
@@ -289,6 +294,12 @@ balance is too low to access the Anthropic API", though the workspace had
 credit, while the same request as headless Claude Code went through
 (reported on
 [anthropics/claude-code-action#1888](https://github.com/anthropics/claude-code-action/issues/1888)).
+
+## In the README
+
+The README's animation is a scenario's `NAME.gif`, copied into
+`docs/screenshots/` from a passing replay (the Screenshots workflow's
+artifact, or a local run). Copy it again when the scenario changes.
 
 ## Not built yet
 

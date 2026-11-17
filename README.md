@@ -12,7 +12,9 @@ The idea:
 
 The result is maximum **flexibility and power** while ensuring that final work product is **grounded in a pipeline that does not depend on AI**.
 
-<a href="docs/screenshots/viewer.png"><img src="docs/screenshots/viewer.png" alt="The viewer: search results beside an email, with Claude's highlight and the links it rests on"></a>
+<img src="docs/screenshots/chronology-dates.gif" alt="Claude Code beside the viewer: asked to show a chronology it wrote as a timeline, Claude opens it; clicking an event opens the email it rests on, and hovering a date there shows the chronology's events around it">
+
+*Claude shows its chronology as a timeline. An event opens the email it rests on, and a date in that email shows its place among the events.*
 
 <table>
 <tr>

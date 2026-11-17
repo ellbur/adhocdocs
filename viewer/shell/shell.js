@@ -1627,6 +1627,26 @@ class DocumentPane {
     }
     return out.join(" ");
   }
+  // where a mention is in the window (null when off screen, with visible)
+  mentionRect(x, visible = false) {
+    let r = null;
+    if (this.mode === "page") {
+      const g = this.boxesFor(x.start, x.end)[0], pg = g && this.pageEls?.[g.page - 1];
+      if (pg) {
+        const b = pg.getBoundingClientRect(), [x0, y0, x1, y1] = g.box;
+        r = { left: b.left + x0 * b.width, top: b.top + y0 * b.height, right: b.left + x1 * b.width, bottom: b.top + y1 * b.height };
+      }
+    } else {
+      const root = this.textRoot(), rc = root && rangeRects(root, x.start, x.end)[0];
+      if (rc) {
+        const off = this.mode === "flow" && this.frame ? this.frame.getBoundingClientRect() : { left: 0, top: 0 };
+        r = { left: rc.left + off.left, top: rc.top + off.top, right: rc.right + off.left, bottom: rc.bottom + off.top };
+      }
+    }
+    if (!r || !visible) return r;
+    const v = this.body.getBoundingClientRect();
+    return r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right ? r : null;
+  }
   textRoot() {
     if (this.mode === "flow") return this.frame?.contentDocument?.body;
     if (this.mode === "text") return $(".textmode", this.body);
@@ -2972,34 +2992,46 @@ window.addEventListener("storage", (ev) => { if (ev.key === "adhoc.facet") { adh
 
 const entityCard = {
   el: null, pane: null, mention: null, showTimer: null, hideTimer: null, stack: [],
+  pinned: false,          // shown by Claude (view card): stays until the user moves on
   init() {
     this.el = $("#entity-card");
     this.el.addEventListener("mouseenter", () => clearTimeout(this.hideTimer));
     this.el.addEventListener("mouseleave", () => this.hoverOff());
+    document.addEventListener("mousedown", (ev) => { if (this.pinned && !this.el.contains(ev.target)) this.hide(); }, true);
   },
   hoverOn(pane, x, ev, frame) {
     clearTimeout(this.hideTimer);
     if (this.mention === x && !this.el.hidden) return;
+    if (this.pinned && this.pane === pane && this.mention?.start === x.start && this.mention?.end === x.end) return;
     clearTimeout(this.showTimer);
     const off = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
     const at = [ev.clientX + off.left, ev.clientY + off.top];
-    this.showTimer = setTimeout(() => this.show(pane, x, at), this.el.hidden ? 280 : 60);
+    // a card Claude showed gives way only to a name the pointer stays on, not one it passes over
+    this.showTimer = setTimeout(() => this.show(pane, x, at), this.pinned ? 600 : this.el.hidden ? 280 : 60);
   },
   hoverOff() {
+    if (this.pinned) return;
     clearTimeout(this.showTimer);
     clearTimeout(this.hideTimer);
     this.hideTimer = setTimeout(() => this.hide(), 250);
   },
-  hide() { clearTimeout(this.showTimer); this.el.hidden = true; this.mention = null; this.stack = []; },
+  hide() { clearTimeout(this.showTimer); this.el.hidden = true; this.mention = null; this.stack = []; this.pinned = false; },
+  // Claude showing the user a card (view card): where the mention is, until they move on
+  pin(pane, x, at) {
+    clearTimeout(this.showTimer); clearTimeout(this.hideTimer);
+    this.show(pane, x, at);
+    this.pinned = true;           // after show, which unpins another mention's
+    this.el.classList.add("pinned");
+  },
   refresh() { if (!this.el.hidden && this.pane && this.mention) this.show(this.pane, this.mention, this.at); },
   show(pane, x, at) {
-    if (this.mention !== x) this.stack = [];
+    if (this.mention !== x) { this.stack = []; this.pinned = false; this.el.classList.remove("pinned"); }
     this.pane = pane; this.mention = x; this.at = at;
     if (this.stack.length) return this.showEntity(this.stack[this.stack.length - 1], false);
     if (x.isDate) return dateCard.show(this, pane, x, at);
     const body = x.known ? x.entities.map((id) => this.knownBlock(pane, entityById(id))).filter(Boolean) : [this.suggestedBlock(pane, x)];
-    this.el.replaceChildren(...body, el("div", { class: "ec-foot" }, x.known
-      ? "Click to select, then ask Claude · e edits"
+    this.el.replaceChildren(...body, el("div", { class: "ec-foot" }, x.claude ? "Claude showed you this · Esc closes"
+      : x.known ? "Click to select, then ask Claude · e edits"
       : "Not in the entity list · click to select and ask Claude · e adds it"));
     this.place(at);
   },
@@ -3063,7 +3095,7 @@ const entityCard = {
   knownBlock(pane, e) {
     if (!e) return null;
     const see = (e.see || []).slice(0, 3).map((t) => el("a", { class: "ec-see", title: "open",
-      onclick: () => { this.hide(); pane.highlight(t, "entity"); } }, "“" + ((t.quote?.exact || "the document").replace(/\s+/g, " ").slice(0, 60)) + "”"));
+      onclick: () => { this.hide(); pane.highlight(t, e.name); } }, "“" + ((t.quote?.exact || "the document").replace(/\s+/g, " ").slice(0, 60)) + "”"));
     const facets = facetsOf("entity", e.entity);
     return el("div", { class: "ec-entity" },
       el("div", { class: "ec-head" }, el("span", { class: "ec-name" }, e.name), el("span", { class: "ec-kind" }, (ENTITY_KIND[e.kind] || e.kind) + (e.date ? " · " + e.date : ""))),
@@ -3311,6 +3343,7 @@ function onKey(ev) {
   else if (k === "v" && doc?.info?.layers.length > 1) { const ls = doc.info.layers; const i = ls.findIndex((l) => l.id === doc.layer); doc.open({ doc: doc.info.doc, layer: ls[(i + 1) % ls.length].id }, { quiet: true }); }
   else if (k === "f" && doc?.info) { const modes = doc.modes().filter((m) => m !== "hex" || doc.modes().length === 1); doc.setMode(modes[(modes.indexOf(doc.mode) + 1) % modes.length]); }
   else if (k.startsWith("Arrow") && doc?.mode === "grid") doc.moveCell(k, ev.shiftKey);
+  else if (k === "Escape" && entityCard.pinned) entityCard.hide();
   else if (k === "Escape" && doc) { entityCard.hide(); doc.clearSelection(); }
   else if (k === "?") toast("j/k move · Enter open · ]/[ next/prev in the sequence, or highlight if none · Space page · m mark · t tag · N note · e entity · E show entities · F issue (facet) · v layer · f mode · Tab pane · H overview · W pane to a new window · Alt-drag region · grid: click, drag or shift-arrows to select cells");
   else if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && !BUILTIN_KEYS.has(k)) {
@@ -3386,6 +3419,35 @@ const commands = {
     const p = docPaneFor(c);
     await p.highlight(c.loc, c.label);
     return { pane: p.id };
+  },
+  // an entity's card (or a date's), shown at a mention of it in a document pane, as on hover
+  async card(c) {
+    const p = docPaneFor(c);
+    let l = c.loc ? parseLoc(c.loc) : null;
+    if (l && (l.doc !== p.info?.doc || (l.layer && l.layer !== p.layer))) { await p.open(l, { quiet: true }); l = parseLoc(c.loc); }
+    if (!p.info) throw new Error(`pane ${p.id} shows no document`);
+    await refreshAnnotations();             // an entity Claude has just defined
+    await p.loadEntities();
+    if (c.entity && !entityById(c.entity)) throw new Error("no entity " + c.entity);
+    const e = p.ents;
+    if (!e) throw new Error(`pane ${p.id}: its entities aren't shown in this mode`);
+    const all = [...e.known, ...e.suggested, ...e.dates];
+    const span = l?.select?.char || (!l && p.selection?.layer === e.layer ? p.selection.select?.char : null);
+    const over = (x) => span && x.start < Math.max(span[1], span[0] + 1) && span[0] < x.end;
+    const of = c.entity ? e.known.filter((x) => x.entities.includes(c.entity)) : all;
+    let x = of.find(over) || (c.entity ? of.find((x) => p.mentionRect(x, true)) || of[0] : null);
+    if (!x && c.entity) {
+      // not named here: the card beside the pane's top, not at a mention
+      const r = p.body.getBoundingClientRect();
+      entityCard.pin(p, { known: true, entities: [c.entity], claude: true, start: -1, end: -1 }, [r.left + 24, r.top + 8]);
+      return { pane: p.id, entity: c.entity, shown: "beside the document: it doesn't name the entity" };
+    }
+    if (!x) throw new Error(c.loc ? "no entity or date there" : "the selection is no entity or date: give an entity or --at");
+    if (!p.mentionRect(x, true)) { await p.scrollTo({ select: { char: [x.start, x.end] } }); await new Promise((r) => setTimeout(r, 120)); }
+    const r = p.mentionRect(x);
+    entityCard.pin(p, { ...x, claude: true }, r ? [r.left, r.bottom - 14] : [innerWidth / 2, innerHeight / 3]);
+    return { pane: p.id, ...(x.isDate ? { date: x.resolved } : { entity: c.entity || x.entities?.[0] || null }),
+             mention: { doc: p.info.doc, layer: e.layer, select: { char: [x.start, x.end] } }, text: e.cps.slice(x.start, x.end).join("") };
   },
   async "clear-highlights"(c) {
     for (const p of c.pane ? [pane(c.pane)] : adhoc.panes) if (p?.kind === "document") p.clearHighlights();
