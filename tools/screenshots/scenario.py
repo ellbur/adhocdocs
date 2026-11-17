@@ -35,6 +35,7 @@ import recorder
 from harness import (BIN, HERE, REPO, STEPS_DOC, Failed, Pointer, Screen, Steps, Viewer, base_env,
                      copy_matter, doc_ids, log, make_matter)
 from adhocdocs import container
+from adhocdocs.portable import spawn, stop
 
 SCENARIOS = HERE / "scenarios"
 WORKSPACE_IN_SESSION = "/matter/workspace"
@@ -161,6 +162,7 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
     screen = Screen(display, w, h)
     v = None
     shots = []
+    helpers = []          # services a --direct session needs, which `adhoc open` starts otherwise
     try:
         home = here / "viewer-home"
         if direct:
@@ -181,6 +183,17 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
             (here / "claude-user").mkdir(exist_ok=True)
             sock = here / "viewer.sock"
             env["ADHOC_VIEW_SOCKET"] = str(sock)
+            # Claude's tags, notes and entities go through the annotation API, as in a session
+            ann_sock = here / "ann.sock"
+            helpers.append(spawn([str(BIN / "adhoc"), "--matter", str(m.root), "ann-api", "--socket", str(ann_sock)],
+                                 here / "ann-api.log"))
+            for _ in range(100):
+                if ann_sock.exists():
+                    break
+                time.sleep(0.1)
+            else:
+                raise Failed(f"the annotation API didn't start; see {here / 'ann-api.log'}")
+            env["ADHOC_ANN_SOCKET"] = str(ann_sock)
             run_cmd = ["env", "-i", *[f"{k}={val}" for k, val in env.items()], claude, *CLAUDE_ARGS]
             v = Viewer(m, screen, home, run=run_cmd, cwd=m.root / "workspace", sock=sock)
         else:
@@ -200,9 +213,6 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
             v = Viewer(m, screen, home, sock=sock, launcher=launcher, extra_env=podman_env(here))
         workdir = here / "work"
         video = spec.get("video", True) and not record
-        if video:
-            screen.record(out / f"{name}.mp4", fps=spec.get("fps", 30))
-        pointer = Pointer(screen, human=human)
         # Claude Code has started when its prompt shows
         t = time.time()
         while True:
@@ -223,6 +233,26 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
             screen.save(rgb, f)
             shots.append({"name": shot_name, "file": f.name, "caption": step.get("caption", "")})
 
+        # Setup: the session up to where the video starts (Claude building entities, say),
+        # off camera and as fast as it goes. The terminal shows it afterwards, as a session would.
+        if spec.get("setup"):
+            paced = getattr(replay, "pace", None)
+            if paced:
+                replay.pace = fakeapi.Pace(0, 0, 0)
+            quick = Steps(v, ids, workdir, Pointer(screen, human=False), session=Session(replay, turn_limit),
+                          typing_delay_ms=5, on_shot=on_shot)
+            for i, step in enumerate(spec["setup"]):
+                log(f"  setup {i + 1}: {json.dumps(step)[:100]}")
+                quick.run(step)
+            if paced:
+                replay.pace = paced
+            screen.settle(least=0.5, quiet=1.0, limit=30)
+
+        # The video starts here: at the first step, with Claude Code up and waiting.
+        pointer = Pointer(screen, human=human)
+        if video:
+            screen.record(out / f"{name}.mp4", fps=spec.get("fps", 30))
+            time.sleep(float(spec.get("lead", 0.8)))
         steps = Steps(v, ids, workdir, pointer, session=Session(replay, turn_limit),
                       typing_delay_ms=int(pace.get("typing_ms", 45)), on_shot=on_shot)
         for i, step in enumerate(spec.get("step", [])):
@@ -236,6 +266,8 @@ def run(name: str, base, out: Path, tmp: Path, direct: bool, display: str, human
         screen.stop_recording()
         if v:
             v.close()
+        for p in helpers:
+            stop(p)
         if not direct:
             subprocess.run(["podman", "rm", "-f", "-t", "1", f"{container.slug(m)}-1"],
                            capture_output=True)

@@ -114,6 +114,8 @@ def normalize(s: str) -> str:
     s = re.sub(r"\bpid \d+", "pid <n>", s)
     # event, object and matter IDs (ULIDs: they carry the time they were made)
     s = re.sub(r"\b([a-z]+)_[0-9A-HJKMNP-TV-Z]{26}\b", r"\1_<id>", s)
+    # events' signatures: unique to each event, as signatures over them are
+    s = re.sub(r'("sig":\s*")[A-Za-z0-9_\-+/=]{40,}(")', r"\1<sig>\2", s)
     return re.sub(r"[ \t]+\n", "\n", s).strip()
 
 

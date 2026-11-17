@@ -72,3 +72,10 @@ def test_federated_requests_leave_out_the_claude_code_beta():
     # with an API key, Claude Code's betas go as it sent them
     h = recorder.upstream_headers(incoming, {"x-api-key": "sk-ant-api-x"}, federated=False)
     assert h["anthropic-beta"] == incoming["anthropic-beta"] and h["x-api-key"] == "sk-ant-api-x"
+
+
+def test_what_changes_on_its_own_is_not_a_difference():
+    a = '{"events": [{"id": "ev_01M7KMBZ3G8BCXGCPJ2EA5A54X", "at": "2026-11-17T02:11:25.936671Z", "sig": "BXzDOv_2sYgM1eUl_2hsv3n-G_fq2MAcY54zO33jn1rg4CvlC10pAq76kpaTeKtwhdWwIZBEbLRW7Wr5179nDw", "origin": "o_PYQK369XWW9FEGWMD8V230PQMQ", "name": "X"}]}'
+    b = '{"events": [{"id": "ev_01M7KME0X8XMG4P8KKN7WS3YHP", "at": "2026-11-17T02:12:33.320462Z", "sig": "3P05-gedkkihr5ZtkDATfYt74AvnlK6-kijlSRHIB8Y1fW7Uwsbi2vUenJj2QJI_vEpKJ1-RNXJcJtu7Ug1pAg", "origin": "o_HM6SNVPZ9GD187GV90YAEEFH1J", "name": "X"}]}'
+    assert fakeapi.normalize(a) == fakeapi.normalize(b)
+    assert fakeapi.normalize(a) != fakeapi.normalize(a.replace('"name": "X"', '"name": "Y"'))
