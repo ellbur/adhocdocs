@@ -38,13 +38,14 @@ scenario:
 - **once a week** (Monday morning, UTC), if `main` has changed since the
   last successful run;
 - on merges to `main` and pull requests that add or change a scenario
-  (`tools/screenshots/scenarios/`), so a new one is checked before it's
-  merged;
+  (`tools/screenshots/scenarios/`) or the workflow, so a new one is checked
+  before it's merged;
 - and on demand (*Run workflow*).
 
 Other changes don't start it, so a change that makes a recording stale is
 found by the next weekly run. The pictures and videos are the run's
-`screenshots` artifact.
+`screenshots` artifact, and a good run on `main` publishes them
+([Published](#published)).
 
 ## Writing a shot
 
@@ -295,11 +296,16 @@ credit, while the same request as headless Claude Code went through
 (reported on
 [anthropics/claude-code-action#1888](https://github.com/anthropics/claude-code-action/issues/1888)).
 
-## In the README
+## Published
 
-The README's animation is a scenario's `NAME.gif`, copied into
-`docs/screenshots/` from a passing replay (the Screenshots workflow's
-artifact, or a local run). Copy it again when the scenario changes.
+A good run on `main` publishes everything on GitHub Pages,
+<https://ellbur.github.io/adhocdocs/>: a page with each scenario's video and
+stills, then the still shots ([`site.py`](../tools/screenshots/site.py)
+makes it). Each file keeps its name, so its address stays the same from
+run to run: the README shows
+`https://ellbur.github.io/adhocdocs/chronology-dates.gif`, and it is
+current after every good run, with nothing to commit. A failed run, or a
+pull request, leaves the last good one published.
 
 ## Not built yet
 
