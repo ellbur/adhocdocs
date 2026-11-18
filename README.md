@@ -41,6 +41,26 @@ The result is maximum **flexibility and power** while ensuring that final work p
 </tr>
 </table>
 
+## Under the Hood: Building Verifiable Outputs
+
+The trick to building verifiable outputs is giving Claude the tools to make results that are correct by construction.
+
+This is the often-missed area where legal tech needs to develop. The underlying AI tools are already vastly more powerful than we've learned to use effectively. The part that's missing is a trusted interface to the data.
+
+Take pages: memos, chronologies and draft briefs that quote documents. Claude writes the prose, but there is no syntax for typing a quotation. A quote is a reference to a range of document text, which `adhoc page ref add` records from the store:
+
+````markdown
+**Mar 2, 2026.** Kettering asks the carrier to take the pallet back: :q{#cage}
+
+```refs
+{"id": "cage", "doc": "sha256:9f2c…", "layer": "sha256:41ab…", "select": {"char": [412, 489]}, "quote": {"exact": "No PO, no packing list, so it has been in our quarantine cage. We can't receive it.", …}}
+```
+````
+
+The renderer fills in the words from the document, adds the citation, and links the quote to its source. If the text at that range ever changes, the reference renders as a red placeholder and export refuses, rather than showing different words. See [docs/PAGES.md](docs/PAGES.md).
+
+<img src="docs/screenshots/pages.png" alt="A rendered chronology page: each quotation is shaded, cited, and links to its source" width="640">
+
 ## Setup
 
 Using [uv](https://docs.astral.sh/uv/):
