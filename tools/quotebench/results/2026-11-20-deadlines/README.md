@@ -46,9 +46,15 @@ and a letter-numbered rule's running head ("Rule F") is page furniture.
     handback turns at 120–150K context, and after the readers returned,
     checking or reviewing every quotation (deadlines-2 re-checked all 490 by
     script; deadlines-4 read a 69 KB review file of every quote).
-  - The readers over-included: 490 and 293 entries against 101 alone,
-    which made the merge and review bigger. Coverage may be better; cost
-    isn't.
+  - The cells didn't do the same job, so the costs aren't like for like.
+    Alone, Opus listed fixed periods only (about 90 entries without the
+    tool, 101 with it). Delegated, the leads went wider: 437 entries in
+    deadlines-2, 310 of them requirements with no fixed length
+    ("promptly", "before trial"), and 293 limits in deadlines-4, plus 23
+    provisions read and set aside with reasons. The delegated memos are
+    more thorough; whether that thoroughness is worth the price is the
+    user's call, and a like-for-like comparison would need the scope fixed
+    in the prompt.
   - The reader handoff mostly worked: all seven left resolved files and the
     lead added them in a batch, but 110 of 316 rows first failed on
     mixed-case ids that the readers' dry runs hadn't checked (now they do),
