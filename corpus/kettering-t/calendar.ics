@@ -1,0 +1,26 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:A6EC442EC852AFBF2B2459AA4A192153
+SEQUENCE:0
+DTSTAMP:20250823T120000Z
+DTSTART:20250826T120000Z
+DTEND:20250826T124500Z
+SUMMARY:Dock door maintenance
+LOCATION:Microsoft Teams Meeting
+ORGANIZER;CN="Lena Fairbanks":mailto:lfairbanks@bellwethermarine.example
+ATTENDEE;CN="Shonda Rhee";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:srhee@bellwethermarine.example
+ATTENDEE;CN="Fritz Albrecht";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:falbrecht@bellwethermarine.example
+ATTENDEE;CN="Thomas Kettering";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:tkettering@bellwethermarine.example
+DESCRIPTION:Bring your laptop. Recurring — let me know if this time doesn't work. See attached deck (sent separately).\n\nJoin: https://meet.bellwethermarine.example/j/4293662593\nPasscode: 560933
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

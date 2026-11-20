@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>adhocdocs</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/shell.css">
+</head>
+<body class="adhoc-shell">
+<aside id="dock" hidden></aside><div id="dock-split" hidden></div>
+<div id="docs">
+<header id="top"><button id="menu-btn" class="icon-btn" aria-label="Menu: the overview, files for Claude" aria-haspopup="menu">☰</button><nav id="tabs"></nav>
+  <div id="top-tools"><button id="theme-btn" class="icon-btn" aria-label="Light and dark, for the interface and for documents">◐</button></div></header>
+<main id="panes"><div id="layout"></div></main>
+</div>
+<div id="palette" hidden>
+  <input id="palette-input" placeholder="Tag… Enter applies · Shift+Enter: family · Ctrl+Enter: duplicates" autocomplete="off">
+  <ul id="palette-list"></ul>
+</div>
+<div id="note-editor" hidden>
+  <div id="note-title"></div>
+  <textarea id="note-text" rows="8"></textarea>
+  <div class="row"><span class="hint">Ctrl+Enter saves · Esc cancels</span></div>
+</div>
+<div id="entity-editor" hidden>
+  <div id="ee-title"></div>
+  <div class="row"><input id="ee-name" placeholder="Name" autocomplete="off">
+    <select id="ee-kind"><option value="person">person</option><option value="organization">organization</option>
+      <option value="term">defined term</option><option value="identifier">number</option><option value="contract">contract</option>
+      <option value="event">event</option><option value="place">place</option><option value="thing">thing</option><option value="other">other</option></select></div>
+  <textarea id="ee-summary" rows="3"></textarea>
+  <div class="row"><span class="hint">Enter saves · Ctrl+Enter in the description · Esc cancels</span></div>
+</div>
+<div id="entity-card" hidden></div>
+<div id="menu" role="menu" hidden></div>
+<div id="toast" hidden></div>
+<div id="drop-veil" hidden><div class="msg"><strong>Drop to hand Claude these files</strong>
+  <span class="docs">They go to the Files pane, not into the matter: not discovery documents, and Claude can change them.</span>
+  <span class="term">Their paths are typed at Claude's prompt. Not discovery documents, and Claude can change them.</span></div></div>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/term.js"></script>
+<script src="/entities.js"></script>
+<script src="/dates.js"></script>
+<script src="/shell.js"></script>
+</body>
+</html>

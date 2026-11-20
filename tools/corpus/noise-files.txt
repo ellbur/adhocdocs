@@ -1,0 +1,681 @@
+# Written by build_noise.py: the corpus's irrelevant documents. Do not edit.
+delacroix-m/2025-08-04_1-1.eml
+delacroix-m/2025-08-06_Upgrade-for-less-on-your-next-trip.eml
+delacroix-m/2025-08-15_1-1.eml
+delacroix-m/2025-08-18_Phishing-test-results.eml
+delacroix-m/2025-08-22_Lease-amendment-call.eml
+delacroix-m/2025-08-28_Marcus-fares-from-79-one-way.eml
+delacroix-m/2025-09-01_Weekend-rates-are-falling.eml
+delacroix-m/2025-09-02_Holiday-schedule.eml
+delacroix-m/2025-09-09_You-re-invited-Lumenfold-Live-2025.eml
+delacroix-m/2025-09-11_Holiday-party-planning-committee.eml
+delacroix-m/2025-09-17_Question-re-FMLA-leave.eml
+delacroix-m/2025-09-22_Your-points-are-waiting.eml
+delacroix-m/2025-09-23_Vendor-demo.eml
+delacroix-m/2025-09-25_Your-EOB-is-available.eml
+delacroix-m/2025-09-30_Marcus-quick-question.eml
+delacroix-m/2025-10-08_Board-deck-legal-section.eml
+delacroix-m/2025-10-17_Updated-code-of-conduct-review.eml
+delacroix-m/2025-10-23_Call-for-speakers-spring-program.eml
+delacroix-m/2025-10-25_Blood-drive.eml
+delacroix-m/2025-10-31_Whose-car.eml
+delacroix-m/2025-11-03_Slip-and-fall-claim-2025-visitor.eml
+delacroix-m/2025-11-04_Desk-move.eml
+delacroix-m/2025-11-07_Bellwether-Bearings-November-2025.eml
+delacroix-m/2025-11-07_Parking-lot-repaving.eml
+delacroix-m/2025-11-14_Early-bird-ends-Friday-Supply-Chain-Leaders-Summ.eml
+delacroix-m/2025-12-03_Board-meeting-prep.eml
+delacroix-m/2025-12-08_Board-deck-legal-section.eml
+delacroix-m/2025-12-11_Restock-reminder-sticky-notes-pens-more.eml
+delacroix-m/2025-12-15_We-noticed-you-haven-t-logged-in.eml
+delacroix-m/2025-12-15_Your-HarborMiles-statement-for-December.eml
+delacroix-m/2025-12-17_Survey-engagement.eml
+delacroix-m/2025-12-19_Out-of-office.eml
+delacroix-m/2025-12-22_Trademark-maintenance-BELLWETHER-stylized.eml
+delacroix-m/2025-12-26_Slip-and-fall-claim-2025-visitor.eml
+delacroix-m/2025-12-29_Complete-your-profile-for-faster-check-in.eml
+delacroix-m/2025-12-30_Thermostat.eml
+delacroix-m/2026-01-13_Strategic-planning-offsite.eml
+delacroix-m/2026-01-14_Survey-engagement.eml
+delacroix-m/2026-01-21_Security-alert-new-sign-in-from-Chrome-on-Window.eml
+delacroix-m/2026-02-04_Member-spotlight-and-job-board.eml
+delacroix-m/2026-02-14_Your-dashboards-could-be-doing-more.eml
+delacroix-m/2026-02-18_Case-study-How-a-regional-distributor-cut-month.eml
+delacroix-m/2026-02-20_Flash-sale-ends-at-midnight.eml
+delacroix-m/2026-02-23_Employment-law-update-outside-counsel.eml
+delacroix-m/2026-03-03_Holiday-schedule.eml
+delacroix-m/2026-03-05_Retirement-send-off.eml
+delacroix-m/2026-03-12_CPR-first-aid-class.eml
+delacroix-m/2026-03-13_Bellwether-Bearings-Vol-9-No-12.eml
+delacroix-m/2026-03-13_Strategic-planning-offsite.eml
+delacroix-m/2026-03-18_Compliance-committee.eml
+delacroix-m/2026-03-18_Your-EOB-is-available.eml
+delacroix-m/2026-04-02_Board-deck-legal-section (2).eml
+delacroix-m/2026-04-02_Board-deck-legal-section.eml
+delacroix-m/2026-04-21_Shared-with-you-Q-review-deck.eml
+delacroix-m/2026-05-01_Expense-report-reminder.eml
+delacroix-m/2026-05-16_Contract-review-in-minutes-not-days.eml
+delacroix-m/2026-05-27_Board-deck-legal-section.eml
+delacroix-m/2026-06-07_Compliance-committee.eml
+delacroix-m/2026-06-13_Member-spotlight-and-job-board.eml
+delacroix-m/2026-06-17_Holiday-schedule.eml
+delacroix-m/2026-06-17_Marcus-your-free-trial-ends-in-3-days.eml
+delacroix-m/2026-06-17_Restock-reminder-sticky-notes-pens-more.eml
+delacroix-m/2026-06-18_Your-office-coffee-subscription-ships-Thursday.eml
+delacroix-m/2026-06-19_Bellwether-Bearings-June-2026.eml
+delacroix-m/2026-06-22_Password-expires-in-3-days.eml
+delacroix-m/2026-06-24_Lunch.eml
+delacroix-m/2026-06-26_Trademark-renewal-docket.eml
+delacroix-m/2026-07-03_Bellwether-Bearings-July-2026.eml
+delacroix-m/2026-07-09_Lunch-learn-Excel-tips.eml
+delacroix-m/2026-07-11_Volunteer-coaches-needed.eml
+delacroix-m/CLE-ethics-hour-20251230.ics
+delacroix-m/Compliance-committee-20260309.ics
+delacroix-m/Copy of JD.docx
+delacroix-m/Copy of draft.docx
+delacroix-m/Doc13.docx
+delacroix-m/Doc5.docx
+delacroix-m/FAQ - do not use.docx
+delacroix-m/JD (2).docx
+delacroix-m/JD (edits).docx
+delacroix-m/JD.docx
+delacroix-m/LI draft - do not use.docx
+delacroix-m/LI draft.docx
+delacroix-m/Microsoft Word - RFP response.docx
+delacroix-m/Microsoft Word - bulletin.pdf
+delacroix-m/Microsoft Word - mtg notes.docx
+delacroix-m/New Text Document.txt
+delacroix-m/PR - Copy.docx
+delacroix-m/PR_FINAL_final.docx
+delacroix-m/RFP response (Autosaved).docx
+delacroix-m/RFP response.txt
+delacroix-m/benefits-summary.html
+delacroix-m/budget-draft.csv
+delacroix-m/bulletin.pdf
+delacroix-m/chili - do not use.docx
+delacroix-m/chili_020326.docx
+delacroix-m/draft1.docx
+delacroix-m/email draft (1).docx
+delacroix-m/email draft.docx
+delacroix-m/fantasy-standings.csv
+delacroix-m/hotel-confirmation.html
+delacroix-m/invite.ics
+delacroix-m/linkedin post (Autosaved).docx
+delacroix-m/linkedin post - do not use.docx
+delacroix-m/linkedin post_FINAL.docx
+delacroix-m/linkedin post_v4.docx
+delacroix-m/lunch-order.csv
+delacroix-m/mission statement.txt
+delacroix-m/mtg notes - do not use.txt
+delacroix-m/mtg notes_v2.txt
+delacroix-m/new rev1.docx
+delacroix-m/notes.txt
+delacroix-m/notes2.txt
+delacroix-m/offsite agenda (1).docx
+delacroix-m/offsite agenda - Copy.docx
+delacroix-m/offsite agenda DRAFT.docx
+delacroix-m/review v1 final.docx
+delacroix-m/review.docx
+delacroix-m/review_FINAL.docx
+delacroix-m/scratch (2).docx
+delacroix-m/scratch.docx
+delacroix-m/secret-santa.csv
+delacroix-m/temp.docx
+delacroix-m/trip_v1.docx
+delacroix-m/untitled (2).docx
+delacroix-m/untitled.docx
+delacroix-m/untitled.txt
+delacroix-m/values_030426.docx
+delacroix-m/web copy (edits).docx
+delacroix-m/web copy_061226.docx
+delacroix-m/web copy_v1.docx
+delacroix-m/x (1).docx
+delacroix-m/x (edits).docx
+delacroix-m/x DRAFT.docx
+delacroix-m/~email draft.docx
+delacroix-m/~mtg notes.docx
+kettering-t/2025-08-17_Staffing-plan-w-temp-agency.eml
+kettering-t/2025-08-19_Your-HarborMiles-statement-for-August.eml
+kettering-t/2025-08-21_Upgrade-for-less-on-your-next-trip.eml
+kettering-t/2025-08-26_Training-forklift-awareness-for-office-staff.eml
+kettering-t/2025-09-01_Steel-toe-boots-buy-2-save-15.eml
+kettering-t/2025-09-10_Weekend-rates-are-falling.eml
+kettering-t/2025-09-12_Whose-car.eml
+kettering-t/2025-10-03_Bellwether-Bearings-Vol-7-No-12.eml
+kettering-t/2025-10-03_Fantasy-league-week-15.eml
+kettering-t/2025-10-10_Holiday-schedule.eml
+kettering-t/2025-10-12_Shipyard-backlog-hits-new-high.eml
+kettering-t/2025-10-16_Appointment-request.eml
+kettering-t/2025-10-23_Forklift-7-out-of-service.eml
+kettering-t/2025-11-03_5S-audit.eml
+kettering-t/2025-11-19_Door-6-leveler.eml
+kettering-t/2025-11-21_Holiday-party-planning-committee.eml
+kettering-t/2025-11-24_PortaVault-price-changes.eml
+kettering-t/2025-11-27_Phishing-test-results.eml
+kettering-t/2025-11-28_Fire-drill-all-staff.eml
+kettering-t/2025-12-01_Holiday-gift-boxes-are-back.eml
+kettering-t/2025-12-05_Cold-weather-gear-is-here.eml
+kettering-t/2025-12-14_Complete-your-profile-for-faster-check-in.eml
+kettering-t/2025-12-18_Forklift-3-out-of-service.eml
+kettering-t/2025-12-18_Hold-do-not-book.eml
+kettering-t/2025-12-25_Lost-blue-water-bottle.eml
+kettering-t/2025-12-30_Lunch.eml
+kettering-t/2026-01-01_Retirement-send-off.eml
+kettering-t/2026-01-09_Cake-in-the-break-room.eml
+kettering-t/2026-01-10_Dock-door-maintenance.eml
+kettering-t/2026-01-16_Bellwether-Bearings-Vol-3-No-24.eml
+kettering-t/2026-01-16_Electrification-on-the-waterfront-who-s-buying.eml
+kettering-t/2026-01-23_Thomas-we-saved-you-a-seat.eml
+kettering-t/2026-01-26_Whose-car.eml
+kettering-t/2026-01-30_Parking-lot-repaving.eml
+kettering-t/2026-01-30_Reminder-complete-your-wellness-screening.eml
+kettering-t/2026-02-03_You-re-invited-Lumenfold-Live-2026.eml
+kettering-t/2026-02-03_Your-EOB-is-available.eml
+kettering-t/2026-02-05_PortaVault-price-changes.eml
+kettering-t/2026-02-11_5S-audit.eml
+kettering-t/2026-02-12_Cycle-count-results.eml
+kettering-t/2026-02-14_Benefits-open-enrollment-info-session.eml
+kettering-t/2026-02-18_Password-expires-in-3-days.eml
+kettering-t/2026-02-18_Shipyard-backlog-hits-new-high.eml
+kettering-t/2026-02-19_Fantasy-league-week-10.eml
+kettering-t/2026-03-06_Bellwether-Bearings-Vol-5-No-18.eml
+kettering-t/2026-03-06_Volunteer-coaches-needed.eml
+kettering-t/2026-03-10_Thomas-members-save-up-to-10.eml
+kettering-t/2026-03-16_Planning-next-fiscal-year.eml
+kettering-t/2026-03-24_New-hi-vis-arrivals-for-March.eml
+kettering-t/2026-03-29_Appointment-request.eml
+kettering-t/2026-04-03_Exhibitor-opportunities-still-available.eml
+kettering-t/2026-04-08_Your-HarborMiles-statement-for-April.eml
+kettering-t/2026-04-13_Reminder-your-operators-cards-expire-soon.eml
+kettering-t/2026-04-17_Staffing-plan-w-temp-agency.eml
+kettering-t/2026-04-20_Cycle-count-results.eml
+kettering-t/2026-04-21_Volunteer-coaches-needed.eml
+kettering-t/2026-04-24_Bellwether-Bearings-April-2026.eml
+kettering-t/2026-04-27_Parking-lot-repaving-move-cars.eml
+kettering-t/2026-05-07_Budget-review.eml
+kettering-t/2026-05-17_Holiday-shift-schedule.eml
+kettering-t/2026-05-18_Yard-check.eml
+kettering-t/2026-05-19_Forklift-recertification-dates-for-May.eml
+kettering-t/2026-05-20_Reminder-complete-your-wellness-screening.eml
+kettering-t/2026-05-29_Dock-door-maintenance.eml
+kettering-t/2026-06-10_Training-forklift-awareness-for-office-staff.eml
+kettering-t/2026-06-25_Hold-do-not-book.eml
+kettering-t/2026-06-26_Appointment-request.eml
+kettering-t/2026-06-30_Printer-on-2-is-jammed-AGAIN.eml
+kettering-t/2026-07-02_Volunteer-coaches-needed.eml
+kettering-t/2026-07-10_Cycle-count-results.eml
+kettering-t/Copy of draft.docx
+kettering-t/Copy of recipe.docx
+kettering-t/Doc1.docx
+kettering-t/Document11.docx
+kettering-t/Document2.docx
+kettering-t/EOQ_FINAL.txt
+kettering-t/Microsoft Word - product copy.pdf
+kettering-t/Microsoft Word - speech.pdf
+kettering-t/New Text Document (2).txt
+kettering-t/New Text Document (3).txt
+kettering-t/New Text Document (4) (2).txt
+kettering-t/New Text Document (4).txt
+kettering-t/New Text Document.txt
+kettering-t/agenda rev1.docx
+kettering-t/agenda v2 final.docx
+kettering-t/blog post v1 final.docx
+kettering-t/bulletin (1).txt
+kettering-t/bulletin (2).txt
+kettering-t/bulletin (Autosaved).txt
+kettering-t/bulletin.txt
+kettering-t/calendar (2).ics
+kettering-t/calendar.ics
+kettering-t/draft.txt
+kettering-t/draft2.docx
+kettering-t/draft5.docx
+kettering-t/draft8.txt
+kettering-t/invite.ics
+kettering-t/job description (1).docx
+kettering-t/list_FINAL_final.docx
+kettering-t/mileage-log.csv
+kettering-t/mtg notes_FINAL_final.docx
+kettering-t/notes (2).docx
+kettering-t/notes (3).docx
+kettering-t/notes (edits).docx
+kettering-t/notes rev1.docx
+kettering-t/notes rev3.docx
+kettering-t/notes.docx
+kettering-t/notes.txt
+kettering-t/notes5.txt
+kettering-t/notes_120325.docx
+kettering-t/office-chairs.csv
+kettering-t/order-status.html
+kettering-t/party (edits).docx
+kettering-t/party planning_FINAL.docx
+kettering-t/party v1 final.docx
+kettering-t/posting.md
+kettering-t/process rev2.txt
+kettering-t/recipe (edits).docx
+kettering-t/recipe_FINAL.docx
+kettering-t/scan14.pdf
+kettering-t/scratch.txt
+kettering-t/temp (2).txt
+kettering-t/temp.docx
+kettering-t/temp.txt
+kettering-t/todo (1).docx
+kettering-t/training-roster (2).csv
+kettering-t/training-roster.csv
+kettering-t/untitled (13) (2).txt
+kettering-t/untitled (13).txt
+kettering-t/untitled (2).txt
+kettering-t/untitled (3).txt
+kettering-t/untitled.docx
+kettering-t/untitled.txt
+kettering-t/weather.html
+kettering-t/~notes.docx
+muller-z/2025-08-18_Price-adjustment-notice.eml
+muller-z/2025-08-19_Supplier-scorecards-quarter.eml
+muller-z/2025-08-25_Fantasy-league-week-11.eml
+muller-z/2025-08-27_Security-alert-new-sign-in-from-Chrome-on-Window.eml
+muller-z/2025-09-01_Your-dashboards-could-be-doing-more.eml
+muller-z/2025-09-05_Bellwether-Bearings-September-2025.eml
+muller-z/2025-09-05_Retirement-card-for-Walt.eml
+muller-z/2025-09-10_Supplier-scorecards-quarter.eml
+muller-z/2025-09-12_Supplier-diversity-summit-registration-open.eml
+muller-z/2025-09-13_Open-enrollment-starts-soon.eml
+muller-z/2025-09-17_PPN-member-pricing-on-freight-audit-services.eml
+muller-z/2025-09-20_Cake-in-the-break-room.eml
+muller-z/2025-09-23_Process-improvement-workshop.eml
+muller-z/2025-09-24_Supplier-scorecards.eml
+muller-z/2025-09-26_Field-closures-due-to-weather.eml
+muller-z/2025-09-29_Purchasing-team-huddle.eml
+muller-z/2025-10-01_Reminder-complete-your-wellness-screening.eml
+muller-z/2025-10-02_New-vendor-setup-Norland-Bearings.eml
+muller-z/2025-10-08_Water-main-no-water-until-2pm.eml
+muller-z/2025-10-24_Holiday-party-planning-committee.eml
+muller-z/2025-11-13_Cake-in-the-break-room.eml
+muller-z/2025-11-17_Thermostat.eml
+muller-z/2025-11-18_Price-adjustment-notice.eml
+muller-z/2025-11-20_50-off-your-next-bag-Zo.eml
+muller-z/2025-11-21_MSM-Briefing-November-2025.eml
+muller-z/2025-11-26_Open-enrollment-reminder.eml
+muller-z/2025-11-27_Flash-sale-ends-at-midnight.eml
+muller-z/2025-11-30_Upgrade-for-less-on-your-next-trip.eml
+muller-z/2025-12-03_Hold-do-not-book.eml
+muller-z/2025-12-07_Negotiation-skills-workshop-December.eml
+muller-z/2025-12-11_Fall-getaways-the-weekend-fares-are-back.eml
+muller-z/2025-12-11_Picture-day-schedule.eml
+muller-z/2025-12-22_Holiday-schedule.eml
+muller-z/2025-12-26_Cost-reduction-brainstorm.eml
+muller-z/2025-12-26_Electrification-on-the-waterfront-who-s-buying.eml
+muller-z/2025-12-26_PPN-member-pricing-on-freight-audit-services.eml
+muller-z/2025-12-31_Zo-members-save-up-to-40.eml
+muller-z/2026-01-05_Shared-with-you-Q-review-deck.eml
+muller-z/2026-01-19_Electrification-on-the-waterfront-who-s-buying.eml
+muller-z/2026-01-19_Open-enrollment-starts-soon.eml
+muller-z/2026-01-25_Supplier-scorecards.eml
+muller-z/2026-02-01_New-vendor-setup-Norland-Bearings.eml
+muller-z/2026-02-24_Leadership-offsite-debrief.eml
+muller-z/2026-03-03_Coastline-Electric-Supply-order-status.eml
+muller-z/2026-03-20_Bellwether-Bearings-Vol-5-No-19.eml
+muller-z/2026-03-30_Quarterly-business-review.eml
+muller-z/2026-04-01_RFQ-26-263-EPDM-gaskets.eml
+muller-z/2026-04-01_Upgrade-for-less-on-your-next-trip.eml
+muller-z/2026-04-02_Holiday-gift-boxes-are-back.eml
+muller-z/2026-04-03_RFQ-26-227-cable-glands.eml
+muller-z/2026-04-18_MRP-exceptions-review.eml
+muller-z/2026-04-27_Strategic-planning-offsite.eml
+muller-z/2026-05-06_Purchasing-team-huddle.eml
+muller-z/2026-05-12_RFQ-kickoff-hydraulic-hose.eml
+muller-z/2026-05-21_Holiday-party-planning-committee.eml
+muller-z/2026-05-21_Potluck-sign-up.eml
+muller-z/2026-05-22_Bellwether-Bearings-May-2026.eml
+muller-z/2026-05-27_Cake-in-the-break-room.eml
+muller-z/2026-05-27_Dentist-personal.eml
+muller-z/2026-05-27_Weekend-rates-are-falling (2).eml
+muller-z/2026-05-27_Weekend-rates-are-falling.eml
+muller-z/2026-06-02_Open-enrollment-reminder.eml
+muller-z/2026-06-03_Your-points-are-waiting.eml
+muller-z/2026-06-05_Coffee-machine (2).eml
+muller-z/2026-06-05_Coffee-machine.eml
+muller-z/2026-06-08_Ugly-sweater-contest.eml
+muller-z/2026-06-17_Survey-engagement.eml
+muller-z/2026-06-21_Vendor-demo.eml
+muller-z/2026-06-30_New-vendor-setup-Selkirk-Seals.eml
+muller-z/2026-07-16_Supplier-diversity-summit-registration-open.eml
+muller-z/2026-07-17_Bellwether-Bearings-Vol-4-No-20.eml
+muller-z/Copy of linkedin post.docx
+muller-z/Copy of story.pdf
+muller-z/Doc2.docx
+muller-z/Document1.docx
+muller-z/FAQ_FINAL.txt
+muller-z/New Text Document.docx
+muller-z/New Text Document.pdf
+muller-z/PR_091025.docx
+muller-z/PR_091525.docx
+muller-z/Purchasing-team-huddle-20260129.ics
+muller-z/agenda_102825.docx
+muller-z/article v1 final.docx
+muller-z/article_v2.docx
+muller-z/benefits-summary.html
+muller-z/budget-draft.csv
+muller-z/calendar.ics
+muller-z/chili - Copy.docx
+muller-z/chili OLD (2).docx
+muller-z/chili OLD.docx
+muller-z/chili rev1.docx
+muller-z/draft (2).docx
+muller-z/draft.docx
+muller-z/draft_FINAL.docx
+muller-z/draft_FINAL_final.docx
+muller-z/letter to board - Copy.docx
+muller-z/letter to board OLD (2).docx
+muller-z/letter to board OLD.docx
+muller-z/letter to board_050726.docx
+muller-z/list (1).docx
+muller-z/meeting.ics
+muller-z/mileage-log.csv
+muller-z/new - do not use.docx
+muller-z/newsletter blurb (2).txt
+muller-z/newsletter blurb (Autosaved).txt
+muller-z/newsletter blurb - Copy.docx
+muller-z/newsletter blurb v3 final.txt
+muller-z/newsletter blurb.txt
+muller-z/nomination (Autosaved).docx
+muller-z/notes.docx
+muller-z/notes.md
+muller-z/notes6.txt
+muller-z/picnic_041726.txt
+muller-z/potluck-signup (2).csv
+muller-z/potluck-signup.csv
+muller-z/process OLD.docx
+muller-z/scan6.docx
+muller-z/scratch (2).txt
+muller-z/scratch.txt
+muller-z/self review (1).txt
+muller-z/self review (Autosaved).txt
+muller-z/story (2).pdf
+muller-z/story.pdf
+muller-z/temp.docx
+muller-z/temp.txt
+muller-z/untitled (13).md
+muller-z/untitled (2).txt
+muller-z/untitled (4).txt
+muller-z/untitled.txt
+muller-z/values.txt
+muller-z/webinar-registration.html
+muller-z/~chili.docx
+muller-z/~letter to board.docx
+muller-z/~linkedin post.docx
+muller-z/~newsletter blurb.docx
+muller-z/~newsletter blurb.txt
+okafor-d/2025-08-07_Holiday-schedule.eml
+okafor-d/2025-08-09_Strategic-planning-offsite.eml
+okafor-d/2025-08-10_Scholarship-applications-open.eml
+okafor-d/2025-08-14_Retirement-card-for-Walt (2).eml
+okafor-d/2025-08-14_Retirement-card-for-Walt.eml
+okafor-d/2025-08-19_Training-forklift-awareness-for-office-staff.eml
+okafor-d/2025-08-21_Coffee-machine.eml
+okafor-d/2025-08-27_Password-expires-in-3-days.eml
+okafor-d/2025-08-28_Process-improvement-workshop.eml
+okafor-d/2025-09-05_Trade-show-booth-planning.eml
+okafor-d/2025-09-10_Dana-your-toner-is-calling.eml
+okafor-d/2025-09-11_Ashgrove-Pumps-rolling-forecast.eml
+okafor-d/2025-09-18_Coffee-machine.eml
+okafor-d/2025-09-24_Lunch (2).eml
+okafor-d/2025-09-24_Lunch.eml
+okafor-d/2025-10-02_Coffee-machine.eml
+okafor-d/2025-10-08_Your-EOB-is-available.eml
+okafor-d/2025-10-11_Pick-up-kids.eml
+okafor-d/2025-10-16_Parking-lot-repaving-move-cars.eml
+okafor-d/2025-10-23_You-re-invited-Lumenfold-Live-2025.eml
+okafor-d/2025-10-27_Legislative-update.eml
+okafor-d/2025-10-28_CRM-training.eml
+okafor-d/2025-11-01_1-1.eml
+okafor-d/2025-11-11_Order-acknowledgment-PO-QUI-25-0733.eml
+okafor-d/2025-11-17_Lunch-w-Calloway-Marine-buyer.eml
+okafor-d/2025-11-17_Pricing-committee.eml
+okafor-d/2025-11-20_Weekend-rates-are-falling.eml
+okafor-d/2025-11-21_The-Harrowgate-Herald-November-2025.eml
+okafor-d/2025-11-26_Dana-fares-from-79-one-way.eml
+okafor-d/2025-12-04_Your-CPSM-renewal-is-due.eml
+okafor-d/2025-12-06_Blood-drive.eml
+okafor-d/2025-12-09_Fall-getaways-the-weekend-fares-are-back.eml
+okafor-d/2025-12-11_Calloway-Marine-rolling-forecast.eml
+okafor-d/2025-12-11_Legislative-update.eml
+okafor-d/2025-12-13_Year-end-close-kickoff.eml
+okafor-d/2025-12-15_OVDA-fall-meeting-Cincinnati.eml
+okafor-d/2025-12-18_Flash-sale-ends-at-midnight.eml
+okafor-d/2025-12-18_Order-acknowledgment-PO-STO-25-0685.eml
+okafor-d/2025-12-25_Order-acknowledgment-PO-STO-25-0243.eml
+okafor-d/2025-12-25_Training-forklift-awareness-for-office-staff.eml
+okafor-d/2025-12-29_Security-alert-new-sign-in-from-Chrome-on-Window.eml
+okafor-d/2026-01-03_Hold-do-not-book.eml
+okafor-d/2026-01-07_Parking-lot-repaving-move-cars.eml
+okafor-d/2026-01-19_Focus-time.eml
+okafor-d/2026-01-23_Early-bird-ends-Friday-Supply-Chain-Leaders-Summ.eml
+okafor-d/2026-02-03_Price-increase-letters-review-before-they-go-out.eml
+okafor-d/2026-02-12_Lunch.eml
+okafor-d/2026-02-17_Holiday-schedule.eml
+okafor-d/2026-02-17_Phishing-test-results.eml
+okafor-d/2026-02-25_Security-alert-new-sign-in-from-Chrome-on-Window.eml
+okafor-d/2026-02-25_Your-CPSM-renewal-is-due.eml
+okafor-d/2026-03-03_Ashgrove-Pumps-rolling-forecast.eml
+okafor-d/2026-03-05_Benefits-open-enrollment-info-session.eml
+okafor-d/2026-03-12_Quote-request-Flat-washer-M8-A4.eml
+okafor-d/2026-03-18_Quote-request-Nyloc-nut-5-16-18-18-8.eml
+okafor-d/2026-04-03_The-Harrowgate-Herald-April-2026.eml
+okafor-d/2026-04-08_Upgrade-for-less-on-your-next-trip.eml
+okafor-d/2026-04-09_Holiday-party-planning-committee.eml
+okafor-d/2026-04-09_Price-increase-letters-review-before-they-go-out.eml
+okafor-d/2026-04-17_Your-HarborMiles-statement-for-April.eml
+okafor-d/2026-04-24_Out-of-office.eml
+okafor-d/2026-04-24_You-re-30-of-the-way-to-Silver-status.eml
+okafor-d/2026-05-03_Dana-we-saved-you-a-seat.eml
+okafor-d/2026-05-04_Holiday-schedule.eml
+okafor-d/2026-05-15_Your-storage-is-92-full.eml
+okafor-d/2026-06-04_FIW-Digest-June-4.eml
+okafor-d/2026-06-05_Distributor-survey-inventory-is-up-again.eml
+okafor-d/2026-06-05_The-Harrowgate-Herald-Vol-3-No-7.eml
+okafor-d/2026-06-23_New-single-origin-Huila-Colombia.eml
+okafor-d/2026-06-26_Legislative-update.eml
+okafor-d/2026-06-26_The-Harrowgate-Herald-June-2026.eml
+okafor-d/2026-07-13_Member-survey-wages-and-benefits.eml
+okafor-d/Copy of SOP.docx
+okafor-d/Copy of booth.txt
+okafor-d/Doc13 (2).docx
+okafor-d/Doc13.docx
+okafor-d/Doc2.docx
+okafor-d/Document9.docx
+okafor-d/EOQ v1 final.docx
+okafor-d/LI draft.md
+okafor-d/Microsoft Word - chili.txt
+okafor-d/New Text Document (11).md
+okafor-d/New Text Document (14).docx
+okafor-d/New Text Document (2).txt
+okafor-d/New Text Document.txt
+okafor-d/Pricing-committee.ics
+okafor-d/SOP (edits).docx
+okafor-d/SOP.docx
+okafor-d/blog post.txt
+okafor-d/book club - do not use.docx
+okafor-d/book club.docx
+okafor-d/book club_FINAL_final.docx
+okafor-d/booth.txt
+okafor-d/budget-draft.csv
+okafor-d/calendar.ics
+okafor-d/chapter 1 rev2.pdf
+okafor-d/chapter 1 v3 final.pdf
+okafor-d/chapter 1.pdf
+okafor-d/chapter 1_v2.docx
+okafor-d/copy_FINAL.docx
+okafor-d/draft.docx
+okafor-d/draft11.docx
+okafor-d/hotel-confirmation.html
+okafor-d/invite.ics
+okafor-d/itinerary (1).docx
+okafor-d/itinerary (Autosaved).docx
+okafor-d/letter_FINAL_final.docx
+okafor-d/linkedin post_FINAL_final.docx
+okafor-d/mtg notes (1).docx
+okafor-d/mtg notes_FINAL_final.docx
+okafor-d/new (edits).docx
+okafor-d/notes.txt
+okafor-d/office-chairs.csv
+okafor-d/post (Autosaved).docx
+okafor-d/post v2 final.pdf
+okafor-d/post.pdf
+okafor-d/post_v1.docx
+okafor-d/posting.md
+okafor-d/review DRAFT.docx
+okafor-d/review_FINAL.docx
+okafor-d/scan9.pdf
+okafor-d/scratch.docx
+okafor-d/self review.txt
+okafor-d/self review_FINAL.txt
+okafor-d/show notes_FINAL.docx
+okafor-d/show-leads.csv
+okafor-d/survey (1).docx
+okafor-d/survey questions v1 final.docx
+okafor-d/training-roster.csv
+okafor-d/untitled (3).txt
+okafor-d/untitled.docx
+okafor-d/values (edits).docx
+okafor-d/values v3 final.docx
+okafor-d/values.docx
+okafor-d/webinar-registration.html
+okafor-d/~LI draft.docx
+okafor-d/~book club.docx
+voss-r/1-1.ics
+voss-r/2025-08-04_Audit-planning-w-Hartwell-Lowe.eml
+voss-r/2025-08-07_Expense-report-reminder.eml
+voss-r/2025-08-11_Sales-tax-filings.eml
+voss-r/2025-08-11_Strategic-planning-offsite.eml
+voss-r/2025-08-17_Your-office-coffee-subscription-ships-Thursday.eml
+voss-r/2025-08-19_Survey-engagement.eml
+voss-r/2025-08-20_You-re-invited-Lumenfold-Live-2025.eml
+voss-r/2025-08-21_Ugly-sweater-contest.eml
+voss-r/2025-08-25_Pick-up-kids.eml
+voss-r/2025-08-28_Your-EOB-is-available.eml
+voss-r/2025-09-03_PortaVault-price-changes.eml
+voss-r/2025-09-05_Your-HarborMiles-statement-for-September.eml
+voss-r/2025-09-23_Survey-engagement.eml
+voss-r/2025-09-23_Your-EOB-is-available.eml
+voss-r/2025-09-29_Property-casualty-renewal.eml
+voss-r/2025-10-01_Webinar-5-reports-every-ops-leader-should-automa.eml
+voss-r/2025-10-10_The-Harrowgate-Herald-Vol-7-No-13.eml
+voss-r/2025-10-19_Coffee-chat.eml
+voss-r/2025-10-21_Raymond-members-save-up-to-40.eml
+voss-r/2025-10-23_OVDA-fall-meeting-Cincinnati.eml
+voss-r/2025-10-23_October-close-checklist.eml
+voss-r/2025-11-03_November-close-checklist.eml
+voss-r/2025-11-05_Holiday-party-planning-committee.eml
+voss-r/2025-11-17_Audit-planning-w-Hartwell-Lowe.eml
+voss-r/2025-11-18_Ops-sync.eml
+voss-r/2025-12-02_This-week-steel-prices-tariffs-and-a-new-plant-i.eml
+voss-r/2025-12-24_Insurance-renewal.eml
+voss-r/2025-12-29_Controllers-Roundtable-December.eml
+voss-r/2025-12-29_Member-guest-tee-times-now-open.eml
+voss-r/2026-01-05_Raymond-fares-from-79-one-way.eml
+voss-r/2026-01-08_OVDA-fall-meeting-Cincinnati.eml
+voss-r/2026-01-14_Raymond-we-saved-you-a-seat.eml
+voss-r/2026-01-16_The-Harrowgate-Herald-Vol-9-No-2.eml
+voss-r/2026-01-19_Desk-move.eml
+voss-r/2026-01-23_Lost-blue-water-bottle.eml
+voss-r/2026-01-23_The-Harrowgate-Herald-Vol-3-No-5.eml
+voss-r/2026-01-26_Your-dashboards-could-be-doing-more.eml
+voss-r/2026-01-29_Desk-move.eml
+voss-r/2026-01-30_Thermostat.eml
+voss-r/2026-01-31_Thermostat (2).eml
+voss-r/2026-01-31_Thermostat.eml
+voss-r/2026-02-05_Exhibitor-opportunities-still-available.eml
+voss-r/2026-02-06_Wellness-screening.eml
+voss-r/2026-02-16_Whose-car.eml
+voss-r/2026-02-20_Sales-tax-filings.eml
+voss-r/2026-02-23_Member-survey-wages-and-benefits.eml
+voss-r/2026-02-27_PBC-list-interim-fieldwork.eml
+voss-r/2026-03-04_Interview-candidate-for-AP-clerk.eml
+voss-r/2026-03-07_Month-end-close.eml
+voss-r/2026-03-10_Guide-Getting-ready-for-audit-season.eml
+voss-r/2026-03-13_Holiday-schedule.eml
+voss-r/2026-03-14_Budget-review.eml
+voss-r/2026-03-18_PBC-list-interim-fieldwork.eml
+voss-r/2026-03-19_Complete-your-profile-for-faster-check-in.eml
+voss-r/2026-03-20_Case-study-How-a-regional-distributor-cut-month.eml
+voss-r/2026-03-24_Fridge-cleanout-FRIDAY.eml
+voss-r/2026-03-30_March-close-checklist.eml
+voss-r/2026-04-05_Annual-dinner-dance-save-the-date.eml
+voss-r/2026-04-09_Ops-sync.eml
+voss-r/2026-04-12_Pick-up-kids.eml
+voss-r/2026-05-07_Your-AP-inbox-on-autopilot.eml
+voss-r/2026-05-12_Scholarship-applications-open.eml
+voss-r/2026-05-15_The-Harrowgate-Herald-Vol-8-No-20.eml
+voss-r/2026-06-05_AP-run-Thursday.eml
+voss-r/2026-06-05_Fridge-cleanout-FRIDAY.eml
+voss-r/2026-06-12_FIW-Digest-June-12.eml
+voss-r/2026-06-16_Desk-move.eml
+voss-r/2026-06-23_Training-forklift-awareness-for-office-staff.eml
+voss-r/2026-07-06_Audit-planning-w-Hartwell-Lowe.eml
+voss-r/2026-07-14_Sales-tax-filings.eml
+voss-r/2026-07-14_Team-lunch.eml
+voss-r/2026-07-17_Annual-dinner-dance-save-the-date.eml
+voss-r/Copy of party.docx
+voss-r/Doc14.docx
+voss-r/Doc8.txt
+voss-r/Document14.docx
+voss-r/Document2.txt
+voss-r/FAQ.md
+voss-r/FAQ_FINAL.md
+voss-r/Microsoft Word - letter.docx
+voss-r/Microsoft Word - party.pdf
+voss-r/Microsoft Word - temp.pdf
+voss-r/New Text Document (10).docx
+voss-r/New Text Document (11).txt
+voss-r/New Text Document (12).txt
+voss-r/agenda.txt
+voss-r/agenda_FINAL.txt
+voss-r/booth_FINAL.txt
+voss-r/chili.md
+voss-r/complaint - Copy.docx
+voss-r/draft9.md
+voss-r/email draft - Copy.docx
+voss-r/email draft v2 final.docx
+voss-r/hotel-confirmation.html
+voss-r/invite (2).ics
+voss-r/invite.ics
+voss-r/itinerary v1 final.docx
+voss-r/letter (edits).docx
+voss-r/letter to board - Copy.docx
+voss-r/letter to board.docx
+voss-r/letter_FINAL_final.docx
+voss-r/mileage-log.csv
+voss-r/new_FINAL.docx
+voss-r/notes OLD.docx
+voss-r/notes rev1.docx
+voss-r/notes.txt
+voss-r/notes13.txt
+voss-r/notes9.txt
+voss-r/office-chairs.csv
+voss-r/offsite agenda v2 final.docx
+voss-r/party planning - Copy.docx
+voss-r/potluck-signup (2).csv
+voss-r/potluck-signup.csv
+voss-r/process rev2.docx
+voss-r/process_FINAL_final.docx
+voss-r/recipe.html
+voss-r/review.txt
+voss-r/scan7.txt
+voss-r/self review rev2.txt
+voss-r/self review_FINAL.txt
+voss-r/show notes (1).docx
+voss-r/show notes (edits).docx
+voss-r/temp (2).txt
+voss-r/temp (3).txt
+voss-r/temp (4).txt
+voss-r/temp.txt
+voss-r/toast (1).docx
+voss-r/untitled (2).txt
+voss-r/untitled (3).txt
+voss-r/untitled (4).txt
+voss-r/untitled (8).txt
+voss-r/untitled.txt
+voss-r/web copy.txt
+voss-r/~FAQ.md
+voss-r/~party planning.txt
+voss-r/~toast.docx

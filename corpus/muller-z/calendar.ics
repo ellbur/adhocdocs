@@ -1,0 +1,29 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:790140471EB0AE2D432782A03F63DDE6
+SEQUENCE:0
+DTSTAMP:20260306T191500Z
+DTSTART:20260309T191500Z
+DTEND:20260309T193000Z
+SUMMARY:S&OP meeting
+LOCATION:Zoom
+ORGANIZER;CN="Ama Boateng":mailto:aboateng@bellwethermarine.example
+ATTENDEE;CN="Desmond Pryor";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:dpryor@bellwethermarine.example
+ATTENDEE;CN="Renata Szabo";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:rszabo@bellwethermarine.example
+ATTENDEE;CN="Gus Whitcomb";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:gwhitcomb@bellwethermarine.example
+ATTENDEE;CN="Shonda Rhee";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:srhee@bellwethermarine.example
+ATTENDEE;CN="Pete Navarro";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:pnavarro@bellwethermarine.example
+ATTENDEE;CN="Zoë Müller";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:zoe.muller@bellwethermarine.example
+DESCRIPTION:\n\nJoin: https://meet.bellwethermarine.example/j/6649582426\nPasscode: 704149
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

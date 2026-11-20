@@ -1,0 +1,15 @@
+#!/bin/sh
+# Claude Code's hooks (managed settings) run this for every prompt and tool
+# call: it posts the hook's JSON to the host's audit API. With `block`
+# (before a tool call or prompt), failing to record blocks it: exit 2, and
+# the reason goes to Claude. Afterwards it can only report the failure.
+if curl -sf --max-time 10 --unix-socket "${ADHOC_AUDIT_SOCKET:-/run/adhoc-audit/audit.sock}" \
+     -H 'Content-Type: application/json' --data-binary @- http://audit/hook >/dev/null; then
+  exit 0
+fi
+if [ "$1" = block ]; then
+  echo "Blocked: the audit log on the host could not record this, so it was not run. Tell the user the audit API is not answering; restarting the session (adhoc open) starts it again." >&2
+  exit 2
+fi
+echo "adhocdocs: the audit log on the host did not record this event" >&2
+exit 1

@@ -1,0 +1,8 @@
+# Code and docs: LF in the repository and in every checkout, Windows
+# included. The session image copies container/ (shell scripts), which
+# break with CRLF.
+* text=auto eol=lf
+
+# Sample documents are evidence: checked out byte for byte, never converted
+# (many emails are CRLF, and tests check their hashes).
+corpus/** -text

@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>adhocdocs</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/shell.css">
+</head>
+<body class="adhoc-shell launcher">
+<div id="docs">
+  <header class="l-top">
+    <h1>adhocdocs</h1>
+    <span class="l-actions">
+      <button id="new-matter" class="primary">New matter…</button>
+      <button id="add-existing">Add a matter folder…</button>
+    </span>
+  </header>
+  <main class="l-main">
+    <div id="setup" hidden></div>
+    <div id="list"></div>
+    <section class="l-settings">
+      <h2>Where Claude Code runs</h2>
+      <p class="hint">Claude Code works in a terminal. A session started from a terminal stays in it; one opened here gets one:</p>
+      <div id="terminal-choice" role="radiogroup"></div>
+    </section>
+  </main>
+</div>
+<div id="dock-split" hidden></div><aside id="dock" hidden></aside>
+<div id="menu" role="menu" hidden></div>
+<div id="toast" hidden></div>
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/term.js"></script>
+<script src="/launcher.js"></script>
+</body>
+</html>

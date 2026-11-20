@@ -1,0 +1,134 @@
+# Screenshots and videos of adhocdocs, taken the same way every time on a
+# virtual screen (tools/screenshots/, docs/SCREENSHOTS.md): still shots of
+# the viewer, then scenarios with Claude Code beside it, replayed from their
+# recordings. Nothing here talks to Anthropic, and nothing needs a secret.
+# Everything is uploaded as the run's "screenshots" artifact. A good run on
+# main is also published on GitHub Pages (https://ellbur.github.io/adhocdocs/):
+# a page with the videos and stills, each file at a fixed address the README
+# shows; a failed run or a pull request leaves the last good one there.
+name: Screenshots
+
+# When: once a week, if main has changed since the last successful run;
+# on merges and pull requests that add or change a scenario or this workflow
+# (so a new one is checked before it's merged); and by hand (Run workflow).
+on:
+  schedule:
+    - cron: "23 9 * * 1"        # Mondays, 09:23 UTC
+  push:
+    branches: [main]
+    paths: &scenarios
+      - "tools/screenshots/scenarios/**"
+      - ".github/workflows/screenshots.yml"
+  pull_request:
+    paths: *scenarios
+  workflow_dispatch:
+
+jobs:
+  changed:
+    # The weekly run goes ahead only for new code: not if the last successful run was of this commit.
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=true
+          if [ "${{ github.event_name }}" = schedule ]; then
+            last=$(gh run list --repo "${{ github.repository }}" --workflow screenshots.yml --branch main \
+                     --status success --limit 1 --json headSha --jq '.[0].headSha // ""')
+            if [ "$last" = "${{ github.sha }}" ]; then
+              echo "Nothing new since the last run (${last}): skipping."
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  screenshots:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libxdo-dev clang pkg-config build-essential \
+            xvfb xdotool imagemagick x11-utils jq ffmpeg \
+            tesseract-ocr tesseract-ocr-eng \
+            fonts-dejavu-core fonts-liberation
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Cache the viewer's build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            viewer/target
+          key: viewer-${{ runner.os }}-${{ hashFiles('viewer/Cargo.lock', 'viewer/rust-toolchain.toml') }}-${{ hashFiles('viewer/src/**', 'viewer/shell/**') }}
+          restore-keys: |
+            viewer-${{ runner.os }}-${{ hashFiles('viewer/Cargo.lock', 'viewer/rust-toolchain.toml') }}-
+
+      - name: Build the viewer
+        working-directory: viewer
+        run: cargo build --release --locked
+
+      - name: Python environment
+        run: uv sync --locked
+
+      - name: The sample matter
+        # made once, for the stills and (a copy each) for the scenarios
+        run: uv run python -c "import sys; sys.path.insert(0, 'tools/screenshots'); import harness, os, pathlib; harness.make_matter(pathlib.Path('/tmp/shots/sample-matter'), {**os.environ, **harness.base_env()})"
+
+      - name: Still shots
+        run: uv run python tools/screenshots/shoot.py --matter /tmp/shots/sample-matter --out screenshots
+
+      - name: The session image
+        # Claude Code at the version the recordings were made with (tools/screenshots/claude-code-version)
+        run: |
+          podman build --build-arg CLAUDE_CODE_VERSION="$(cat tools/screenshots/claude-code-version)" \
+            -f container/Containerfile -t localhost/adhocdocs:latest .
+
+      - name: Scenarios, replayed
+        run: uv run python tools/screenshots/scenario.py replay --matter /tmp/shots/sample-matter --out screenshots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: warn
+
+      - name: The page
+        run: uv run python tools/screenshots/site.py --from screenshots --out site
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          path: site/
+
+  pages:
+    # Only a good run on main replaces what's published.
+    needs: screenshots
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

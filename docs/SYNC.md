@@ -1,0 +1,699 @@
+# Syncing a Matter Across Installations
+
+*Status: built, in the five steps under "Order of building", with tests for
+each, and since then: hotkeys kept local, Bates and exhibit numbers
+reserved before use, people bound to installations, removed members' later
+events set aside, syncing as things change, finding members on the
+local network, and limited copies. Decisions still open are at the end.*
+
+A matter can be open on several machines: a lawyer's laptop, a paralegal's
+desktop, a firm server. Cloud document platforms solve this by keeping the
+documents on a server and showing them in a browser. That makes review slow:
+skimming fifty documents means waiting fifty times for the network. adhocdocs
+stays **local first**. Every installation holds a full copy of the matter
+and works from it, and installations **sync** with each other in the
+background, peer to peer, as Syncthing does.
+
+Two things differ from Syncthing:
+
+1. **One pool per matter.** In Syncthing, sharing a folder A→B and B→C
+   doesn't connect A and C. Here, every installation of a matter joins the
+   matter's one **pool**, and every member learns of every other member.
+   There is no chain of pairwise shares to get wrong.
+2. **A hub, optionally.** A pool can include a **hub**: an always-on server
+   with a stable address. Anyone its administrator has enrolled can **push**
+   a matter to it, without the administrator pulling it in, and others join
+   through it. A hub is a
+   member like any other, just always reachable.
+
+## What syncs and what doesn't
+
+| Data | Synced | Why |
+|---|---|---|
+| Documents: originals, text layers, metadata (`store/`) | yes (originals: not to [limited copies](#limited-copies)) | the matter itself; OCR and extraction run once, where ingested |
+| Tags, notes, tag definitions, entities, dated events (`annotations/`) | yes | judgments about the documents |
+| Published work product: pages, chronologies, key sets, lists | yes, **when published** | see below |
+| Pool membership | yes | so every member knows every other |
+| The workspace (`workspace/`) | **no** | the private working space of whoever is running the session |
+| Indexes | no | derived, and rebuilt locally from the synced feeds |
+| `claude-home/` (sign-in, transcripts) | **never** | credentials, and each person's own conversations |
+| The audit log (`audit/`) | no | a record of *this* machine's sessions (see open questions) |
+| Hotkeys (`annotations/hotkeys.json`) | no | each person's keyboard shortcuts are their own |
+| Viewer state, `run/` | no | local |
+
+### The workspace stays private; work product is published
+
+Pages, chronologies and key sets are *made* in the workspace, where Claude
+edits freely. But the workspace is the user's scratch space: half-finished
+drafts, scripts, experiments. It isn't synced, and nothing from outside
+writes into it while Claude works there.
+
+Publishing applies only to what's made in the workspace. Documents,
+annotations and membership live outside it and sync on their own, with no
+step from anyone.
+
+So work product crosses over by **publishing**
+([`work.py`](../src/adhocdocs/work.py)): `work publish memo.md` (from Claude,
+through the annotation API, which stamps authorship), or `adhoc publish
+memo.md --user <id>` (from the user, on the host). A publication is a
+snapshot of a file or directory, stored by hash in the store, recorded as an
+event in the `work` feed (`work/logs/<origin>.jsonl`, one log per
+installation like the others), and synced. Published work is laid out on
+every installation in `<matter>/work/`, mounted read-only into sessions,
+and the viewer's overview has a Published section. To keep working on
+someone's page, `work checkout memo.md` copies it into the workspace.
+
+- **Versions form a history.** Each publication names the versions it
+  revises. The workspace remembers which version each file was checked out
+  from or last published as, so publishing again revises that one.
+  Publishing over a name someone else published, without checking it out,
+  is refused: there'd be nothing to say what it revises.
+- **Forks.** Two installations revising the same version without seeing
+  each other's make a fork: the later is current in `work/`, the other is
+  kept in `work/.forks/`, `work ls` and `adhoc sync conflicts` list it, and
+  the overview says so. Someone resolves it by publishing a version that
+  revises both (`--merge`); Claude is good at merging two drafts. Nothing is
+  merged silently, since a page's prose is someone's judgment.
+- **Publishing carries what the work needs.** A page can quote a layer made
+  in the workspace (a re-OCR, say). Publishing promotes the layers a page or
+  list names into the store, with `add-layer` events in this installation's
+  store log, so the quotations resolve everywhere. A page's `cite-style`
+  file goes with it. A directory (a production) publishes whole.
+- **Retiring** a name takes it out of `work/`; the history stays.
+- Locators are content-addressed (document and layer hashes), so a
+  published page's quotations mean the same thing on every installation.
+- Chronologies and key sets in `work/` count on the date cards like the
+  workspace's own.
+
+## The data model: one log per installation
+
+A matter used to have one `store/log.jsonl` and one
+`annotations/log.jsonl`. Now it has **one log per installation**, each
+written only by the installation that owns it:
+
+```
+<matter>/
+  matter.toml                   the matter's ID (the pool's ID)
+  store/objects/                unchanged: content-addressed, so a union merges them
+  store/logs/<origin>.jsonl     the store feed, one file per installation
+  annotations/logs/<origin>.jsonl
+  work/logs/<origin>.jsonl      publications; snapshots in store/objects
+  pool/logs/<origin>.jsonl      membership
+  sync/                         keys, peer state (host only, never mounted)
+```
+
+An **origin** is one installation of one matter, identified by the hash of
+its public key (as a Syncthing device ID is). It's made the first time the
+installation writes, not when it reads.
+
+- **A copied matter gets a new origin.** The origin records the host and
+  path it was made for, and a matter opened anywhere else makes its own. A
+  restored backup or a copied directory would otherwise be a second writer
+  of the original's log, forking it. Moving a matter costs a new log file,
+  nothing more.
+- **Existing matters migrate when opened on the host:** each single log
+  becomes the logs of a new origin, unchanged, and `matter.toml` records
+  which (`legacy_origin`), so index cursors that named the old feeds still
+  work. In a session, where nothing is writable, an unmigrated matter is
+  read as it is.
+
+This makes sync almost trivial and conflict-free *at the storage level*:
+
+- **Objects are immutable and named by hash.** Two installations that hold
+  the same object hold the same bytes. Merging stores is a union. The same
+  file ingested on two machines gets the same document ID (it's a hash of
+  the content and its custodian, collection and path), so it isn't added
+  twice.
+- **Each log has a single writer, and only grows.** What a peer has is a
+  vector: for each origin, how many events. Syncing is "here's my vector;
+  send me what's past it", then fetching the objects those events name.
+- **Every event is signed** by its origin's key, and each log is a hash
+  chain (as the audit log is). So any member can pass on any other member's
+  events, and the receiver can check them. A's changes reach C through B
+  even when A and C can never connect directly. Direct connections are an
+  optimization, not a requirement.
+
+Conflicts are left to the **meaning** of the events, where they belong.
+
+### Replaying many logs into one state
+
+Every installation replays the union of the logs in the **same order**, so
+every installation that has the same events reaches the same state.
+
+- **Event IDs come from a hybrid logical clock.** They are still ULIDs, but
+  an installation never stamps an event earlier than one it has already
+  seen. So an event made after seeing another sorts after it, whatever the
+  machines' clocks say. (A machine whose clock is far ahead drags later IDs
+  along with it. That's harmless: IDs order events, and the time an event
+  happened is its `at`.)
+- **The merge order:** at each step, the earliest of the logs' next events,
+  by ID, ties going to the lower origin, each log in its own file order. For
+  logs the clock wrote, that's ID order. Logs from before (whose IDs came
+  from several processes' clocks) keep their file order, and every
+  installation still picks the same order. The viewer merges the same way.
+- **The rules are checked again on replay** (`Annotations.replay` in
+  [`annotations.py`](../src/adhocdocs/annotations.py)). An event that was valid
+  where it was written can conflict with one written concurrently
+  elsewhere: the same tag defined twice, an untag of a tag
+  someone else just applied. Replaying in the common order, each event is
+  applied, applied in part, or has no effect, the same way on every
+  installation. It stays in its log either way, and `adhoc sync conflicts`
+  lists what happened and why. Doing the same thing twice (untagging twice,
+  defining a tag the same way twice) is quiet.
+- Specific cases:
+  - **Tag and untag** on the same target: the later wins.
+  - **Exclusive tag groups** are enforced on replay, not only by the untag
+    events the writer recorded, since two installations can each apply a
+    different tag from the group. The later tag wins, unless it's Claude's
+    and would remove a person's: then Claude's has no effect.
+  - **Claude can't undo a person's work from elsewhere either:** Claude's
+    untag of a tag a person re-applied meanwhile, or its edit of a field a
+    person set meanwhile, has no effect.
+  - **A tag defined on two installations:** the first definition stands,
+    and the second's color and description become a conflict to
+    look at. Its applications still count, since it's the same name.
+  - **Hotkeys aren't synced:** each installation keeps its own, in
+    `annotations/hotkeys.json`, so they never clash. (Hotkeys an
+    installation set before this, in its tag definitions, stay its own.)
+  - **An entity defined on two installations** under the same name and
+    kind: the later one's ID becomes an alias of the earlier's, it adds the
+    names and fields the earlier lacks, and edits naming either ID land on
+    one entity.
+  - **A note deleted on one installation and edited on another:** whichever
+    is later wins. A reply to a deleted note stays, on the same document:
+    replies carry their thread's target for this.
+  - **Two edits of a note or an entity field:** the later wins; the earlier
+    is in the history.
+  - **Withdraw and supersede** take effect whenever they arrive.
+  - **A privilege call by Claude** (from a log written outside the write
+    path, or from before the rule) is kept as a flag and reported:
+    productions act only on a person's.
+- **The viewer follows the same replay.** The rules live in one place.
+  Replaying, Python writes `annotations/replay.json`, naming each event that
+  replays as something other than itself and what it replays as, and the
+  viewer substitutes those as it replays. Only arriving logs change it
+  (events written through the write path are checked and sort last), so the
+  write path and sync keep it current.
+- **Cursors are per log.** A reader's cursor maps each log
+  (`store/<origin>`, `workspace`) to the last event it read, and every event
+  says which log it came from, so an event that arrives late but sorts early
+  is still past the cursor. `ann log --cursor` gives one for the annotation
+  feed.
+- **Indexes skip overtaken events.** Indexes apply each event once, as it
+  arrives. A document's `add-document` can arrive after its `withdraw`, so
+  an index checks each event against the replayed state and skips one that
+  later events have overtaken (`still_true` in
+  [`index/base.py`](../src/adhocdocs/index/base.py)). Custom indexes get such
+  events marked `stale`.
+
+### Authorship and the rules across installations
+
+The annotation rules (Claude can't change a person's work; only a person
+makes privilege calls) still hold, for every person in the pool.
+
+- **People belong to installations** ([`pool.py`](../src/adhocdocs/pool.py)).
+  An event authored `user:alice` (a tag, a note, a publication) counts only
+  if it comes from an installation that writes for Alice; from anywhere
+  else it has no effect, and is reported. An installation comes to write
+  for a person by claiming them (the first time it writes as someone nobody
+  has claimed; founding a pool claims everyone who wrote there before), or
+  by being vouched for by one of theirs: `adhoc sync vouch <origin> --user
+  alice`, or an invitation made with `--same-person`, whose joiner proves
+  it holds the invitation's secret (the hub that accepts it sees only the
+  secret's hash, so it can't). A person no installation has claimed is
+  anyone's to write as.
+- **None of it depends on the order of events**, since event IDs are the
+  writer's to choose: who writes for whom is worked out from all the claims
+  and vouches at once, so a backdated claim takes no one over. Short of
+  per-person keys, a member running modified code *can* claim a person
+  someone else already claimed. Then both write for them, and the person is
+  **disputed**: `adhoc sync conflicts` reports it to everyone, so the
+  impersonation is plain to see, and removing the installation that isn't
+  theirs settles it. (The write path refuses to do this.)
+- **Claude's events say where they came from:** `claude`, with the origin
+  and, as now, `requested_by`. Claude on Bob's machine can't untag Alice's
+  tag, just as it can't untag Bob's.
+- The rules hold on replay, so an installation that broke them locally
+  (modified code, a hand-edited log) can't break them for everyone else:
+  its events have no effect when the others replay them.
+- Sync never runs in the container, and the container never sees `sync/`.
+  The session sees synced changes the way it sees an ingest: new events in
+  read-only feeds.
+
+## The pool
+
+The **pool log** (`pool/logs/`) records membership, replicated like any
+other feed:
+
+- `add-member` (an origin's certificate, a name, its role (`member` or
+  `hub`), the addresses where it listens), `remove-member`, `set-addresses`
+  ([`pool.py`](../src/adhocdocs/pool.py)). Each is signed by a member.
+- **Who counts as a member:** the founder (in `matter.toml`, and in every
+  invitation), by its own `add-member`; after that, an event counts only if
+  its installation is a member when it's replayed. So everyone agrees on
+  the members, and an installation that was removed can't add itself back.
+- **Founding** a pool (the first `adhoc sync invite`, or `serve
+  --advertise`) seals the installation's existing logs: events written
+  before signing existed are signed in place, IDs unchanged. After that the
+  logs are shared, and are never rewritten.
+- Because membership is replicated, joining through any one member is
+  joining the pool. Every member learns of every other, and connects to
+  whoever it can reach.
+
+**Joining** ([`invite.py`](../src/adhocdocs/invite.py)). A member makes an
+invitation: `adhoc sync invite` prints a code holding the matter ID, its
+founder, the inviting origin, addresses to try and a one-time secret (kept
+on the inviter only as a hash, for three days by default). On the new
+machine, `adhoc sync join <code> <dir>` creates an empty matter, connects
+(checking the inviter is the origin the code names), proves the secret, and
+is added by the inviter, in the name of the person who invited it. Then it
+syncs everything.
+
+**Pushing to a hub** ([`hub.py`](../src/adhocdocs/hub.py)). The hub's
+administrator enrolls people (`adhoc hub enroll --person alice`), which
+prints a hub code: the hub's addresses, the hash of its key, and a token.
+On a member, `adhoc sync push <code>` founds the pool if there isn't one,
+sends the hub the pool's membership log, and the hub (checking the pusher
+is a member) makes a replica with an origin of its own. The member adds
+the hub to the pool with the role `hub`, and syncs everything to it. No one
+does anything per matter on the hub. Revoking a person stops their code;
+matters already on the hub are governed by their own pools.
+
+**A hub can't read what it holds** ([`seal.py`](../src/adhocdocs/seal.py)).
+A matter has a key, made when its pool is founded, kept in each
+installation's `sync/` (never mounted, never in a log) and carried to new
+members inside their invitation code; a hub never gets it. Members send a
+hub (unless it was made `--plain`):
+
+- events sealed: encrypted, with only the event's ID, its hash, the
+  previous event's hash and the key's epoch in the clear. That's enough for
+  the hub to keep each log in order and to compare log ends. Members
+  decrypt what they fetch and check every signature and chain as always.
+  Membership isn't sealed: the hub needs it to know who may connect;
+- objects encrypted in chunks under blinded names (an HMAC of the hash), so
+  the hub can't tell which documents it holds by hashing known files, and
+  padded (to within about 6%, at least 4 KB) so it can't recognize them by
+  their exact sizes either. Members check the real hash after decrypting.
+
+**Members hold the hub to it.** The pool records that a hub is sealed, and
+members won't sync with it if it ever says otherwise.
+
+**The key changes when a member is removed.** Each member publishes a key
+of its own (X25519) when it joins; removing a member issues the next
+matter key, boxed for each remaining member (a `rekey` event), so what's
+sealed afterwards a removed installation can't read, even with the hub's
+help. Older keys stay, to read what was sealed with them. A member that
+joined before box keys existed needs a new invitation to get the new key.
+
+A sealed hub can't read purges, so members, when they sync, give it the
+redacted form of what purges redacted (sealed: it can check only that each
+has the same hash as what it replaces) and tell it which objects to delete
+(it can't check those, and keeps a record of who asked, for which purge).
+Objects it holds can't be overwritten. What it can see: how many events
+each installation wrote and when, and roughly how big the objects are. The
+cost of sealing: it can't check that an event in an installation's log was
+written by that installation (the signature is inside), so a member could
+put junk there; the others would refuse that log on reading it, so it
+disrupts but deceives no one.
+
+**Invitations through the hub.** When the pool has a hub, `adhoc sync
+invite` leaves the invitation there (only its secret's hash) and the code
+names the hub, so a new member can join, and get everything, while the
+inviting laptop is closed. The hub adds the new member in the inviter's
+name.
+
+**Leaving and removal.** `adhoc sync remove` stops every other member from
+syncing with that installation, once they've synced the removal. It can't
+recall what was already copied; the command says so. The removal records
+how much of the installation's logs the remover had, and nothing past that
+counts or is accepted, whatever IDs it carries: event IDs are the writer's
+to choose, so a removed member could otherwise backdate its way back in.
+And what it wrote after that point, if some member took it in before
+hearing of the removal, is set aside everywhere: the removals' cutoffs are
+in `pool/cutoffs.json`, and every reader of the logs (the matter's state,
+annotations, published work, indexes, the viewer) stops each removed
+installation's logs there.
+
+**Known limits.** The server keeps the nonces of signed requests in
+memory: a request signed in the five minutes before a restart could be
+replayed once after it, by someone who had it (which, inside TLS, means
+the member who sent it).
+
+### Limited copies
+
+A laptop may not have room for a large matter. A **limited copy** holds
+everything but the originals: every log, all metadata, every text layer.
+It fetches originals when it needs them, from a member that holds them all,
+and keeps what it fetched in a cache with a size limit.
+
+The split works because the two parts differ so much in size. Text layers
+are usually a few percent of the originals (PDFs, scans, email with
+attachments). And the parts a matter is worked from are text and metadata,
+so a limited copy loses less than it might seem:
+
+- **Indexing stays local and ad hoc.** Every index (`fields`, `keyword`,
+  `semantic`, `threads`, `neardup`, `entities`, `dates`, `names`) is built
+  from text layers and metadata, never originals, and so are almost all
+  indexes Claude makes for itself. They build at full speed, and searches
+  stay exhaustive and say what they cover, because no text is missing. So
+  there are no shared indexes, and indexes stay whatever anyone wants.
+- **What's slow is what needs the file itself:** a page image, hex mode,
+  re-OCR, extracting what no one has extracted, producing documents. These
+  are mostly one document at a time, and the viewer can fetch the next few
+  in a list ahead of time.
+- **Bulk work over originals** (re-OCR across the matter, decoding raw bytes
+  of many files) means fetching each one. That's done deliberately:
+  `adhoc fetch <list or docs>` fetches a set of documents and keeps them.
+- **Opening an original needs the network,** unless it's cached. Reading
+  and searching text works offline as ever.
+
+**Someone must hold everything.** Nothing would stop every installation
+from being limited, so the pool doesn't allow it
+([`pool.py`](../src/adhocdocs/pool.py)):
+
+- Each member is a **full** or **limited** copy, in the pool log
+  (`add-member` with `copy`, or `set-copy`). A member becoming limited
+  counts only if another active member is full when the pool is replayed;
+  a hub is always full. Two members going limited at the same moment, each
+  seeing the other full, replay in the shared order: the first counts and
+  the second stays full. Every installation follows the pool's word on its
+  own copy, so the one that stays full goes on fetching everything.
+- Becoming limited (`adhoc sync copy limited`, `adhoc sync join --limited`)
+  is refused unless a full member says where it listens, since that's
+  where originals come from. In practice that's the hub.
+- The only full copy can't be removed while limited copies fetch from it.
+- **Back to full**: `adhoc sync copy full` fetches the originals the copy
+  lacks as it next syncs (`filled`), until none are missing.
+
+**Syncing** ([`peer.py`](../src/adhocdocs/peer.py)) still sends every event.
+A limited copy just isn't sent the original a new document adds, nor does
+it fetch one (it still fetches the same bytes when something else needs
+them, such as a text file whose layer text *is* its bytes). What it ingests
+itself, it holds, and sends as usual. A full member never takes an event
+without its original. So when it syncs with a limited copy that lacks one
+(say, another member's document), it holds that log there and gets the
+rest from a member that has the original. Both directions do this, and the
+result lists it under `later`, not as a refusal. `adhoc sync status` says
+which copy this is and how many originals it lacks.
+
+**Originals on demand** ([`fetch.py`](../src/adhocdocs/fetch.py)). Every
+reader in Python goes through the matter's object store, so the store does
+the fetching. Asked for an original it lacks, on a limited copy, it fetches
+it from a full member (hubs first; a sealed hub's copy is opened and checked
+against its hash) and returns it. `raw`, `interp`, `produce`, quoting and
+extraction need nothing of their own. When nothing that holds it can be
+reached, the reader says so, and that its text is here. It doesn't try that
+original again for 30 seconds, so a reader isn't held up on every look.
+
+- **In a session** the store is read-only and the only network is Claude's,
+  so the store asks the host instead, through the annotation API (`POST
+  /fetch`), then reads the original from the store as mounted.
+- **The viewer** runs on the host, and never waits on the network.
+  Opening a document whose original isn't here shows its text at once and
+  fetches the original in the background, switching to it when it arrives
+  ([VIEWER.md](VIEWER.md#on-a-limited-copy)). A sequence starts fetching
+  the next three (`/api/prefetch`), so they're usually here when opened. The viewer fetches by running
+  `adhoc fetch-original`, the same host tool that writes the user's tags.
+  It fetches only while `sync/was-limited` exists: on a limited copy, or a
+  copy filling in after going back to full.
+
+**The cache** has a size limit (`adhoc sync copy limited --cache-gb N`,
+10 GB by default; kept as `cache_limit_bytes` in `matter.toml`, which isn't
+synced). Its ledger, `sync/cache.json`, lists the originals the copy may let
+go of, with when each was last used. When the cache is over its limit, the
+least recently used go first. Never let go of:
+
+- **What no full member is known to hold.** Something ingested here isn't
+  in the ledger until a sync has put it on a full member. A copy that just
+  went limited asks a full member, as it next syncs, which of its
+  originals that member holds (`sync/confirm-held` until it knows).
+- **What `adhoc fetch` kept** (pinned), until `adhoc fetch --unpin`.
+- **Bytes that are a text layer's text**, such as a text file's original:
+  a limited copy keeps all text.
+
+The ledger is the host's. A session reads cached originals without
+touching it, so what Claude reads in a session counts as used only when it
+was fetched.
+
+`adhoc fetch` with no arguments, or `adhoc sync status`, shows the cache:
+its size, its limit, how much is pinned, and how many originals are missing.
+
+**Not built:** a copy too small even for the text (a tablet, say). It would
+need indexes made elsewhere and synced, checked by their settings as local
+ones are. That's left until it's wanted, since it would limit which
+indexes there can be.
+
+### Bates and exhibit numbers
+
+Bates numbers and exhibit numbers must not repeat across installations
+([`numbers.py`](../src/adhocdocs/numbers.py)). So a production takes the range
+it needs before stamping it: it makes the pages, reserves exactly that many
+numbers (a `reserve-numbers` event in the annotation feed, which syncs),
+then stamps them. Exhibit sets do the same. Without `--start`, a
+production or set begins at the next number not reserved on any
+installation the matter has heard from. A failed production gives its
+numbers back.
+
+- **With a hub**, reserving syncs with it first, to hear of others'
+  reservations, and after, to check no one took the same numbers in the
+  meantime, so a clash needs two people reserving at the same moment.
+- **Only whoever reserved numbers can give them back**, from the same
+  installation, and only until they're stamped: a finished production
+  marks its reservation used. A reservation is at most a million numbers,
+  starting no more than a million past the next free one, so no one can
+  push numbering out of reach.
+- **Without one**, two installations that produce before syncing can
+  reserve the same numbers. Replay keeps the earlier reservation, and
+  `adhoc sync conflicts` reports the later (`numbers-overlap`): that
+  production needs redoing with new numbers.
+- Productions and sets made before reservations existed are reserved the
+  next time their series is used, so the other installations learn of
+  them.
+- In a session, Claude reserves through the annotation API, which syncs
+  with the hub on the host.
+
+### Purging documents
+
+Sometimes documents must go for good: clawed back after a production made
+in error, or destroyed under a protective order when the case ends
+([`purge.py`](../src/adhocdocs/purge.py)). `adhoc purge <doc> --user me
+--reason "…"` (a person, on the host; never Claude) records a signed
+`purge` event naming the documents. It counts only if made by a person an
+installation has claimed, from one of theirs.
+
+**Each installation works out for itself what that means** for what it
+holds, so a purge can't be made to delete anything but those documents:
+
+- it deletes their objects (originals, text layers and their parts,
+  metadata, layers made from them in the workspace, with their
+  attachments), keeping whatever a document that isn't purged still uses;
+- it redacts what the annotation events say about them. **Events are
+  signed over a tree of hashes** ([`signing.py`](../src/adhocdocs/signing.py)),
+  so parts of one can be hidden and its signature, hash and place in the
+  chain still check. A tag or note on a purged document keeps only what
+  places it, who made it, and which document; an entity keeps everything
+  but its references to purged documents. A receiver accepts hidden parts
+  only where a purge it knows of hides exactly those, so no one can hide
+  anything else, or drop or reorder events;
+- it treats them as gone for good: out of the state, the indexes (which
+  are then compacted and rewritten, so nothing lingers in their files) and
+  the viewer; ingesting the same file again doesn't bring them back.
+
+**What arrives later is held to it too.** Sync doesn't fetch, send or
+accept objects of purged documents; an annotation event about one that
+arrives later (from a member that hadn't heard) is stored redacted; and a
+layer made of one elsewhere (a late OCR) is swept away when it arrives. A
+record of the purge stays: who, when, why, which document IDs.
+
+**What a purge can't reach** is what the matter doesn't track: the
+workspace (drafts, exports, productions), Claude's transcripts in
+`claude-home`, copies made elsewhere. Each installation gets a notice
+(`adhoc purges`, shown when a session opens, and to Claude in `adhoc
+status`) listing the workspace files and published work that mention the
+documents, and what else to check. `adhoc purges --ack <purge> --user me`
+marks it dealt with.
+
+A document whose original another live document shares (the same file
+from another custodian) can't be purged alone; `--with-duplicates` purges
+them all.
+
+### Isolation (Principle 2)
+
+Syncing decides who has the matter's documents, so it is an isolation
+control, like opening a session:
+
+- **Only the user, on the host,** can create a pool, invite, join, push to
+  a hub, or remove a member. No tool in the container can, and the sync
+  keys and peer state are never mounted.
+- **Claude can observe** sync state (`adhoc status` in a session reports
+  the pool's members, from `pool/`, mounted read-only), not change it.
+- Publishing work product is *not* an isolation control: it shares work
+  with installations that already hold the documents. So Claude can
+  publish.
+- **Ethical screens:** membership is per matter, explicit, signed and
+  logged, so "who has had this matter, and since when?" has an answer.
+
+## Transport
+
+Built in [`peer.py`](../src/adhocdocs/peer.py), with the signed logs in
+[`signing.py`](../src/adhocdocs/signing.py).
+
+- **TLS 1.3, pinned to the origin.** Each installation serves with a
+  certificate for its origin key. A client doesn't check it against any
+  authority: it checks that the server's key hashes to the origin it meant
+  to reach. One port serves several matters; the client names the matter by
+  SNI.
+- **A matter is named by its ID and its pool's founder.** An ID alone isn't
+  secret (it's in invitations, and in clear in SNI), so a hub keeps a
+  replica per ID and founder: someone enrolled there who founds a pool of
+  their own under a matter's ID gets a replica of their own, and doesn't
+  take the real one's place.
+- **Signed requests.** Every request is signed by the client's origin key,
+  over the method, path, time, a nonce, the body and the server's origin, so
+  it can't be replayed or redirected. The server answers active members
+  only (and `/join`, for an installation with an invitation). There are no
+  passwords and no shared accounts.
+- **The exchange:** the client asks for the server's counts and log heads
+  per feed and origin. For each log, whoever has more sends the rest:
+  objects first (only those the other lacks; large originals are streamed),
+  then the events. Membership goes first, since it says whose events to
+  accept. Every event is checked against its origin's key and the event
+  before it.
+- **Nothing is read from strangers.** The server checks a request's
+  signature header (a member's origin, a fresh time) before reading any
+  body, bodies must say their length and stay within limits, and log names
+  must be origin IDs, never paths.
+- **What arrives is laid out only where it belongs.** A publication's
+  name and files come from other installations, so they're checked before
+  anything is written: relative, no `..`, nothing hidden, and only under
+  `work/`. Publishing reads workspace files without following links, so a
+  link in the workspace can't publish a file from elsewhere on the host.
+- **A log that doesn't check is refused, alone.** A bad signature, a broken
+  chain, or a fork (two copies of an origin's log that differ: the same
+  count with different last events, or a next event that doesn't follow) is
+  reported under `refused`, and the other logs still sync.
+- **Discovery:** the addresses members record in the pool log (`adhoc sync
+  serve --advertise`), and the local network
+  ([`lan.py`](../src/adhocdocs/lan.py)). No public discovery servers: they
+  would tell a third party which machines share a matter. An installation
+  that serves broadcasts a small packet on the local network every half
+  minute: its port, and a tag that changes every ten minutes and names
+  neither the matter nor the installation. A watcher that recognises its
+  matter's tag connects, checks the certificate is an active member's, and
+  syncs with it there. Someone on the network who already knows a matter's
+  ID and founder could recognise the tag, which tells them no more than
+  TLS's SNI does when members sync on that network. The tag covers the
+  announced port, so a packet heard can't be sent again pointing
+  elsewhere; a watcher looks at a few packets a minute from any one
+  address, probes each address at most every two minutes, and probes on a
+  worker with a short queue, so packets from the network can't make it
+  open connections at their pace. `--no-lan` turns it off.
+- **Relaying:** when two members can't reach each other, they don't need
+  to; the logs reach each one through anyone they can reach (usually the
+  hub).
+- **As soon as something changes** ([`watch.py`](../src/adhocdocs/watch.py)).
+  A watcher runs beside the matter on the host: `adhoc open` starts one
+  when the matter has a pool, `adhoc sync serve` runs one, and `adhoc sync
+  watch` runs one alone (for a laptop that doesn't listen). When this
+  installation's logs grow, from work here or from events another member
+  sent, it syncs with every member that says where it listens; passing on
+  what it received is what carries changes between members that can't
+  reach each other. And it keeps a long poll open to each member it can
+  reach, which answers when that member's logs change, so a laptop hears of
+  others' changes within a second or two, usually from the hub. When a
+  member is reached again (it was off, or this machine slept), it syncs
+  with it at once. Every five minutes it syncs with everyone anyway.
+  `adhoc sync now` syncs once.
+
+  The aim is that a change reaches every member that can be reached within
+  about ten seconds, and that nothing local waits on the network. Writers
+  only append to their logs; the watcher notices. Each member gets its own
+  sync thread, one sync at a time, so a member that's slow or gone holds up
+  no one else. An address that doesn't answer is given up on after ten
+  seconds. Changes made while a sync runs are buffered and go together in
+  the next one, and a failed sync is retried after 5 seconds, then less
+  often, up to every two minutes. The one deliberate wait is reserving
+  Bates or exhibit numbers, which syncs with the hub before and after
+  (see "Bates and exhibit numbers").
+  The viewer refreshes from the feeds, and Claude sees new events through
+  `idx changes` and `ann log --since`.
+
+*Why not Syncthing itself?* The single-writer logs and immutable objects
+would sync fine as Syncthing folders. But Syncthing doesn't know which
+objects an event needs, can't check our signatures, can't sync part of a
+matter, uses public discovery servers by default, and is another daemon to
+install. The pool, membership and authorship rules would be ours either
+way, and with them the protocol is small.
+
+## Commands
+
+On the host (the user's; Claude can't run them in a session):
+
+| Command | Does |
+|---|---|
+| `adhoc sync invite --user me [--address host:port]` | an invitation code (founds the pool the first time) |
+| `adhoc sync join <code> <dir>` | join with it, into a new matter directory, and sync |
+| `adhoc sync serve [--listen …] [--advertise host:port --user me]` | be reachable by the other members (and sync as things change) |
+| `adhoc sync watch` | sync as things change, without listening (a laptop) |
+| `adhoc sync join <code> <dir> --limited` | join as a [limited copy](#limited-copies) |
+| `adhoc sync copy full\|limited --user me [--cache-gb N]` | change what this installation holds |
+| `adhoc fetch <docs or list> [--unpin]` | on a limited copy: fetch originals and keep them, or stop keeping them |
+| `adhoc sync now` | sync with every member that says where it listens |
+| `adhoc sync push <hub code> --user me` | put the matter on a hub |
+| `adhoc sync status \| members \| conflicts` | what's held from whom, who's in the pool, what clashed |
+| `adhoc sync remove <origin> --user me` | take a member out of the pool |
+| `adhoc sync vouch <origin> --user me` | that member writes for me too (my other machine) |
+| `adhoc purge <doc> --user me --reason "…"` | delete documents everywhere, for good |
+| `adhoc purges [--ack <purge> --user me]` | purges carried out here, and what they leave to do |
+| `adhoc publish <path> --user me`, `adhoc retire <name> --user me` | share work product as the user |
+| `adhoc hub init [--plain] \| enroll \| revoke \| serve \| matters` | run a hub (sealed unless `--plain`) |
+
+In a session: `work ls | publish | checkout | log | retire` (publishing goes
+through the annotation API, stamped `claude`), `ann log --cursor`, and
+`adhoc status` for the pool's members.
+
+## Order of building
+
+1. Per-origin logs, HLC IDs, the matter ID and vector cursors, with no
+   network. Test by copying logs between two matter directories by hand: two
+   installations that exchange logs must end in the same state. *Built;
+   tests in [`test_sync.py`](../tests/test_sync.py).*
+2. Replay rules and `adhoc sync conflicts`. *Built; tests in
+   [`test_sync.py`](../tests/test_sync.py).*
+3. Publishing work product. *Built; tests in [`test_work.py`](../tests/test_work.py).*
+4. Signing, the pool log, and sync between two members on a LAN. *Built;
+   tests in [`test_peer.py`](../tests/test_peer.py), over TLS on localhost.*
+5. The hub, push and invitations through it. *Built; tests in
+   [`test_hub.py`](../tests/test_hub.py).*
+
+## Open questions
+
+- **Indexes.** Each installation builds its own, and semantic indexing a
+  large matter takes a while. A full member could build and offer them,
+  checked against their settings like any index (and a copy too small for
+  the text would need them: see limited copies). A sealed hub can't build
+  any.
+- **The audit log.** Should a hub collect members' audit logs, for a firm
+  that wants one record of every session on a matter?
+
+## Decided
+
+- Local first: every installation holds the matter (a limited copy, all but
+  the originals) and works offline.
+- One pool per matter; joining through any member joins the pool.
+- An optional hub, which members can push to.
+- Synced: documents, annotations (tags, notes, entities), published work
+  product, membership. Not synced: the workspace, indexes, `claude-home/`.
+- Work product made in the workspace syncs only when published, explicitly.
+- Keyboard shortcuts (tag hotkeys) aren't synced.
+- Sync is continuous and never blocks local work: changes reach reachable
+  members within about ten seconds, buffered into batches.
+- Bates and exhibit numbers are reserved, and the reservation synced, before
+  a production or exhibit set uses them.
+- Documents can be purged everywhere, by a person; what's in the workspace
+  and transcripts is left to each installation's user, with a notice.
+- Any member can remove any other, for now.
+- Hubs hold matters sealed, by default: they can't read them.
+- Limited copies: everything but originals, fetched on demand. At least
+  one member holds every original, and a hub always does. Indexes stay
+  local, built from text layers.

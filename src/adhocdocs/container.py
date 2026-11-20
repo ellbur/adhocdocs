@@ -1,0 +1,466 @@
+"""The container: one matter, one session, run with rootless Podman.
+
+``adhoc open <matter>`` (on the host) is the connect operation of Principle
+2. It starts the matter's allowlist proxy, annotation API and viewer on the
+host, each on a Unix socket, and the session container, which has no
+network at all (loopback only) and reaches those three through the sockets. The user's terminal is attached
+straight to the unmodified ``claude`` inside, as with ``podman run -it``;
+nothing here reads or relays what passes through it.
+
+Inside the session:
+
+====================  ==================  ====================================
+/matter/store         read-only           originals, layers, provenance logs
+/matter/annotations   read-only           tags and notes (writes go through the API)
+/matter/work          read-only           published work product (publishing goes through the API)
+/matter/pool          read-only           the installations the matter syncs among, for ``adhoc status``
+/matter/workspace     read-write          pages, lists, indexes
+/home/adhoc/.claude   read-write          the matter's own Claude Code config and
+                                          sign-in (``<matter>/claude-home``)
+/run/adhoc            sockets             the proxy, viewer, annotation and sign-in APIs,
+                                          and the sockets of services Claude runs
+/run/adhoc-audit      read-only           the audit API's socket, alone: connecting
+                                          works, replacing it doesn't
+====================  ==================  ====================================
+
+``<matter>/audit`` is not mounted: the host writes the session's audit log
+there (:mod:`adhocdocs.audit`). Nor is ``<matter>/sync``, this
+installation's keys and sync state (:mod:`adhocdocs.origin`, docs/SYNC.md).
+
+adhocdocs never reads, copies or sends what Claude Code writes in
+``claude-home``; it only provides the directory.
+"""
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from . import endpoint, proxy
+from .audit import AuditLog, audit_dir
+from .matter import Matter, new_event_id
+from .portable import runtime_dir, spawn, stop
+
+IMAGE = "localhost/adhocdocs:latest"
+REPO = Path(__file__).resolve().parents[2]
+CONTAINERFILE = REPO / "container" / "Containerfile"
+IMAGE_UID = 1000
+PROXY_PORT = 3128
+BRIDGE_PORT = 7100
+SESSION_ENV = {
+    "ADHOC_MATTER": "/matter",
+    "ADHOC_VIEW_SOCKET": "/run/adhoc/viewer.sock",
+    "ADHOC_ANN_SOCKET": "/run/adhoc/annotations.sock",
+    "ADHOC_AUDIT_SOCKET": "/run/adhoc-audit/audit.sock",
+    "CLAUDE_CONFIG_DIR": "/home/adhoc/.claude",
+    # Claude Code opens its sign-in page with $BROWSER: the user's own browser, once (adhocdocs.signin)
+    "BROWSER": "/usr/local/bin/adhoc-browser",
+    "ADHOC_SIGNIN_SOCKET": "/run/adhoc/signin.sock",
+}
+# Passed through by name, never stored: a user's own API key, set the normal way.
+PASS_THROUGH = ("ANTHROPIC_API_KEY",)
+
+# Recording and replaying sessions for screenshots (tools/screenshots, docs/SCREENSHOTS.md):
+# the Claude API on a Unix socket on the host, mounted here, and relayed to this
+# port inside the session. The session then holds no credential of its own: on the
+# host, a recorder holds it (or a replay needs none).
+API_PORT = 3129
+API_SOCKET = "/run/adhoc-api.sock"
+API_KEY_PLACEHOLDER = "sk-ant-api-on-host-00000000000000000000"
+API_ENV = {
+    "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{API_PORT}",
+    "ANTHROPIC_API_KEY": API_KEY_PLACEHOLDER,
+    "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    # No claude.ai billing marker at the head of the system prompt: it's for a claude.ai login,
+    # and a recorder's federated token with it is refused for "credit balance too low".
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+}
+
+ACCOUNT_NOTICE = """\
+Signing in: your browser opens on Anthropic's sign-in page. Sign in there and
+come back here. (If it doesn't open, Claude Code shows a link: open it, sign
+in, and paste the code back.) This matter keeps its own sign-in. The browser
+opens once per `adhoc open`: if you're signed out later, leave Claude Code and
+open the matter again.
+
+About your account and confidential documents (our reading, not legal advice):
+- Free, Pro and Max accounts fall under Anthropic's Consumer Terms. Chats
+  may be used to train models unless you opt out in your privacy settings.
+- Team, Enterprise and API accounts fall under the Commercial Terms: no
+  training on your content.
+Which kind to use is your (or your firm's) decision.
+"""
+
+
+class ContainerError(Exception):
+    pass
+
+
+def podman(*args, capture=True, check=True) -> str:
+    if not shutil.which("podman"):
+        raise ContainerError("podman is not installed")
+    r = subprocess.run(["podman", *args], capture_output=capture, text=True, encoding="utf-8")
+    if check and r.returncode:
+        raise ContainerError(f"podman {' '.join(args[:3])}…: {(r.stderr or '').strip()}")
+    return (r.stdout or "").strip()
+
+
+def slug(m: Matter) -> str:
+    name = re.sub(r"[^a-z0-9]+", "-", m.root.name.lower()).strip("-")[:30] or "matter"
+    return f"adhoc-{name}-{hashlib.sha256(str(m.root).encode()).hexdigest()[:6]}"
+
+
+def run_dir(m: Matter) -> Path:
+    """Where this matter's sockets live on the host, mounted at /run/adhoc."""
+    return runtime_dir() / "adhocdocs" / hashlib.sha256(str(m.root).encode()).hexdigest()[:16]
+
+
+# -- the image -----------------------------------------------------------------------------
+
+def image_id() -> str | None:
+    r = subprocess.run(["podman", "image", "inspect", "--format", "{{.Id}}", IMAGE], capture_output=True, text=True, encoding="utf-8")
+    return r.stdout.strip() or None
+
+
+def image_exists() -> bool:
+    if not shutil.which("podman"):
+        raise ContainerError("podman is not installed: see `adhoc setup --check`")
+    return subprocess.run(["podman", "image", "exists", IMAGE]).returncode == 0
+
+
+def build_image(no_cache=False):
+    """Build the image on this machine. Claude Code comes from Anthropic's
+    official installer during the build."""
+    args = ["build", "-f", str(CONTAINERFILE), "-t", IMAGE]
+    if no_cache:
+        args.append("--no-cache")
+    podman(*args, str(REPO), capture=False)
+
+
+# -- the session ----------------------------------------------------------------------------
+
+def _bind(src: Path, dst: str, ro=False, bridged=False) -> list[str]:
+    if bridged:
+        # --mount, since a Windows path has a colon of its own; podman maps it into its VM
+        return ["--mount", f"type=bind,source={src},target={dst}" + (",ro" if ro else "")]
+    return ["-v", f"{src}:{dst}" + (":ro" if ro else "")]
+
+
+def session_args(m: Matter, name: str, sockets: Path, command=(), volumes: tuple[str, str] | None = None,
+                 tty: bool | None = None, api_socket: Path | None = None) -> list[str]:
+    """The `podman run` arguments for a session. Pure, so it can be tested.
+    With ``volumes`` (on Windows and macOS: :mod:`adhocdocs.bridge`), the
+    socket directories are those two Podman volumes, shared with the bridge,
+    instead of host directories. With ``api_socket``, Claude Code talks to the
+    Claude API through that socket on the host (recording or replaying a
+    session for screenshots) instead of through the proxy."""
+    root = m.root
+    bridged = volumes is not None
+    env = {**SESSION_ENV, "HTTPS_PROXY": f"http://127.0.0.1:{PROXY_PORT}", "https_proxy": f"http://127.0.0.1:{PROXY_PORT}",
+           "ADHOC_ALLOWLIST": ",".join(proxy.CLAUDE_CODE_HOSTS), "ADHOC_MATTER_NAME": root.name,
+           "ADHOC_MATTER_ID": m.id or "", "ADHOC_POOL_FOUNDER": m.config.get("founder", "")}
+    if tty is None:
+        tty = sys.stdin.isatty()
+    args = ["run", "--rm", *(["-it"] if tty else ["-i"]), "--name", name, "--hostname", "adhoc",
+            "--network", "none",          # loopback only: no route out, no DNS
+            f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",
+            "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=4096",
+            *_bind(root / "store", "/matter/store", ro=True, bridged=bridged),
+            *_bind(root / "annotations", "/matter/annotations", ro=True, bridged=bridged),
+            *_bind(root / "work", "/matter/work", ro=True, bridged=bridged),
+            *_bind(root / "pool", "/matter/pool", ro=True, bridged=bridged),
+            *_bind(root / "workspace", "/matter/workspace", bridged=bridged),
+            *_bind(root / "claude-home", "/home/adhoc/.claude", bridged=bridged)]
+    if bridged:
+        args += ["-v", f"{volumes[0]}:/run/adhoc", "-v", f"{volumes[1]}:/run/adhoc-audit:ro"]
+    else:
+        args += ["-v", f"{sockets}:/run/adhoc"]
+        # Read-only, so nothing in the session can put its own listener in the audit API's place.
+        args += ["-v", f"{sockets / 'audit'}:/run/adhoc-audit:ro"]
+    if api_socket:
+        args += ["-v", f"{api_socket}:{API_SOCKET}"]
+        env.update(API_ENV)
+    for k, v in env.items():
+        args += ["-e", f"{k}={v}"]
+    for k in PASS_THROUGH:
+        if os.environ.get(k) and not api_socket:
+            args += ["-e", k]          # podman copies the value from our environment
+    return args + [IMAGE, *(["--", *command] if command else [])]
+
+
+# The sockets the session uses, by name: where the bridge listens in the VM,
+# and where the host service is, relative to the session's run directory.
+BRIDGED = {
+    "proxy": ("/run/adhoc/proxy.sock", "proxy.sock"),
+    "annotations": ("/run/adhoc/annotations.sock", "annotations.sock"),
+    "viewer": ("/run/adhoc/viewer.sock", "viewer.sock"),
+    "audit": ("/run/adhoc-audit/audit.sock", "audit/audit.sock"),
+    "signin": ("/run/adhoc/signin.sock", "signin.sock"),
+}
+
+
+def bridge_args(name: str, volumes: tuple[str, str]) -> list[str]:
+    """The `podman run` arguments for a session's bridge. Pure, so it can be
+    tested. Its token comes from the launcher's environment, by name."""
+    args = ["run", "-d", "--rm", "--name", f"{name}-bridge", "--hostname", "adhoc-bridge",
+            f"--userns=keep-id:uid={IMAGE_UID},gid={IMAGE_UID}",     # the session's user, so each can use the other's sockets
+            "--cap-drop=ALL", "--security-opt=no-new-privileges",
+            "-p", f"127.0.0.1::{BRIDGE_PORT}",                       # on the host's loopback only
+            "-v", f"{volumes[0]}:/run/adhoc", "-v", f"{volumes[1]}:/run/adhoc-audit",
+            "-e", "ADHOC_BRIDGE_TOKEN", "--entrypoint", "python", IMAGE,
+            "-m", "adhocdocs.bridge", "serve", "--port", str(BRIDGE_PORT)]
+    for svc, (inside, _) in BRIDGED.items():
+        args += ["--socket", f"{svc}={inside}"]
+    return args
+
+
+def _start_bridge(name: str, sockets: Path, volumes: tuple[str, str], started: list, log: Path) -> list[str]:
+    """Start the bridge and the link (Windows and macOS). Returns the bridge's arguments."""
+    token = endpoint.new_token()
+    env = {**os.environ, "ADHOC_BRIDGE_TOKEN": token}
+    # A crashed launcher's bridge would hold the name; its session is gone (we checked).
+    podman("rm", "-f", "-t", "0", f"{name}-bridge", check=False)
+    for v in volumes:
+        podman("volume", "create", "--ignore", v)
+    args = bridge_args(name, volumes)
+    r = subprocess.run(["podman", *args], capture_output=True, text=True, encoding="utf-8", env=env)
+    if r.returncode:
+        raise ContainerError(f"the bridge did not start: {r.stderr.strip()}")
+    published = podman("port", f"{name}-bridge", str(BRIDGE_PORT)).splitlines()[0].strip()
+    host, _, port = published.rpartition(":")
+    address = f"{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}"
+    # The viewer reaches Claude's services (view serve) through the bridge too.
+    endpoint.write_endpoint(sockets / "svc.endpoint", address, token)
+    link = [sys.executable, "-m", "adhocdocs.bridge", "link", address, "--ready", str(sockets / "link.ready")]
+    for svc, (_, outside) in BRIDGED.items():
+        link += ["--service", f"{svc}={sockets / outside}"]
+    started.append(spawn(link, log, env=env))
+    if not wait_for(sockets / "link.ready", 30):
+        raise ContainerError(f"the bridge did not answer; see `podman logs {name}-bridge`")
+    return args
+
+
+def wait_for(path: Path, seconds=10) -> bool:
+    end = time.time() + seconds
+    while time.time() < end:
+        if path.exists():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _end_on_hangup():
+    """Closing the terminal window (SIGHUP) or being told to stop (SIGTERM)
+    ends the session the same way as leaving Claude Code: the cleanup below
+    runs, so the viewer and the services don't outlive it."""
+    if os.name == "nt":
+        return
+    import signal
+
+    def end(signum, frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, end)
+
+
+def open_session(m: Matter, user: str, viewer=True, command=(), terminal="here",
+                 api_socket: Path | None = None, test_hooks=False) -> int:
+    """Run a session to its end. ``terminal``: ``here``, Claude Code in this
+    process's terminal; ``beside`` or ``window``, in the viewer's own
+    terminal (adhocdocs.gui), beside the documents or in a window of its own.
+    ``api_socket`` and ``test_hooks`` are for scripted screenshots
+    (tools/screenshots): the Claude API on a socket on the host, and a viewer
+    that says where things are on screen."""
+    in_viewer = terminal in ("beside", "window")
+    if in_viewer and not viewer:
+        raise ContainerError("the viewer runs Claude Code's terminal here: leave out --no-viewer, or use --terminal here")
+    if not image_exists():
+        if in_viewer:
+            raise ContainerError("the session image isn't built yet: run setup first (`adhoc setup`, or Set up in the launcher)")
+        print("Building the session image (first run; this takes a few minutes)…", file=sys.stderr)
+        build_image()
+    (m.root / "claude-home").mkdir(mode=0o700, exist_ok=True)
+    (m.root / "work").mkdir(exist_ok=True)
+    (m.root / "pool").mkdir(exist_ok=True)
+    from . import annotations, purge
+    annotations.hotkeys(m)          # this installation's own, written before the session can only read them
+    purge.enforce(m)
+    notices = []        # said before Claude Code starts, in whichever terminal it has
+    for n in purge.pending(m):
+        notices.append(f"Documents were purged from this matter ({n['reason']}, by {n['by']}, {n['at'][:10]}): "
+              f"{len(n['documents'])} document(s)."
+              + (f" Workspace files that mention them: {', '.join(n['workspace_files'][:8])}"
+                 f"{'…' if len(n['workspace_files']) > 8 else ''}." if n["workspace_files"] else "")
+              + f" {n['steps']} When done: adhoc purges --ack {n['purge']} --user <you>")
+    (m.root / "run").mkdir(exist_ok=True)
+    first = not any((m.root / "claude-home").iterdir())
+    base = slug(m)
+    n = 1
+    while subprocess.run(["podman", "container", "exists", f"{base}-{n}"]).returncode == 0:
+        n += 1
+    name = f"{base}-{n}"
+    sockets = run_dir(m) / str(n)
+    shutil.rmtree(sockets, ignore_errors=True)       # a crashed launcher's leftovers would look like live services
+    sockets.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (sockets / "audit").mkdir(exist_ok=True, mode=0o700)
+    py = [sys.executable, "-m"]
+    # Windows and macOS: the session is in Podman's VM, reached through a bridge (adhocdocs.bridge).
+    bridged = endpoint.tcp_mode()
+    volumes = (f"{name}-run", f"{name}-audit") if bridged else None
+    bridge = None
+    session = "ses_" + new_event_id().removeprefix("ev_")
+    audit = AuditLog(audit_dir(m))
+
+    started = []
+    code = None
+    _end_on_hangup()
+    try:
+        # Everything the session can reach, on sockets in one directory.
+        started.append(spawn(py + ["adhocdocs.proxy", "--unix", str(sockets / "proxy.sock"),
+                                      "--audit", str(audit.root), "--session", session], m.root / "run" / "proxy.log"))
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "ann-api",
+                                      "--socket", str(sockets / "annotations.sock")], m.root / "run" / "ann-api.log"))
+        started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "audit-api",
+                                      "--socket", str(sockets / "audit" / "audit.sock"), "--session", session],
+                                m.root / "run" / "audit-api.log"))
+        started.append(spawn(py + ["adhocdocs.signin", "serve", "--socket", str(sockets / "signin.sock"),
+                                      "--sessions", str(sockets), "--audit", str(audit.root), "--session", session],
+                                m.root / "run" / "signin.log"))
+        from . import pool as poolmod
+        if poolmod.founded(m) and not os.environ.get("ADHOC_NO_SYNC"):
+            # keep in step with the matter's other installations while working (adhocdocs.watch);
+            # a watcher already running for this matter keeps it, and this one exits
+            started.append(spawn(py + ["adhocdocs.cli", "adhoc", "--matter", str(m.root), "sync", "watch"],
+                                 m.root / "run" / "sync.log"))
+        from .view import annotate_command, viewer_binary
+        viewer_cmd = [viewer_binary(), "--matter", str(m.root), "--user", user,
+                      "--socket", str(sockets / "viewer.sock"), "--annotate", annotate_command(),
+                      *(["--test-hooks"] if test_hooks else [])] if viewer else []
+        if viewer and not in_viewer:
+            started.append(spawn(viewer_cmd, m.root / "run" / "viewer.log"))
+        for sock in ("proxy.sock", "annotations.sock", "audit/audit.sock", "signin.sock"):
+            if not wait_for(sockets / sock):
+                raise ContainerError(f"{sock} did not start; see {m.root / 'run'}")
+        if bridged:
+            bridge = _start_bridge(name, sockets, volumes, started, m.root / "run" / "link.log")
+        if first:
+            notices.append(ACCOUNT_NOTICE)
+        args = session_args(m, name, sockets, command, volumes, tty=True if in_viewer else None, api_socket=api_socket)
+        audit.append(session=session, source="launcher", kind="session-start", user=user, container=name,
+                     image=IMAGE, image_id=image_id(), command=list(command) or None, viewer=viewer,
+                     allowlist=list(proxy.CLAUDE_CODE_HOSTS), podman_args=args,
+                     **({"api_socket": str(api_socket)} if api_socket else {}),
+                     **({"bridge_args": bridge} if bridged else {}))
+        if in_viewer:
+            # The viewer is the terminal: it runs podman on a pseudo-terminal of its own,
+            # and exits with podman's exit code.
+            run = [*viewer_cmd, "--dock", terminal, "--banner", "\n".join(notices), "--run", "podman", *args]
+            viewer_proc = spawn(run, m.root / "run" / "viewer.log")
+            started.append(viewer_proc)
+            code = viewer_proc.wait()
+            return code
+        for text in notices:
+            print(text, file=sys.stderr)
+        # The terminal goes straight to the container: no relay in between.
+        code = subprocess.call(["podman", *args])
+        return code
+    finally:
+        audit.append(session=session, source="launcher", kind="session-end", exit=code)
+        for p in started:
+            stop(p)
+        if in_viewer or code is None:
+            # the viewer, or the terminal, closed with the session still running: make sure it ends
+            try:
+                podman("rm", "-f", "-t", "2", name, check=False)
+            except ContainerError:
+                pass
+        if bridged:
+            podman("rm", "-f", "-t", "1", f"{name}-bridge", check=False)
+            podman("volume", "rm", "-f", *volumes, check=False)
+        shutil.rmtree(sockets, ignore_errors=True)
+
+
+# -- inside the session: what Claude can observe -----------------------------------------------
+
+def _mounts() -> dict:
+    out = {}
+    try:
+        for line in Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines():
+            f = line.split()
+            point, opts = f[4], f[5]
+            if point.startswith("/matter") or point in ("/home/adhoc/.claude", "/run/adhoc", "/run/adhoc-audit"):
+                out[point] = "read-only" if "ro" in opts.split(",") else "read-write"
+    except OSError:
+        pass
+    return out
+
+
+def _socket_ok(path: str) -> bool:
+    try:
+        endpoint.connect(path, 1).close()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _direct_internet() -> str:
+    """Try to reach the outside without the proxy; it should fail."""
+    try:
+        socket.create_connection(("1.1.1.1", 443), timeout=2).close()
+        return "reachable"
+    except OSError as e:
+        return f"blocked ({e.strerror or e})"
+
+
+def status() -> dict:
+    """Matter, mounts, network and services as seen from inside a session.
+    Nothing about credentials."""
+    inside = os.environ.get("ADHOC_MATTER") == "/matter" and Path("/matter/store").is_dir()
+    if not inside:
+        return {"in_session": False, "note": "not inside an adhocdocs session container"}
+    return {
+        "in_session": True,
+        "matter": os.environ.get("ADHOC_MATTER_NAME"),
+        "mounts": _mounts(),
+        "network": {"proxy": os.environ.get("HTTPS_PROXY"),
+                    "allowlist": [h for h in os.environ.get("ADHOC_ALLOWLIST", "").split(",") if h],
+                    "direct_internet": _direct_internet()},
+        "viewer": "running" if _socket_ok(os.environ.get("ADHOC_VIEW_SOCKET", "")) else "not running",
+        "annotation_api": "running" if _socket_ok(os.environ.get("ADHOC_ANN_SOCKET", "")) else "not running",
+        "audit_api": "running" if _socket_ok(os.environ.get("ADHOC_AUDIT_SOCKET", "")) else "not running",
+        "sync": _sync_status(Path("/matter/pool/logs")),
+        "purges": _purges(Path("/matter/pool/purges.json")),
+    }
+
+
+def _purges(path: Path) -> list:
+    """Purges carried out on this matter, and whether the user has dealt with
+    what they leave in the workspace. Claude can help find and delete those
+    files, when the user asks."""
+    try:
+        import json
+        return [{k: n.get(k) for k in ("purge", "at", "by", "reason", "workspace_files", "published_work",
+                                       "acknowledged")} for n in json.loads(path.read_text(encoding="utf-8"))]
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _sync_status(logs: Path) -> dict:
+    """Who the matter syncs with, as the pool log says. Sync is the user's to
+    set up, on the host (Principle 2): nothing here can change it."""
+    from .matter import Feed
+    from .pool import Pool
+    p = Pool(os.environ.get("ADHOC_POOL_FOUNDER") or None)
+    for ev in Feed("pool", logs).read():
+        p.apply(ev)
+    return {"matter_id": os.environ.get("ADHOC_MATTER_ID") or None,
+            "members": [{k: x[k] for k in ("name", "role", "active")} for x in p.members.values()],
+            "note": "Syncing is set up by the user on the host, with adhoc sync; it can't be changed from here."}

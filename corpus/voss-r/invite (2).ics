@@ -1,0 +1,28 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:19AEEF0999584632F978A3FBA44822D9
+SEQUENCE:0
+DTSTAMP:20260505T180000Z
+DTSTART:20260508T180000Z
+DTEND:20260508T190000Z
+SUMMARY:Bank covenant review
+LOCATION:Zoom
+ORGANIZER;CN="Priya Raman":mailto:priya.raman@harrowgatefastener.example
+ATTENDEE;CN="Arthur Pell";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:apell@harrowgatefastener.example
+ATTENDEE;CN="Bonnie Szymanski";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:bszymanski@harrowgatefastener.example
+ATTENDEE;CN="Marisol Vance";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:mvance@harrowgatefastener.example
+ATTENDEE;CN="Luis Ferreira";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:lferreira@harrowgatefastener.example
+ATTENDEE;CN="Raymond Voss";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:rvoss@harrowgatefastener.example
+DESCRIPTION:\n\nJoin: https://meet.harrowgatefastener.example/j/5820155265\nPasscode: 451485
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

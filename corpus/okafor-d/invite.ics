@@ -1,0 +1,26 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:3F69D92F7B8B6D4699A43F177611BD8E
+SEQUENCE:0
+DTSTAMP:20260228T210000Z
+DTSTART:20260303T210000Z
+DTEND:20260303T213000Z
+SUMMARY:Trade show booth planning
+LOCATION:Conference Room A
+ORGANIZER;CN="Marisol Vance":mailto:mvance@harrowgatefastener.example
+ATTENDEE;CN="Luis Ferreira";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:lferreira@harrowgatefastener.example
+ATTENDEE;CN="Priya Raman";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:priya.raman@harrowgatefastener.example
+ATTENDEE;CN="Gwen Abernathy";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:gabernathy@harrowgatefastener.example
+ATTENDEE;CN="Dana Okafor";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:dana.okafor@harrowgatefastener.example
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

@@ -1,0 +1,59 @@
+# The screenshots tools/screenshots/shoot.py takes, in order. Each shot
+# starts the viewer afresh on the sample matter (corpus/), runs its steps,
+# waits for the screen to stop changing, and saves <name>.png.
+#
+# Steps (see run_step in shoot.py):
+#   { view = ["open", "{doc:public/scotus-coinbase-v-suski-2024.pdf}"] }   a `view` command
+#   { sh = "search forklift --list f.list.jsonl" }   a shell command on the matter
+#   { key = "bracketright" }   { type = "text" }   { click = [x, y] }   { move = [x, y] }   { sleep = 0.5 }
+# {doc:COLLECTION/FILE} is that document's locator (doc:sha256:…); the end
+# of the path is enough when only one document has it.
+#
+# theme = "dark" draws the shot with GTK's dark theme (the viewer follows the system's).
+
+[screen]
+size = [1600, 1000]
+
+[matter]
+name = "sample-matter"     # heads the overview (the matter's directory name)
+
+[[shot]]
+name = "overview"
+caption = "The overview: what the matter holds, and what to ask Claude next."
+
+[[shot]]
+name = "overview-dark"
+caption = "The overview in the dark theme."
+theme = "dark"
+
+[[shot]]
+name = "pdf-page"
+caption = "A court opinion in page mode."
+steps = [
+  { view = ["open", "{doc:public/scotus-coinbase-v-suski-2024.pdf}", "--new-pane", "--mode", "page"] },
+]
+
+[[shot]]
+name = "email"
+caption = "An email, as formatted."
+steps = [
+  { view = ["open", "{doc:delacroix-m/2025-08-22_Lease-amendment-call.eml}", "--new-pane"] },
+]
+
+[[shot]]
+name = "search-list"
+caption = "Search results as a list, with a linked preview of the selected document."
+steps = [
+  { sh = "search forklift --list forklift.list.jsonl > /dev/null" },
+  { view = ["list", "forklift.list.jsonl"] },
+]
+
+[[shot]]
+name = "highlights"
+caption = "Passages Claude pointed out, highlighted and labelled, stepped through in order."
+steps = [
+  { sh = "search '\"delegation clause\"' --by hit --limit 4 | tail -n +2 | jq -c .loc > hits" },
+  { sh = "view open \"$(head -1 hits)\" --new-pane --mode page" },
+  { sh = "while read -r l; do view highlight \"$l\" --label 'Delegation clause: who decides arbitrability'; done < hits" },
+  { key = "bracketright" },
+]

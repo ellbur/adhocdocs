@@ -1,0 +1,1022 @@
+//! The `adhoc:` protocol: everything the window loads comes from here, and
+//! nothing comes from the network. Requests run on one worker thread, which
+//! owns the MuPDF renderer.
+//!
+//! Routes:
+//!   /                          the shell (the viewer's own UI code)
+//!   /api/doc/<doc>             a document's metadata, layers, pages, family
+//!   /api/layer/<id>/text       layer text (also /segments, /geometry)
+//!   /api/text?loc=…            text at a locator, checked
+//!   /api/bytes/<doc>?start=&end=  a range of the original's bytes, as hex (hex mode)
+//!   /api/overview              what the matter holds, for the landing page
+//!   /page/<doc>/<n>?w=…        a page image, rendered by MuPDF
+//!   /presentation/<layer>      a layer's presentation, sanitized
+//!   /image/<content>           an email's inline image, by its content hash
+//!   /pane/<content>/<path>     web pane content, sanitized when it arrived
+//!
+//! Every document and layer is checked against the matter's live documents.
+
+use crate::matter::Matter;
+use crate::render::{magic_for, Renderer};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+pub const CSP: &str = "default-src 'none'; img-src adhoc: http://adhoc.localhost data:; \
+    style-src 'unsafe-inline' adhoc: http://adhoc.localhost; script-src 'none'; form-action 'none'; frame-src 'none'";
+
+const SHELL_HTML: &str = include_str!("../shell/index.html");
+const SHELL_JS: &str = include_str!("../shell/shell.js");
+const SHELL_CSS: &str = include_str!("../shell/shell.css");
+const ENTITIES_JS: &str = include_str!("../shell/entities.js");
+const DATES_JS: &str = include_str!("../shell/dates.js");
+
+/// The files every page of the viewer's own can load: the terminal (term.js,
+/// with xterm.js) and the styles, for the launcher as well as the shell.
+pub fn common_file(name: &str) -> Option<(&'static str, &'static [u8])> {
+    Some(match name {
+        "shell.css" => ("text/css", SHELL_CSS.as_bytes()),
+        "term.js" => ("text/javascript", include_bytes!("../shell/term.js")),
+        "vendor/xterm.js" => ("text/javascript", include_bytes!("../shell/vendor/xterm.js")),
+        "vendor/addon-fit.js" => ("text/javascript", include_bytes!("../shell/vendor/addon-fit.js")),
+        "vendor/xterm.css" => ("text/css", include_bytes!("../shell/vendor/xterm.css")),
+        _ => return None,
+    })
+}
+
+pub struct Response {
+    pub status: u16,
+    pub mime: &'static str,
+    pub body: Vec<u8>,
+    pub csp: bool,
+}
+
+fn ok(mime: &'static str, body: impl Into<Vec<u8>>) -> Response {
+    Response { status: 200, mime, body: body.into(), csp: false }
+}
+
+fn json_resp(v: Value) -> Response {
+    ok("application/json", v.to_string())
+}
+
+fn not_found(why: &str) -> Response {
+    Response { status: 404, mime: "text/plain", body: why.as_bytes().to_vec(), csp: false }
+}
+
+/// Pane content: content id -> path -> bytes.
+pub type Panes = Arc<Mutex<HashMap<String, HashMap<String, Vec<u8>>>>>;
+
+pub struct Handler {
+    pub matter: Arc<Mutex<Matter>>,
+    pub panes: Panes,
+    renderer: Renderer,
+    overview: crate::overview::Overview,
+    chrono: crate::chrono::Chrono,
+}
+
+pub fn query(q: &str) -> HashMap<String, String> {
+    q.split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| (k.to_string(), percent_encoding::percent_decode_str(&v.replace('+', " ")).decode_utf8_lossy().into_owned()))
+        .collect()
+}
+
+/// A string locator: doc:<id>[@<layer>][#char=a,b|page=n].
+pub struct Loc {
+    pub doc: String,
+    pub layer: Option<String>,
+    pub chars: Option<(usize, usize)>,
+    pub page: Option<i64>,
+}
+
+pub fn parse_loc(s: &str) -> Option<Loc> {
+    let rest = s.strip_prefix("doc:")?;
+    let (head, sel) = rest.split_once('#').unwrap_or((rest, ""));
+    let (doc, layer) = match head.split_once('@') {
+        Some((d, l)) => (d.to_string(), Some(l.to_string())),
+        None => (head.to_string(), None),
+    };
+    let mut loc = Loc { doc, layer, chars: None, page: None };
+    for part in sel.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = part.split_once('=')?;
+        match k {
+            "char" => {
+                let (a, b) = v.split_once(',')?;
+                loc.chars = Some((a.parse().ok()?, b.parse().ok()?));
+            }
+            "page" => loc.page = v.split('-').next()?.parse().ok(),
+            _ => {}
+        }
+    }
+    Some(loc)
+}
+
+pub fn char_slice(text: &str, s: usize, e: usize) -> String {
+    text.chars().skip(s).take(e.saturating_sub(s)).collect()
+}
+
+impl Handler {
+    pub fn new(matter: Arc<Mutex<Matter>>, panes: Panes) -> Self {
+        Handler { matter, panes, renderer: Renderer::new(), overview: Default::default(), chrono: Default::default() }
+    }
+
+    pub fn handle(&mut self, path: &str, q: &str) -> Response {
+        let decoded: Vec<String> = path.trim_start_matches('/').split('/')
+            .map(|p| percent_encoding::percent_decode_str(p).decode_utf8_lossy().into_owned()).collect();
+        let parts: Vec<&str> = decoded.iter().map(|s| s.as_str()).collect();
+        match parts.as_slice() {
+            [""] | ["index.html"] => ok("text/html", SHELL_HTML),
+            ["shell.js"] => ok("text/javascript", SHELL_JS),
+            [..] if common_file(&parts.join("/")).is_some() => {
+                let (mime, body) = common_file(&parts.join("/")).unwrap();
+                Response { status: 200, mime, body: body.to_vec(), csp: false }
+            }
+            ["entities.js"] => ok("text/javascript", ENTITIES_JS),
+            ["dates.js"] => ok("text/javascript", DATES_JS),
+            ["api", "doc", doc] => self.doc_info(doc),
+            ["api", "layer", id, "detected"] => self.detected(id),
+            ["api", "layer", id, "dates"] => self.dates(id),
+            ["api", "around"] => self.around(&query(q)),
+            ["api", "layer", id, part] => self.layer_part(id, part),
+            ["api", "text"] => self.text_at(&query(q)),
+            ["api", "bytes", doc] => self.byte_range(doc, &query(q)),
+            ["api", "docs"] => self.docs(),
+            ["api", "prefetch"] => self.prefetch(&query(q)),
+            ["api", "fetch", doc] => self.fetch_original(doc, query(q).contains_key("retry")),
+            ["api", "annotations"] => self.annotations(),
+            ["api", "entity-candidates"] => self.entity_candidates(),
+            ["api", "overview"] => self.overview(),
+            ["api", "files"] => {
+                let root = self.matter.lock().unwrap().root.clone();
+                json_resp(crate::files::list(&root))
+            }
+            ["api", "margins", doc] => self.margins(doc, &query(q)),
+            ["page", doc, n] => self.page(doc, n.trim_end_matches(".png"), &query(q)),
+            ["presentation", layer] => self.presentation(layer, &query(q)),
+            ["image", content] => self.image(content, &query(q)),
+            ["pane", content, rest @ ..] => self.pane(content, &rest.join("/")),
+            _ => not_found("no such route"),
+        }
+    }
+
+    fn annotations(&self) -> Response {
+        let root = self.matter.lock().unwrap().root.clone();
+        json_resp(annotation_state(&root))
+    }
+
+    /// The entities index's detections for a layer's text (the entity layer's
+    /// suggestions), or none if the index hasn't reached it yet.
+    fn detected(&self, id: &str) -> Response {
+        let m = self.matter.lock().unwrap();
+        let Some(layer) = m.layer(id).cloned() else { return not_found("layer not in this matter") };
+        let h = layer.text.strip_prefix("sha256:").unwrap_or(&layer.text).to_string();
+        if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return json_resp(json!([]));
+        }
+        let p = m.root.join("workspace/.adhoc/indexes/entities/texts").join(format!("{}.json", h));
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("detections").cloned().unwrap_or(json!([])))
+    }
+
+    /// The dates index's date mentions for a layer's text, or none if the
+    /// index hasn't reached it yet.
+    fn dates(&self, id: &str) -> Response {
+        let m = self.matter.lock().unwrap();
+        let Some(layer) = m.layer(id).cloned() else { return not_found("layer not in this matter") };
+        let h = layer.text.strip_prefix("sha256:").unwrap_or(&layer.text).to_string();
+        if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return json_resp(json!([]));
+        }
+        let p = m.root.join("workspace/.adhoc/indexes/dates/texts").join(format!("{}.json", h));
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("dates").cloned().unwrap_or(json!([])))
+    }
+
+    /// What is around a date, for a date card: `date`, and optionally `doc`
+    /// (the document it is shown in) and `who` (a quoted email's sender).
+    fn around(&mut self, q: &HashMap<String, String>) -> Response {
+        let Some(date) = q.get("date").filter(|d| d.len() >= 4 && d[..4].bytes().all(|b| b.is_ascii_digit())) else {
+            return not_found("no date");
+        };
+        let matter = self.matter.clone();
+        let mut m = matter.lock().unwrap();
+        m.refresh();
+        let doc = q.get("doc").and_then(|d| m.resolve_doc(d)).filter(|d| m.live(d));
+        json_resp(self.chrono.around(&m, date, doc.as_deref(), q.get("who").map(|s| s.as_str())))
+    }
+
+    /// Every detected candidate across the matter: how many documents name it.
+    fn entity_candidates(&self) -> Response {
+        let m = self.matter.lock().unwrap();
+        let p = m.root.join("workspace/.adhoc/indexes/entities/candidates.json");
+        let v: Value = std::fs::read(p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+        json_resp(v.get("candidates").cloned().unwrap_or(json!({})))
+    }
+
+    fn overview(&mut self) -> Response {
+        let matter = self.matter.clone();
+        let mut m = matter.lock().unwrap();
+        m.refresh();
+        json_resp(self.overview.get(&m))
+    }
+}
+
+/// How a document relates to others, beyond its family: replies, quotations,
+/// versions and copies (analysis.doc_links), as the near-duplicate index
+/// keeps them in `links.json`. Exact duplicates are listed apart, so copies
+/// of the same content are left out here.
+pub fn related(m: &crate::matter::Matter, doc: &str) -> Vec<Value> {
+    let p = m.root.join("workspace/.adhoc/indexes/neardup/links.json");
+    let Some(v) = std::fs::read(p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { return vec![] };
+    let dupes = m.duplicates(doc);
+    v["links"][doc].as_array().into_iter().flatten().filter_map(|x| {
+        let d = x["doc"].as_str()?;
+        if !m.live(d) || (x["rel"] == "copy" && dupes.iter().any(|y| y == d)) { return None; }
+        let meta = m.metadata(d);
+        Some(json!({"rel": x["rel"], "doc": d, "name": meta["subject"].as_str().or(meta["name"].as_str()),
+                    "date": meta["date"], "similarity": x["similarity"], "containment": x["containment"]}))
+    }).collect()
+}
+
+/// The annotation log replayed: tag definitions, tags and notes by document, and the entity list.
+///
+/// The rules that resolve conflicts between installations are Python's
+/// (`Annotations.replay` in annotations.py). It writes `annotations/replay.json`,
+/// naming each event that replays as something else (none, part of itself, or
+/// several), and this follows it rather than repeating the rules.
+pub fn annotation_state(root: &std::path::Path) -> Value {
+    let replay: Value = std::fs::read(root.join("annotations/replay.json")).ok()
+        .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let replace = replay["replace"].as_object().cloned().unwrap_or_default();
+    let events: Vec<Value> = crate::matter::annotation_events(root).into_iter()
+        .flat_map(|ev| match ev["id"].as_str().and_then(|id| replace.get(id)) {
+            Some(Value::Array(instead)) => instead.clone(),
+            _ => vec![ev],
+        })
+        .collect();
+    let mut defs: Vec<(String, Value)> = vec![];
+    let mut tags: Vec<(String, Value)> = vec![]; // (target key + tag, application)
+    let mut notes: Vec<(String, Value)> = vec![];
+    let mut entities: Vec<(String, Value)> = vec![];
+    let mut links: Vec<(String, Value)> = vec![];
+    let mut facets: Vec<(String, Value)> = vec![];
+    let mut filed: Vec<(String, Value)> = vec![]; // (facet + " " + item key, filing)
+    let mut bundles: Vec<(String, Value)> = vec![];
+    let item_key = |i: &Value| i.as_object().and_then(|o| o.iter().next())
+        .map(|(k, v)| format!("{}:{}", k, v.as_str().unwrap_or(""))).unwrap_or_default();
+    let key = |t: &Value| json!({"doc": t["doc"], "layer": t["layer"], "select": t["select"], "bundle": t["bundle"]}).to_string();
+    for ev in events {
+        let tag = ev["tag"].as_str().unwrap_or("").to_string();
+        match ev["op"].as_str().unwrap_or("") {
+            "define-tag" => defs.push((tag, ev.clone())),
+            "edit-tag" => {
+                if let Some((_, d)) = defs.iter_mut().find(|(t, _)| *t == tag) {
+                    for k in ["color", "hotkey", "group", "description"] {
+                        if ev.get(k).is_some() { d[k] = ev[k].clone(); }
+                    }
+                }
+            }
+            "tag" => {
+                let k = key(&ev["target"]) + &tag;
+                tags.retain(|(x, _)| *x != k);
+                let mut t = json!({"tag": tag, "target": ev["target"], "by": ev["author"], "at": ev["at"]});
+                if ev["carried"].is_object() { t["carried"] = ev["carried"].clone(); }
+                tags.push((k, t));
+            }
+            "untag" => {
+                let k = key(&ev["target"]) + &tag;
+                tags.retain(|(x, _)| *x != k);
+            }
+            "note" | "reply" => {
+                let target = if ev["op"] == "reply" {
+                    notes.iter().find(|(id, _)| Some(id.as_str()) == ev["parent"].as_str()).map(|(_, n)| n["target"].clone())
+                        .unwrap_or_else(|| ev["target"].clone())
+                } else { ev["target"].clone() };
+                let mut n = json!({"note": ev["note"], "parent": ev["parent"],
+                    "target": target, "body": ev["body"], "by": ev["author"], "at": ev["at"]});
+                if ev["carried"].is_object() { n["carried"] = ev["carried"].clone(); }
+                notes.push((ev["note"].as_str().unwrap_or("").to_string(), n));
+            }
+            "edit-note" => {
+                if let Some((_, n)) = notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()) {
+                    n["body"] = ev["body"].clone();
+                    n["edited_at"] = ev["at"].clone();
+                    if let Some(o) = n.as_object_mut() { o.remove("carried"); }
+                }
+            }
+            // a carried-over tag or note looked at and kept (annotations.py: carry_over)
+            "confirm-carried" => {
+                let item = if ev["note"].is_string() {
+                    notes.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["note"].as_str()).map(|(_, n)| n)
+                } else {
+                    let k = key(&ev["target"]) + &tag;
+                    tags.iter_mut().find(|(x, _)| *x == k).map(|(_, t)| t)
+                };
+                if let Some(o) = item.and_then(|x| x.as_object_mut()) {
+                    if o.remove("carried").is_some() {
+                        o.insert("confirmed_by".into(), ev["author"].clone());
+                        o.insert("confirmed_at".into(), ev["at"].clone());
+                    }
+                }
+            }
+            "delete-note" => {
+                notes.retain(|(id, _)| Some(id.as_str()) != ev["note"].as_str());
+                let k = format!("note:{}", ev["note"].as_str().unwrap_or(""));
+                filed.retain(|(_, f)| item_key(&f["item"]) != k);
+            }
+            // the entity list (see entities.py and annotations.py, which this follows)
+            "define-entity" => {
+                let mut aliases: Vec<Value> = vec![];
+                for a in std::iter::once(&ev["name"]).chain(ev["aliases"].as_array().into_iter().flatten()) {
+                    let a = a.as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !a.is_empty() && !aliases.iter().any(|x| x == &json!(a)) { aliases.push(json!(a)); }
+                }
+                entities.push((ev["entity"].as_str().unwrap_or("").to_string(), json!({
+                    "entity": ev["entity"], "name": ev["name"], "kind": ev.get("kind").filter(|k| !k.is_null()).cloned().unwrap_or(json!("other")),
+                    "aliases": aliases, "summary": ev["summary"], "recap": ev["recap"],
+                    "recap_at": if ev["recap"].is_string() { ev["at"].clone() } else { Value::Null },
+                    "see": ev.get("see").cloned().unwrap_or(json!([])), "date": ev["date"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-entity" => {
+                if let Some((_, e)) = entities.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["entity"].as_str()) {
+                    for k in ["name", "kind", "summary", "recap", "see", "date"] {
+                        if ev.get(k).is_some() { e[k] = ev[k].clone(); }
+                    }
+                    if ev.get("recap").is_some() { e["recap_at"] = ev["at"].clone(); }
+                    let mut aliases: Vec<Value> = e["aliases"].as_array().cloned().unwrap_or_default();
+                    let removed: Vec<&Value> = ev["remove_aliases"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+                    aliases.retain(|a| !removed.contains(&a));
+                    for a in ev.get("name").into_iter().chain(ev["add_aliases"].as_array().into_iter().flatten()) {
+                        let a = a.as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                        if !a.is_empty() && !aliases.iter().any(|x| x == &json!(a)) { aliases.push(json!(a)); }
+                    }
+                    e["aliases"] = json!(aliases);
+                    e["edited_by"] = ev["author"].clone();
+                    e["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-entity" => {
+                let id = ev["entity"].as_str().unwrap_or("").to_string();
+                entities.retain(|(x, _)| *x != id);
+                let gone: Vec<String> = links.iter().filter(|(_, l)| l["from"] == json!(id) || l["to"] == json!(id))
+                    .map(|(x, _)| x.clone()).collect();
+                links.retain(|(x, _)| !gone.contains(x));
+                let keys: Vec<String> = std::iter::once(format!("entity:{id}")).chain(gone.iter().map(|l| format!("link:{l}"))).collect();
+                filed.retain(|(_, f)| !keys.contains(&item_key(&f["item"])));
+            }
+            // links between entities, and facets (annotations.py, which this follows)
+            "define-link" => {
+                links.push((ev["link"].as_str().unwrap_or("").to_string(), json!({
+                    "link": ev["link"], "from": ev["from"], "to": ev["to"],
+                    "rel": ev["rel"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" "),
+                    "summary": ev["summary"], "see": ev.get("see").cloned().unwrap_or(json!([])), "date": ev["date"],
+                    "by": ev["author"], "at": ev["at"]})));
+            }
+            "edit-link" => {
+                if let Some((_, l)) = links.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["link"].as_str()) {
+                    for k in ["rel", "summary", "see", "date"] {
+                        if ev.get(k).is_some() { l[k] = ev[k].clone(); }
+                    }
+                    l["edited_by"] = ev["author"].clone();
+                    l["edited_at"] = ev["at"].clone();
+                }
+            }
+            "delete-link" => {
+                let id = ev["link"].as_str().unwrap_or("").to_string();
+                links.retain(|(x, _)| *x != id);
+                filed.retain(|(_, f)| item_key(&f["item"]) != format!("link:{id}"));
+            }
+            // bundles: recorded metadocuments (annotations.py, metadocs.py)
+            "define-bundle" => {
+                bundles.push((ev["bundle"].as_str().unwrap_or("").to_string(), json!({
+                    "bundle": ev["bundle"], "name": ev["name"], "parts": ev.get("parts").cloned().unwrap_or(json!([])),
+                    "summary": ev["summary"], "from": ev["from"], "by": ev["author"], "at": ev["at"],
+                    // one piece of a named split of a document (split.py): the side panel names it by its split
+                    "split": ev.get("split").cloned().unwrap_or(Value::Null)})));
+            }
+            "edit-bundle" => {
+                if let Some((_, b)) = bundles.iter_mut().find(|(id, _)| Some(id.as_str()) == ev["bundle"].as_str()) {
+                    for k in ["name", "summary"] {
+                        if ev.get(k).is_some() { b[k] = ev[k].clone(); }
+                    }
+                    let gone: Vec<String> = ev["remove_parts"].as_array().into_iter().flatten().map(|p| key(p)).collect();
+                    let mut parts: Vec<Value> = b["parts"].as_array().cloned().unwrap_or_default();
+                    parts.retain(|p| !gone.contains(&key(p)));
+                    for p in ev["add_parts"].as_array().into_iter().flatten() {
+                        if !parts.iter().any(|q| key(q) == key(p)) { parts.push(p.clone()); }
+                    }
+                    b["parts"] = json!(parts);
+                    b["edited_by"] = ev["author"].clone();
+                }
+            }
+            "delete-bundle" => {
+                let id = ev["bundle"].as_str().unwrap_or("").to_string();
+                bundles.retain(|(x, _)| *x != id);
+                tags.retain(|(_, t)| t["target"]["bundle"] != json!(id));
+                let gone: Vec<String> = notes.iter().filter(|(_, n)| n["target"]["bundle"] == json!(id))
+                    .map(|(x, _)| format!("note:{x}")).collect();
+                notes.retain(|(_, n)| n["target"]["bundle"] != json!(id));
+                filed.retain(|(_, f)| { let k = item_key(&f["item"]); k != format!("bundle:{id}") && !gone.contains(&k) });
+            }
+            "define-facet" => {
+                let f = ev["facet"].as_str().unwrap_or("").to_string();
+                if !facets.iter().any(|(x, _)| *x == f) {
+                    facets.push((f, json!({"facet": ev["facet"], "description": ev["description"], "color": ev["color"], "by": ev["author"]})));
+                }
+            }
+            "edit-facet" => {
+                if let Some((_, d)) = facets.iter_mut().find(|(x, _)| Some(x.as_str()) == ev["facet"].as_str()) {
+                    for k in ["description", "color"] {
+                        if ev.get(k).is_some() { d[k] = ev[k].clone(); }
+                    }
+                }
+            }
+            "file" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+                filed.push((k, json!({"facet": ev["facet"], "item": ev["item"], "by": ev["author"], "at": ev["at"]})));
+            }
+            "unfile" => {
+                let k = format!("{} {}", ev["facet"].as_str().unwrap_or(""), item_key(&ev["item"]));
+                filed.retain(|(x, _)| *x != k);
+            }
+            _ => {}
+        }
+    }
+    // Hotkeys are this installation's own (annotations/hotkeys.json, not synced:
+    // annotations.hotkeys). Only a matter that hasn't written that file yet
+    // falls back on the ones in tag definitions.
+    let keys: Option<serde_json::Map<String, Value>> = std::fs::read(root.join("annotations/hotkeys.json")).ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v["keys"].as_object().cloned());
+    let defs: Vec<Value> = defs.into_iter().map(|(_, d)| json!({"tag": d["tag"], "color": d["color"],
+        "hotkey": match &keys { Some(k) => k.get(d["tag"].as_str().unwrap_or("")).cloned().unwrap_or(Value::Null), None => d["hotkey"].clone() },
+        "group": d["group"], "description": d["description"], "by": d["author"]})).collect();
+    json!({"definitions": defs, "tags": tags.into_iter().map(|(_, t)| t).collect::<Vec<_>>(),
+           "notes": notes.into_iter().map(|(_, n)| n).collect::<Vec<_>>(),
+           "entities": entities.into_iter().map(|(_, e)| e).collect::<Vec<_>>(),
+           "links": links.into_iter().map(|(_, l)| l).collect::<Vec<_>>(),
+           "facets": facets.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "filed": filed.into_iter().map(|(_, f)| f).collect::<Vec<_>>(),
+           "bundles": bundles.into_iter().map(|(_, b)| b).collect::<Vec<_>>()})
+}
+
+impl Handler {
+    fn docs(&self) -> Response {
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        let docs: Vec<Value> = m.state.order.iter().filter(|d| m.live(d)).map(|d| {
+            let meta = m.metadata(d);
+            json!({"doc": d, "name": meta["name"], "kind": meta["kind"], "date": meta["date"]})
+        }).collect();
+        json_resp(json!(docs))
+    }
+
+    /// `?docs=a,b,c`: start fetching these documents' originals, on a limited
+    /// copy (the shell asks for the next few in a sequence as one opens).
+    fn prefetch(&mut self, q: &HashMap<String, String>) -> Response {
+        let m = self.matter.lock().unwrap();
+        let docs: Vec<String> = q.get("docs").map(|s| s.split(',').filter_map(|d| m.resolve_doc(d)).collect())
+            .unwrap_or_default();
+        json_resp(json!({"prefetching": m.prefetch(&docs)}))
+    }
+
+    /// Where a document's original stands, on a limited copy, starting a
+    /// fetch if it isn't here: `{"state": "here" | "fetching" | "failed" |
+    /// "absent"}`. Answers at once; the viewer tells the shell when the fetch
+    /// ends (`adhoc.fetched`). `?retry`: try again now, even if it just failed.
+    fn fetch_original(&mut self, id: &str, retry: bool) -> Response {
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+        let content = m.state.documents[&doc].clone();
+        if retry {
+            m.forget_failure(&content);
+        }
+        let state = m.fetch_state(&content, true);
+        json_resp(json!({"doc": doc, "state": state.name(), "here": state == crate::matter::FetchState::Here,
+                         "size": m.size_here(&content)}))
+    }
+
+    fn doc_info(&mut self, id: &str) -> Response {
+        let (doc, content, info, kind, name) = {
+            let mut m = self.matter.lock().unwrap();
+            m.refresh();
+            let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+            let content = m.state.documents[&doc].clone();
+            let meta = m.metadata(&doc);
+            let primary = m.primary_layer(&content).map(|l| l.id.clone());
+            let layers: Vec<Value> = m.state.layers.get(&content).map(|ls| ls.iter().map(|l| {
+                let obj = m.object(&l.id).unwrap_or(Value::Null);
+                json!({"id": l.id, "view": l.view, "primary": Some(&l.id) == primary.as_ref(),
+                       "geometry": obj.get("geometry").is_some() || obj.get("derived_from").is_some(),
+                       "presentation": obj.get("presentation").is_some()})
+            }).collect()).unwrap_or_default();
+            let children: Vec<Value> = m.state.children.get(&doc).map(|cs| cs.iter().filter(|c| m.live(c)).map(|c| {
+                json!({"doc": c, "name": m.metadata(c)["name"]})
+            }).collect()).unwrap_or_default();
+            let parent = m.state.parent.get(&doc).filter(|p| m.live(p)).map(|p| json!({"doc": p, "name": m.metadata(p)["name"]}));
+            let obj = m.object(&doc).unwrap_or(Value::Null);
+            let kind = meta["kind"].as_str().unwrap_or("").to_string();
+            let name = meta["name"].as_str().unwrap_or("").to_string();
+            // printed page labels, from any layer that has them
+            let mut labels = serde_json::Map::new();
+            for l in m.state.layers.get(&content).into_iter().flatten() {
+                let segs: Vec<Value> = m.segments(&l.id).into_iter().filter(|s| s["kind"] == "page-label").collect();
+                if segs.is_empty() { continue; }
+                let text = m.text(&l.text).unwrap_or_default();
+                let chars: Vec<char> = text.chars().collect();
+                for s in segs {
+                    let at = s["start"].as_u64().unwrap_or(0) as usize;
+                    let page = chars[..at.min(chars.len())].iter().filter(|c| **c == '\u{c}').count() + 1;
+                    labels.entry(page.to_string()).or_insert(s["label"].clone());
+                }
+                break;
+            }
+            // a limited copy may not have the original: say so, rather than wait for it here
+            // (opening the document fetches it: /api/fetch)
+            let size = m.size_here(&content);
+            let info = json!({"doc": doc, "content": content, "size": size, "meta": meta, "custodian": obj.get("custodian"),
+                              "here": size.is_some(), "fetchable": size.is_none() && m.limited(),
+                              "layers": layers, "children": children, "parent": parent,
+                              "duplicates": m.duplicates(&doc), "related": related(&m, &doc),
+                              "page_labels": labels, "bates": bates_for(&m.root, &doc),
+                              "dated": crate::chrono::strip(&m, &doc),
+                              "exhibits": exhibits_for(&m.root, &doc)});
+            (doc, content, info, kind, name)
+        };
+        let mut info = info;
+        // page sizes need the original: none until it's here (a limited copy fetches it on opening)
+        if (kind == "pdf" || kind == "image") && info["here"] == json!(true) {
+            let matter = self.matter.clone();
+            let c = content.clone();
+            match self.renderer.sizes(&content, || {
+                let m = matter.lock().unwrap();
+                m.bytes(&c).map(|b| (b, magic_for(&kind, &name)))
+            }) {
+                Ok(sizes) => info["pages"] = json!(sizes),
+                Err(e) => info["render_error"] = json!(e),
+            }
+        }
+        let _ = doc;
+        json_resp(info)
+    }
+
+    fn layer_part(&self, id: &str, part: &str) -> Response {
+        let m = self.matter.lock().unwrap();
+        let Some(layer) = m.layer(id).cloned() else { return not_found("layer not in this matter") };
+        match part {
+            "text" => ok("text/plain; charset=utf-8", m.text(&layer.text).unwrap_or_default()),
+            "segments" => json_resp(json!(m.segments(id))),
+            "geometry" => ok("application/json", m.geometry_json(id)),
+            _ => not_found("no such part"),
+        }
+    }
+
+    /// Hex mode reads the original a window at a time: at most BYTES_MAX
+    /// bytes per request, so a large file is never read whole.
+    fn byte_range(&self, id: &str, q: &HashMap<String, String>) -> Response {
+        const BYTES_MAX: u64 = 1 << 16;
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+        let content = m.state.documents[&doc].clone();
+        let Some(size) = m.size(&content) else { return not_found("original not in the store") };
+        let start = q.get("start").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(size);
+        let end = q.get("end").and_then(|v| v.parse::<u64>().ok()).unwrap_or(start + BYTES_MAX)
+            .clamp(start, size).min(start + BYTES_MAX);
+        let Some(data) = m.byte_range(&content, start, end) else { return not_found("can't read the original") };
+        let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+        json_resp(json!({"doc": doc, "size": size, "start": start, "end": start + data.len() as u64, "hex": hex}))
+    }
+
+    fn text_at(&self, q: &HashMap<String, String>) -> Response {
+        let m = self.matter.lock().unwrap();
+        let broken = |e: &str| json_resp(json!({"status": "broken", "error": e}));
+        let Some(loc) = q.get("loc").and_then(|s| parse_loc(s)) else { return broken("not a locator") };
+        let Some(doc) = m.resolve_doc(&loc.doc) else { return broken("document not in this matter") };
+        let content = &m.state.documents[&doc];
+        let layer = match &loc.layer {
+            Some(l) => m.state.layers.get(content).and_then(|ls| ls.iter().find(|x| &x.id == l)).cloned(),
+            None => m.primary_layer(content).cloned(),
+        };
+        let Some(layer) = layer else { return broken("layer missing") };
+        let text = m.text(&layer.text).unwrap_or_default();
+        let n = text.chars().count();
+        let (s, e) = match (loc.chars, loc.page) {
+            (Some((s, e)), _) => (s, e),
+            (None, Some(p)) => {
+                let pages: Vec<&str> = text.split('\u{c}').collect();
+                if p < 1 || p as usize > pages.len() {
+                    return broken("no such page");
+                }
+                let s: usize = pages[..p as usize - 1].iter().map(|x| x.chars().count() + 1).sum();
+                (s, s + pages[p as usize - 1].chars().count())
+            }
+            _ => (0, n),
+        };
+        if s > e || e > n {
+            return broken("offsets outside the layer");
+        }
+        let ctx: usize = q.get("context").and_then(|c| c.parse().ok()).unwrap_or(0);
+        let mut out = json!({"status": "exact", "doc": doc, "layer": layer.id, "start": s, "end": e,
+                             "text": char_slice(&text, s, e)});
+        if ctx > 0 {
+            out["pre"] = json!(char_slice(&text, s.saturating_sub(ctx), s));
+            out["post"] = json!(char_slice(&text, e, e + ctx));
+        }
+        json_resp(out)
+    }
+
+    fn page(&mut self, id: &str, n: &str, q: &HashMap<String, String>) -> Response {
+        let (doc, content, kind, name) = {
+            let m = self.matter.lock().unwrap();
+            let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+            let meta = m.metadata(&doc);
+            let content = m.state.documents[&doc].clone();
+            (doc, content, meta["kind"].as_str().unwrap_or("").to_string(), meta["name"].as_str().unwrap_or("").to_string())
+        };
+        let _ = doc;
+        let n: i32 = n.parse().unwrap_or(1);
+        let w: u32 = q.get("w").and_then(|w| w.parse().ok()).unwrap_or(1000).clamp(100, 4000);
+        let matter = self.matter.clone();
+        let c = content.clone();
+        let dark = q.get("dark").is_some_and(|v| v == "1");
+        match self.renderer.png(&content, n, w, dark, || {
+            let m = matter.lock().unwrap();
+            m.bytes(&c).map(|b| (b, magic_for(&kind, &name)))
+        }) {
+            Ok(png) => ok("image/png", png),
+            Err(e) => not_found(&e),
+        }
+    }
+
+    /// Where the ink is on pages `from`..=`to` (from 1), for cropping blank margins.
+    fn margins(&mut self, id: &str, q: &HashMap<String, String>) -> Response {
+        let (content, kind, name) = {
+            let m = self.matter.lock().unwrap();
+            let Some(doc) = m.resolve_doc(id) else { return not_found("document not in this matter") };
+            let meta = m.metadata(&doc);
+            (m.state.documents[&doc].clone(), meta["kind"].as_str().unwrap_or("").to_string(), meta["name"].as_str().unwrap_or("").to_string())
+        };
+        let from: i32 = q.get("from").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+        let to: i32 = q.get("to").and_then(|v| v.parse().ok()).unwrap_or(from).min(from + 199);
+        let mut boxes = vec![];
+        for n in from..=to {
+            let (matter, c, kind, name) = (self.matter.clone(), content.clone(), kind.clone(), name.clone());
+            match self.renderer.margins(&content, n, || {
+                let m = matter.lock().unwrap();
+                m.bytes(&c).map(|b| (b, magic_for(&kind, &name)))
+            }) {
+                Ok(b) => boxes.push(json!(b)),
+                Err(_) => break,                      // past the last page
+            }
+        }
+        json_resp(json!({"from": from, "boxes": boxes}))
+    }
+
+    /// An inline image a presentation shows (an email's `image` segment):
+    /// served only while a live document in the matter has that content and
+    /// is an image, so a purged or withdrawn one shows as missing. PNG, JPEG
+    /// and GIF as they are; anything else as MuPDF renders its first page.
+    fn image(&mut self, content: &str, q: &HashMap<String, String>) -> Response {
+        let (doc, bytes) = {
+            let m = self.matter.lock().unwrap();
+            let doc = m.state.documents.iter()
+                .filter(|(d, c)| c.as_str() == content && m.live(d) && m.metadata(d)["kind"] == "image")
+                .map(|(d, _)| d.clone()).min();
+            let Some(doc) = doc else { return not_found("no such image in this matter") };
+            let bytes = m.bytes(content);
+            (doc, bytes)
+        };
+        let Some(bytes) = bytes else { return not_found("image not in the store") };
+        match image_mime(&bytes) {
+            Some(mime) => ok(mime, bytes),
+            None => self.page(&doc, "1", q),
+        }
+    }
+
+    fn presentation(&self, id: &str, q: &HashMap<String, String>) -> Response {
+        let m = self.matter.lock().unwrap();
+        if m.layer(id).is_none() {
+            return not_found("layer not in this matter");
+        }
+        let obj = m.object(id).unwrap_or(Value::Null);
+        let Some(h) = obj.get("presentation").and_then(|v| v.as_str()) else { return not_found("no presentation") };
+        let html = sanitize(&m.text(h).unwrap_or_default());
+        // the document theme is set here, so a dark presentation never shows light first
+        let theme = if q.get("doc").is_some_and(|v| v == "dark") { " data-doc=\"dark\"" } else { "" };
+        let page = format!("<!doctype html><html{}><head><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/shell.css\"></head><body class=\"adhoc-presentation\">{}</body></html>", theme, html);
+        Response { status: 200, mime: "text/html; charset=utf-8", body: page.into_bytes(), csp: true }
+    }
+
+    /// A download the user asked for (see export.rs).
+    pub fn export(&self, req: &Value) -> Value {
+        let mut m = self.matter.lock().unwrap();
+        m.refresh();
+        crate::export::export(&m, req)
+    }
+
+    fn pane(&self, content: &str, path: &str) -> Response {
+        let panes = self.panes.lock().unwrap();
+        let Some(files) = panes.get(content) else { return not_found("no such pane content") };
+        let path = if path.is_empty() { "index.html" } else { path };
+        let Some(body) = files.get(path) else { return not_found("no such file in pane") };
+        let mime = match path.rsplit('.').next().unwrap_or("") {
+            "html" | "htm" => "text/html; charset=utf-8",
+            "css" => "text/css",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "svg" => "image/svg+xml",
+            _ => "application/octet-stream",
+        };
+        Response { status: 200, mime, body: body.clone(), csp: true }
+    }
+}
+
+/// Where a document was produced: its records from every production in the
+/// workspace (Bates range and the map from Bates pages to physical pages).
+fn bates_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
+    let mut out = vec![];
+    let Ok(dirs) = std::fs::read_dir(root.join("workspace/productions")) else { return out };
+    let mut dirs: Vec<_> = dirs.flatten().map(|d| d.path()).collect();
+    dirs.sort();
+    for d in dirs {
+        let Ok(text) = std::fs::read_to_string(d.join("production.jsonl")) else { continue };
+        let mut lines = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok());
+        let Some(head) = lines.next() else { continue };
+        for r in lines.filter(|r| r["doc"] == doc) {
+            out.push(json!({"production": head["name"], "prefix": head["prefix"], "digits": head["digits"],
+                            "begin": r["begin"], "end": r["end"], "page_map": r["page_map"]}));
+        }
+    }
+    out
+}
+
+/// The exhibits a document became (workspace/exhibits/*/exhibits.jsonl), oldest set first.
+fn exhibits_for(root: &std::path::Path, doc: &str) -> Vec<Value> {
+    let mut out = vec![];
+    let Ok(dirs) = std::fs::read_dir(root.join("workspace/exhibits")) else { return out };
+    let mut dirs: Vec<_> = dirs.flatten().map(|d| d.path()).collect();
+    dirs.sort();
+    for d in dirs {
+        let Ok(text) = std::fs::read_to_string(d.join("exhibits.jsonl")) else { continue };
+        let mut lines = text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok());
+        let Some(head) = lines.next() else { continue };
+        for r in lines.filter(|r| r["doc"] == doc) {
+            out.push(json!({"set": head["name"], "label": r["label"], "page_map": r["page_map"]}));
+        }
+    }
+    out
+}
+
+/// The image types a web view shows as they are.
+fn image_mime(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else {
+        None
+    }
+}
+
+/// Remove scripts, event handlers, frames, objects and remote resources.
+/// Panes keep forms, data-* attributes and loc:/svc: links.
+const SVG_TAGS: [&str; 18] = ["svg", "g", "defs", "marker", "path", "rect", "circle", "ellipse", "line", "polyline",
+    "polygon", "text", "tspan", "desc", "pattern", "linearGradient", "stop", "symbol"];
+// presentation attributes (none of them takes a URL but marker-*, whose url(#id) points inside the drawing)
+const SVG_ATTRIBUTES: [&str; 42] = ["d", "x", "y", "dx", "dy", "cx", "cy", "r", "rx", "ry", "x1", "y1", "x2", "y2", "width", "height",
+    "points", "transform", "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width", "stroke-dasharray", "stroke-opacity",
+    "stroke-linecap", "stroke-linejoin", "opacity", "font-size", "font-weight", "font-family", "font-style", "text-anchor",
+    "dominant-baseline", "marker-end", "marker-start", "marker-mid", "visibility", "display", "vector-effect", "paint-order",
+    "text-decoration"];
+
+pub fn sanitize(html: &str) -> String {
+    let html = remote_images(html);
+    let mut b = ammonia::Builder::default();
+    b.add_tags(&["form", "input", "select", "option", "textarea", "button", "label", "fieldset", "legend",
+                 "article", "section", "header", "footer", "nav", "main", "figure", "figcaption", "mark", "cite", "q", "style", "link", "meta", "title", "head", "body", "html"])
+        .rm_clean_content_tags(&["style"])
+        .add_generic_attributes(&["class", "id", "style", "title", "lang", "dir"])
+        .add_generic_attribute_prefixes(&["data-"])
+        .add_tag_attributes("input", &["type", "name", "value", "checked", "placeholder", "disabled"])
+        .add_tag_attributes("select", &["name", "multiple"])
+        .add_tag_attributes("option", &["value", "selected"])
+        .add_tag_attributes("textarea", &["name", "rows", "cols"])
+        .add_tag_attributes("button", &["type", "name", "value"])
+        .add_tag_attributes("form", &["action", "method"])
+        .add_tag_attributes("label", &["for"])
+        .add_tag_attributes("link", &["rel", "href"])
+        .add_tag_attributes("meta", &["charset"])
+        // drawings: diagrams (`view graph`) and Claude's own SVG. Shapes, text and
+        // markers only: no script, links, <use>, images, foreignObject or animation
+        .add_tags(&SVG_TAGS)
+        .add_tag_attributes("svg", &["xmlns", "width", "height", "viewBox", "preserveAspectRatio"])
+        .add_tag_attributes("marker", &["viewBox", "refX", "refY", "markerWidth", "markerHeight", "orient", "markerUnits"])
+        .add_tag_attributes("pattern", &["width", "height", "patternUnits", "patternTransform"])
+        .add_tag_attributes("linearGradient", &["x1", "y1", "x2", "y2", "gradientUnits", "gradientTransform"])
+        .add_tag_attributes("stop", &["offset", "stop-color", "stop-opacity"])
+        .add_generic_attributes(&SVG_ATTRIBUTES)
+        .url_schemes(["loc", "svc"].into_iter().collect())
+        .url_relative(ammonia::UrlRelative::PassThrough)
+        .link_rel(None)
+        .strip_comments(true);
+    b.clean(&html).to_string()
+}
+
+/// Remote images are never fetched, but their presence may be evidence: each
+/// becomes a visible placeholder naming its URL.
+fn remote_images(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len());
+    let mut pos = 0;
+    while let Some(i) = lower[pos..].find("<img").map(|i| i + pos) {
+        let Some(end) = lower[i..].find('>').map(|e| e + i + 1) else { break };
+        let tag = &html[i..end];
+        let tag_lower = &lower[i..end];
+        let src = tag_lower.find("src=").and_then(|k| {
+            let rest = &tag[k + 4..];
+            let q = rest.chars().next()?;
+            if q == '"' || q == '\'' {
+                rest[1..].find(q).map(|e| rest[1..1 + e].to_string())
+            } else {
+                Some(rest.split(|c: char| c.is_whitespace() || c == '>').next()?.to_string())
+            }
+        });
+        out.push_str(&html[pos..i]);
+        match src {
+            Some(u) if u.to_ascii_lowercase().starts_with("http") => {
+                let esc = u.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;");
+                out.push_str(&format!("<span class=\"adhoc-remote\">[remote image, not loaded: {}]</span>", esc));
+            }
+            _ => out.push_str(tag),
+        }
+        pos = end;
+    }
+    out.push_str(&html[pos..]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn annotations_follow_the_replay_file() {
+        let dir = std::env::temp_dir().join(format!("adhoc-replay-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let ev = |id: &str, op: &str, tag: &str, author: &str| serde_json::json!({"id": id, "at": "t", "op": op, "tag": tag,
+            "author": author, "target": {"doc": "d"}}).to_string() + "\n";
+        std::fs::write(logs.join("o_A.jsonl"), ev("ev_1", "define-tag", "hot", "user:a") + &ev("ev_3", "tag", "hot", "claude")).unwrap();
+        std::fs::write(logs.join("o_B.jsonl"), ev("ev_2", "define-tag", "hot", "user:b") + &ev("ev_4", "tag", "cold", "user:b")).unwrap();
+        // ev_2 had no effect; ev_4 replays as an untag of hot, then itself
+        std::fs::write(dir.join("annotations/replay.json"), serde_json::json!({"v": 1, "replace": {
+            "ev_2": [],
+            "ev_4": [{"id": "ev_4", "at": "t", "op": "untag", "tag": "hot", "author": "user:b", "target": {"doc": "d"}},
+                     {"id": "ev_4", "at": "t", "op": "tag", "tag": "cold", "author": "user:b", "target": {"doc": "d"}}]}}).to_string()).unwrap();
+        let st = super::annotation_state(&dir);
+        assert_eq!(st["definitions"].as_array().unwrap().len(), 1);
+        assert_eq!(st["definitions"][0]["by"], "user:a");
+        let tags: Vec<&str> = st["tags"].as_array().unwrap().iter().map(|t| t["tag"].as_str().unwrap()).collect();
+        assert_eq!(tags, ["cold"]);
+        assert_eq!(st["definitions"][0]["hotkey"], serde_json::Value::Null);
+        std::fs::write(dir.join("annotations/hotkeys.json"), r#"{"v": 1, "keys": {"hot": "h"}}"#).unwrap();
+        assert_eq!(super::annotation_state(&dir)["definitions"][0]["hotkey"], "h");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn carried_annotations_keep_their_mark_until_confirmed() {
+        let dir = std::env::temp_dir().join(format!("adhoc-carried-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let carried = serde_json::json!({"from": {"doc": "old"}, "by": "user:b", "at": "t0", "reason": "r"});
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-tag", "tag": "hot", "author": "user:a"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "tag", "tag": "hot", "author": "user:a", "target": {"doc": "new"}, "carried": carried}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "note", "note": "n_1", "body": "b", "author": "user:a", "target": {"doc": "new"}, "carried": carried}),
+            serde_json::json!({"id": "ev_4", "at": "t2", "op": "confirm-carried", "tag": "hot", "author": "user:a", "target": {"doc": "new"}}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        assert!(st["tags"][0]["carried"].is_null() && st["tags"][0]["confirmed_by"] == "user:a");
+        assert_eq!(st["notes"][0]["carried"]["by"], "user:b");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    use super::*;
+
+    #[test]
+    fn sanitize_removes_scripts_and_keeps_locators() {
+        let out = sanitize(r#"<script>x()</script><p onclick="x()">a</p><a href="javascript:x()">j</a>
+            <a href="loc:doc:sha256:ab@sha256:cd#char=1,2">q</a><img src="https://e.com/x.png"><iframe src="https://e.com"></iframe>
+            <span data-text="doc:sha256:ab">t</span><form action="svc:triage"><input type="checkbox" name="p" value="a"></form>"#);
+        assert!(!out.contains("script") && !out.contains("onclick") && !out.contains("javascript") && !out.contains("iframe"));
+        assert!(!out.contains("src=\"https://e.com"));
+        assert!(out.contains("remote image, not loaded: https://e.com/x.png"));
+        assert!(out.contains(r#"href="loc:doc:sha256:ab@sha256:cd#char=1,2""#), "{}", out);
+        assert!(out.contains(r#"data-text="doc:sha256:ab""#) && out.contains(r#"action="svc:triage""#) && out.contains("checkbox"));
+    }
+
+    #[test]
+    fn sanitize_keeps_drawings_but_not_their_scripts() {
+        let out = sanitize(r##"<div class="adhoc-graph" data-sequence><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10">
+            <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 z"/></marker></defs>
+            <path class="e" d="M1,1 C2,2 3,3 4,4" marker-end="url(#arr)"><title>a</title></path>
+            <g class="n" data-locator="doc:sha256:ab" transform="translate(1,2)"><rect width="5" height="3" rx="2"/><text x="1" y="2">Voss</text></g>
+            <script>x()</script><a href="javascript:x()"><text>j</text></a><foreignObject><p>f</p></foreignObject>
+            <use href="#arr"/><image href="https://e.com/x.png"/><animate attributeName="href" to="javascript:x()"/>
+            <g onclick="x()"><rect/></g></svg></div>"##);
+        for kept in ["<svg", "viewBox=\"0 0 10 10\"", "refX=\"9\"", "marker-end=\"url(#arr)\"", "data-locator=\"doc:sha256:ab\"",
+                     "transform=\"translate(1,2)\"", "<text x=\"1\" y=\"2\">Voss</text>", "<title>a</title>", "rx=\"2\""] {
+            assert!(out.contains(kept), "{} not in {}", kept, out);
+        }
+        for gone in ["script", "javascript", "foreignObject", "<use", "<image", "animate", "onclick"] {
+            assert!(!out.contains(gone), "{} in {}", gone, out);
+        }
+    }
+
+    #[test]
+    fn links_and_facets_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-links-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-entity", "entity": "e_a", "name": "Rita Ames", "author": "claude"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-entity", "entity": "e_b", "name": "Dock 4 delivery", "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-entity", "entity": "e_c", "name": "Harrowgate", "author": "claude"}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "define-link", "link": "l_1", "from": "e_a", "rel": "signed  for", "to": "e_b",
+                               "see": [{"doc": "d"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "define-link", "link": "l_2", "from": "e_c", "rel": "shipped", "to": "e_b", "author": "claude"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "edit-link", "link": "l_1", "date": "2026-03-09", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "define-facet", "facet": "delivery", "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_1"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_9", "at": "t", "op": "file", "facet": "delivery", "item": {"link": "l_2"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_10", "at": "t", "op": "file", "facet": "delivery", "item": {"entity": "e_c"}, "author": "claude"}),
+            serde_json::json!({"id": "ev_11", "at": "t", "op": "delete-entity", "entity": "e_c", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // deleting Harrowgate took its link and its filings with it
+        assert_eq!(st["links"].as_array().unwrap().len(), 1);
+        assert_eq!(st["links"][0]["rel"], "signed for");
+        assert_eq!(st["links"][0]["date"], "2026-03-09");
+        assert_eq!(st["facets"][0]["facet"], "delivery");
+        let filed: Vec<&Value> = st["filed"].as_array().unwrap().iter().map(|f| &f["item"]).collect();
+        assert_eq!(filed, [&serde_json::json!({"link": "l_1"})]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn bundles_follow_the_log() {
+        let dir = std::env::temp_dir().join(format!("adhoc-bundles-{}", std::process::id()));
+        let logs = dir.join("annotations/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let lines = [
+            serde_json::json!({"id": "ev_1", "at": "t", "op": "define-tag", "tag": "hot", "author": "user:a"}),
+            serde_json::json!({"id": "ev_2", "at": "t", "op": "define-bundle", "bundle": "b_1", "name": "Pack",
+                               "parts": [{"doc": "d1"}, {"doc": "d2"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_3", "at": "t", "op": "define-bundle", "bundle": "b_2", "name": "Other",
+                               "parts": [{"doc": "d3"}], "author": "claude"}),
+            serde_json::json!({"id": "ev_3b", "at": "t", "op": "define-bundle", "bundle": "b_3", "name": "scan.pdf · letters 1/2 · A",
+                               "parts": [{"doc": "d5", "select": {"page": [1, 2]}}], "author": "claude",
+                               "split": {"of": "d5", "name": "letters", "piece": 1, "pieces": 2}}),
+            serde_json::json!({"id": "ev_4", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_1"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_5", "at": "t", "op": "tag", "tag": "hot", "target": {"bundle": "b_2"}, "author": "user:a"}),
+            serde_json::json!({"id": "ev_6", "at": "t", "op": "note", "note": "n_1", "target": {"bundle": "b_2"}, "body": "x", "author": "user:a"}),
+            serde_json::json!({"id": "ev_7", "at": "t", "op": "edit-bundle", "bundle": "b_1", "add_parts": [{"doc": "d4"}],
+                               "remove_parts": [{"doc": "d1"}], "author": "user:a"}),
+            serde_json::json!({"id": "ev_8", "at": "t", "op": "delete-bundle", "bundle": "b_2", "author": "user:a"}),
+        ].iter().map(|v| v.to_string() + "\n").collect::<String>();
+        std::fs::write(logs.join("o_A.jsonl"), lines).unwrap();
+        let st = super::annotation_state(&dir);
+        // two bundles' tags are two applications, not one target
+        assert_eq!(st["bundles"].as_array().unwrap().len(), 2);
+        assert_eq!(st["bundles"][0]["parts"], serde_json::json!([{"doc": "d2"}, {"doc": "d4"}]));
+        assert_eq!(st["bundles"][1]["split"]["name"], "letters");      // a split's piece says so
+        assert!(st["bundles"][0]["split"].is_null());
+        assert_eq!(st["tags"].as_array().unwrap().len(), 1);
+        assert_eq!(st["tags"][0]["target"]["bundle"], "b_1");
+        assert!(st["notes"].as_array().unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sanitize_keeps_inline_images() {
+        let out = sanitize(r#"<figure class="adhoc-inline-image" data-cid="a@x"><img src="/image/sha256:ab" alt="inline image cid:a@x"></figure>"#);
+        assert!(out.contains(r#"src="/image/sha256:ab""#) && out.contains(r#"data-cid="a@x""#), "{}", out);
+        assert_eq!(image_mime(b"\x89PNG\r\n\x1a\nrest"), Some("image/png"));
+        assert_eq!(image_mime(b"II*\x00"), None);
+    }
+
+    #[test]
+    fn locators_parse() {
+        let l = parse_loc("doc:sha256:ab@sha256:cd#char=10,20").unwrap();
+        assert_eq!((l.doc.as_str(), l.layer.as_deref(), l.chars), ("sha256:ab", Some("sha256:cd"), Some((10, 20))));
+        assert_eq!(parse_loc("doc:sha256:ab#page=3").unwrap().page, Some(3));
+        assert!(parse_loc("file:/etc/passwd").is_none());
+        assert_eq!(char_slice("Zoë Müller", 2, 7), "ë Mül");
+    }
+}
