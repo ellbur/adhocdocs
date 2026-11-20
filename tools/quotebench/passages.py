@@ -139,6 +139,7 @@ RULE = re.compile(r"^Rule (\d+(?:\.\d+)?)\. ")
 FURNITURE = re.compile(r"FEDERAL RULES OF CIVIL PROCEDURE|\d+\s*Rule \d+(?:\.\d+)?\s*$|^\d+$|^\(As amended|Committee Note")
 # a subdivision's heading is in capitals and may run onto the next line; paragraphs and
 # subparagraphs start with a capital (their items don't); a heading is a title and a period
+HISTORY = re.compile(r"\s*\n\((?:As added|As amended|Added|Amended)\b")
 SUBDIV = re.compile(r"^\(([a-z])\) ([A-Z]{2}[A-Z ,;’'\-]*)")
 PARA = re.compile(r"^\((\d+)\) [A-Z]")
 SUBPARA = re.compile(r"^\(([A-Z])\) [A-Z]")
@@ -187,7 +188,12 @@ def frcp_candidates(text: str) -> list[dict]:
             continue
         s = "\n".join(body).strip()
         if MIN_WORDS <= words(s) <= MAX_WORDS:
-            out.append({"cite": desig, "heading": heading, "start": offs[i], "end": offs[i] + len(s)})
+            # A rule's history note ("(As added …)") ends its last subdivision. It is cut off the
+            # passage here, after the choice, which counted it: so the choice stays the one the
+            # first runs were given.
+            m = HISTORY.search(s)
+            end = offs[i] + (m.start() if m else len(s))
+            out.append({"cite": desig, "heading": heading, "start": offs[i], "end": end})
     return out
 
 
