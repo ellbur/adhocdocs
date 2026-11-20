@@ -139,4 +139,7 @@ def test_free_form_quotations_and_their_citations():
     assert "shows delivery to Dock 4" in texts and "not a signature anyone here would accept" in texts
     i = block.index("not a signature")
     assert freecheck.cited_near(block, i, names) == "2026-03-17_RE_proof-of-delivery.eml"
-    assert freecheck.cited_near(block, 0, names) == "2026-03-12_proof-of-delivery.eml"
+    assert freecheck.cited_near(block, block.index("Dock 4") + 8, names) == "2026-03-12_proof-of-delivery.eml"
+    # a name cites a quotation only if no other quotation stands between them
+    two = 'He said "first thing here" and "second thing there" (2026-03-12_proof-of-delivery.eml).'
+    assert freecheck.cited_near(two, two.index("here") + 5, names) is None

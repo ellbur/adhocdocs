@@ -5,18 +5,24 @@
 check.py answers a list of requested passages. Here nothing was requested:
 the memo quotes what it likes, in block quotations, inline “…” of three
 words or more, or page references, and cites documents by file name. Each
-quotation is judged against the document cited next to it (the nearest file
-name after it in the same paragraph, else before it):
+quotation is judged against the documents its line or list item names by
+file name (the whole name, extension and all), then those its entry names:
 
 - **verbatim**: its words are in the cited document (align.py's rules);
-- **misattributed**: they aren't, but they are in another document (a
-  forward's copy is the same words: any document they occur in that is the
-  cited one, or a copy of the same message, counts as right);
+- **misattributed**: they aren't in the documents named in its own line or
+  list item, but they are in another document;
 - **misquoted**: they are close to a passage (half or more of the words
   match) but not the same, with the word errors;
 - **not found**: nothing in the matter is close: a paraphrase in quotation
   marks, or words from somewhere else;
-- **uncited**: no document is named near it.
+- **uncited**: its line names no document, and the words aren't in the
+  documents its entry names (they are somewhere else);
+- **unverifiable**: it is cited to a document with no text here (a scan
+  not OCR'd), and nothing with text has it.
+
+A chronology cites by entry: a "Sources:" line under an entry covers every
+quotation in it, so a quotation counts as cited to any document its entry
+names.
 """
 
 import argparse
@@ -81,29 +87,61 @@ class Corpus:
 
 
 def paragraphs(prose: str):
-    """(start, text) of each paragraph or list item."""
-    pos = 0
-    for block in re.split(r"(\n\s*\n|\n(?=\s*(?:[-*+]|\d+\.)\s))", prose):
-        if block and not re.fullmatch(r"\s*", block):
-            yield prose.index(block, pos), block
-        pos += len(block or "")
+    """(start, text) of each entry: a chronology's entries (a heading, a bold lead
+    line, or a rule starts one) or, in prose without them, each paragraph. An
+    entry's "Sources:" line covers every quotation in it."""
+    starts = [0] + [m.start() for m in re.finditer(r"^(?:#{1,6} |\*\*[^*\n]{3,}\*\*|---+\s*$|\|)", prose, re.M)]
+    if len(starts) < 3:
+        starts = [0] + [m.end() for m in re.finditer(r"\n\s*\n", prose)]
+    starts = sorted(set(starts)) + [len(prose)]
+    for a, b in zip(starts, starts[1:]):
+        block = prose[a:b]
+        if block.strip():
+            yield a, block
+
+
+def _norm(s: str) -> str:
+    """For finding file names in Markdown: no emphasis or code marks (“RE_ Unclaimed…” keeps its words)."""
+    return re.sub(r"[*_`]", " ", s.lower())
 
 
 def cited_near(block: str, at: int, names: list[str]) -> str | None:
     """The nearest document name after ``at`` in the block, else before it."""
     found = []
-    low = block.lower()
+    low = _norm(block)
     for n in names:
-        stem = n.rsplit(".", 1)[0].lower()
-        for key in {n.lower(), stem}:
+        # the whole file name: without its extension, a name can be ordinary text ("PO-BMS-26-0112")
+        for key in {_norm(n)}:
             if len(key) < 6:
                 continue
             for m in re.finditer(re.escape(key), low):
                 found.append((m.start(), n))
     if not found:
         return None
-    after = [f for f in found if f[0] >= at]
-    return min(after)[1] if after else max(found)[1]
+    # a name cites the quotation only if no other quotation stands between them
+    quotes = [m.start() for m in INLINE.finditer(block)]
+    after = [f for f in found if f[0] >= at and not any(at < q < f[0] for q in quotes)]
+    before = [f for f in found if f[0] < at and not any(f[0] < q < at - 1 for q in quotes)]
+    return min(after)[1] if after else max(before)[1] if before else None
+
+
+def cited_in(block: str, names: list[str]) -> list[str]:
+    """Every document named in the block."""
+    low = _norm(block)
+    out = []
+    for n in names:
+        if len(n) >= 6 and re.search(r"(?<![\w-])" + re.escape(_norm(n)), low):
+            out.append(n)
+    # a name inside a longer one ("Unclaimed pallet …" in "RE  Unclaimed pallet …") isn't cited by it
+    return [n for n in out if not any(o != n and _norm(n) in _norm(o) for o in out)]
+
+
+def bullet_at(block: str, at: int) -> str:
+    """The list item or line of ``block`` that position ``at`` is in, with its continuation lines."""
+    starts = [0] + [m.start() for m in re.finditer(r"^\s*(?:[-*+]|\d+\.)\s", block, re.M)] + [len(block)]
+    a = max(x for x in starts if x <= at)
+    b = min(x for x in starts if x > at) if any(x > at for x in starts) else len(block)
+    return block[a:b]
 
 
 def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
@@ -114,6 +152,7 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
     loc_names = {d["loc"].removeprefix("doc:"): d["doc"]["name"] for d in corpus.docs}
     out = []
     for start, block in paragraphs(prose):
+        entry_sources = cited_in(check.strip_markdown(block), names)
         # page references
         for q in check.ref_quotations(block, refs, m):
             q["cited"] = loc_names.get(str(q.get("doc", "")).removeprefix("doc:"))
@@ -124,7 +163,7 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
             text = check.strip_markdown("\n".join(re.sub(r"^\s*>\s?", "", l) for l in block.splitlines()
                                                   if l.lstrip().startswith(">")))
             out.append({"kind": "typed-block", "text": text, "where": start,
-                        "cited": cited_near(block, len(block), names), "_block": block})
+                        "cited": cited_near(block, len(block), names), "sources": entry_sources})
             continue
         # inline quotations
         plain = check.strip_markdown(block)
@@ -132,8 +171,10 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
             q = mm.group(1) or mm.group(2)
             if len(re.findall(r"[^\W_]+", q)) < MIN_WORDS:
                 continue
-            out.append({"kind": "typed-inline", "text": q, "where": start,
-                        "cited": cited_near(plain, mm.end(), names)})
+            own = bullet_at(plain, mm.start())
+            near = cited_near(own, own.find(q) + len(q) + 1, names)
+            out.append({"kind": "typed-inline", "text": q, "where": start, "cited": near,
+                        "own_sources": [near] if near else [], "sources": entry_sources})
     return out
 
 
@@ -142,37 +183,49 @@ def same_message(corpus: Corpus, a: str, b: str) -> bool:
 
 
 def judge(q: dict, corpus: Corpus) -> dict:
+    """A quotation's verdict, against the documents its entry cites (the one
+    named nearest it first)."""
     q = {k: v for k, v in q.items() if not k.startswith("_")}
     if q.get("kind") == "ref":
         if not q.get("text"):
             return {**q, "verdict": "broken"}
         return {**q, "verdict": "verbatim"}       # the renderer's words are the layer's
     text = q["text"]
-    cited = q.get("cited")
-    if cited:
-        r = align.compare(corpus.source(cited), text)
+    own = ([q["cited"]] if q.get("cited") else []) + [n for n in q.get("own_sources", []) if n != q.get("cited")]
+    cited = own + [n for n in q.get("sources", []) if n not in own]
+    results = {}
+    for n in cited:
+        r = align.compare(corpus.source(n), text)
+        results[n] = r
         if r["verbatim"]:
-            return {**q, "verdict": "verbatim", "case": r["case"], "punctuation": r["punctuation"]}
+            return {**q, "verdict": "verbatim", "source": n, "case": r["case"], "punctuation": r["punctuation"]}
     # anywhere else?
     best, best_name = None, None
     for n in corpus.candidates(text):
-        if n == cited:
+        if n in results:
             continue
         r = align.compare(corpus.source(n), text)
         if r["verbatim"]:
-            return {**q, "verdict": "misattributed" if cited else "uncited", "found_in": n}
+            # a textless document cited next to it may hold these words too: can't tell
+            if any(not corpus.raw(c).strip() for c in (own or cited)):
+                return {**q, "verdict": "unverifiable", "found_in": n,
+                        "reason": "cited to a document with no text; the words are also in " + n}
+            return {**q, "verdict": "misattributed" if own else "uncited", "found_in": n}
         if best is None or r["matched"] > best["matched"]:
             best, best_name = r, n
-    if cited:
-        rc = align.compare(corpus.source(cited), text)
-        if not best or rc["matched"] >= best["matched"]:
-            best, best_name = rc, cited
-    if not cited and not best:
-        return {**q, "verdict": "uncited"}
+    for n, r in results.items():
+        if not best or r["matched"] >= best["matched"]:
+            best, best_name = r, n
+    if not cited:
+        return {**q, "verdict": "uncited", **({"closest": best_name} if best_name else {})}
+    # a document with no text (a scan nothing read) can't be checked against
+    textless = [n for n in (own or cited) if not corpus.raw(n).strip()]
+    if textless:
+        return {**q, "verdict": "unverifiable", "reason": f"no text for {', '.join(textless)}"}
     if best and best["words"] and best["matched"] >= best["words"] / 2:
-        return {**q, "verdict": "misquoted" if cited else "uncited", "closest": best_name,
-                "errors": best["errors"], "words_wrong": best["words_wrong"]}
-    return {**q, "verdict": "not found" if cited else "uncited", "closest": best_name}
+        return {**q, "verdict": "misquoted", "closest": best_name, "errors": best["errors"],
+                "words_wrong": best["words_wrong"]}
+    return {**q, "verdict": "not found", "closest": best_name}
 
 
 def run(memo: str, matter: str) -> dict:
