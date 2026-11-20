@@ -1,0 +1,367 @@
+{
+ "summary": {
+  "quotations": 124,
+  "words_quoted": 2398,
+  "verdicts": {
+   "verbatim": 76,
+   "uncited": 25,
+   "unverifiable": 15,
+   "not found": 7,
+   "misquoted": 1
+  },
+  "by_kind": {
+   "typed-inline": 124
+  },
+  "words_wrong": 7
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "by March 2, 2026.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "demand-letter-2026-03-25.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "PO-BMS-26-0112 / INV-2026/0347",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "2026-03-27_litigation-hold.eml",
+   "reason": "cited to a document with no text; the words are also in 2026-03-27_litigation-hold.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "D. PRUITT #4471",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "2/24/26",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "2:47 pm",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "2026-03-12_proof-of-delivery.eml",
+   "reason": "cited to a document with no text; the words are also in 2026-03-12_proof-of-delivery.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Delivery scan 02/24/2026 14:47:12 EST HH-4471",
+   "cited": "pod-TCF-889104.pdf",
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "2/24/26 2:52 pm",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Tri-County (TCFL) - truck 4471",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "NONE ON PALLET",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "? - wrap says HFS",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "No packing list. No PO ref.",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for pod-TCF-889104.pdf, receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Quarantine bay Q-3",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "2026-03-27_litigation-hold.eml",
+   "reason": "cited to a document with no text; the words are also in 2026-03-27_litigation-hold.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Driver in a hurry, would not wait for supervisor. Driver had me sign his handheld, I wrote TK because Tom is the supervisor of record. Tom offsite (training). Pallet wrap printed HFS on two sides. Did not open. Left copy of this report in Tom's tray.",
+   "cited": "receiving-discrepancy-report-RDR-0224-02.pdf",
+   "verdict": "unverifiable",
+   "reason": "no text for receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "seen TK 3/2 - no PO, call carrier",
+   "cited": "receiving-discrepancy-report-RDR-0224-02.pdf",
+   "verdict": "unverifiable",
+   "reason": "no text for receiving-discrepancy-report-RDR-0224-02.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Pickup is scheduled for Wednesday 3/4, morning run: driver R. Ames, truck 4471, pickup order PU-0304-118 … We will hold the pallet at our Richmond terminal as refused freight until the shipper tells us what to do with it.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "RE_ Unclaimed pallet at Bellwether Dock 4 - please pick up.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "3/4 TCFL picked up pallet, driver R. Ames, 10:20 am",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "dock-receiving-log-2026-03.csv"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "3/4 Q-3 cleared. Report closed.",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "dock-receiving-log-2026-03.csv"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Quarantined freight isn't opened until it's identified.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "No. The shipment was never received against that PO, in our system or on paper.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "3/10 Re-opened per Z. Muller (procurement) - possible HFS PO-BMS-26-0112 ?? sent to TK",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "dispute-timeline-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "(1) Place Bellwether on credit hold effective March 19; (2) ask Tri-County to confirm in writing what it picked up on March 4 and where that pallet is now; (3) refer the matter to Pellham & Stroud LLP for a demand letter if payment is not received by March 24. We should not reship until the location of the original pallet is confirmed.",
+   "cited": null,
+   "verdict": "misquoted",
+   "closest": "memo-collection-bellwether-2026-03-18-rev.pdf",
+   "errors": [
+    {
+     "type": "dropped",
+     "source": "Harrowgate Fastener Supply Co Internal Page 1",
+     "quote": "",
+     "context": "by March 24. We should not reship until the location of the Harrowgate Fastener Supply Co. - Internal - Page 1\foriginal ",
+     "at": 2098
+    }
+   ]
+  },
+  {
+   "kind": "typed-inline",
+   "text": "your claim dated March 20, 2026 for non-delivery of one pallet consigned to Bellwether Marine Systems, Inc.",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for tcfl-claim-letter-2026-04-10.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Privileged memo - Harrowgate shipment dispute",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "RE LITIGATION HOLD - Harrowgate.msg"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "26 Mar Demand letter from Pellham & Stroud → forwarded to Marcus.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dispute-timeline-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Our records show the shipment was delivered to the consignee at Dock 4 on February 24, 2026 at 14:47. The delivery receipt was signed and no exceptions were noted. Your claim for non-delivery is therefore declined. On March 4, 2026 our driver collected one unlabeled pallet from the consignee at the consignee's request. That pallet is being held at our Richmond terminal as refused freight under storage number RS-2026-0412. Storage accrues at $35.00 per day beginning March 11, 2026. Please advise disposition.",
+   "cited": null,
+   "verdict": "unverifiable",
+   "reason": "no text for tcfl-claim-letter-2026-04-10.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "PM: forklift recert, offsite",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "receiving-shift-roster-2026-02-23.html"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Tom offsite (training)",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "Dock 4 forklift recertification - Thursday 3_5.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "at the forklift recert in Chesapeake from 12:30 to 17:00",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dock4-camera-review-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "1 pallet, unlabeled",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "pickup-order-PU-0304-118.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "the packing list sleeve was on the pallet when it left Columbus. Not sure what happened to it.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-04-03_FW_Bellwether-response.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Shipper ref PO-BMS-26-0112 / INV-2026/0347",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "Dock 4 forklift recertification - Thursday 3_5.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "visible but not readable.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dock4-camera-review-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "for non-delivery",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "Dock 4 forklift recertification - Thursday 3_5.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Did NOT say it was missing - just asking for ETA.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "call-notes-bellwether-2026-03.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "I'm sure I said it wasn't here,",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dispute-timeline-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "I told you as much when I called on the 2nd.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-09_RE_INV-2026-0347_past-due.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "she'd check with receiving,",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "call-notes-bellwether-2026-03.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Our receiving team has no record,",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-09_RE_INV-2026-0347_past-due.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "did not sign it",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-17_RE_proof-of-delivery.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Goods in Bellwether's possession for eight days were plainly received.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "demand-letter-2026-03-25.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "PO-BMS-26-0112",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "PO-BMS-26-0112.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "PO-BMS-26-0112 … RECEIVED",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-10_RE_dock-4-check-PO-BMS-26-0112.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "no receipt for PO-BMS-26-0112",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-10_RE_dock-4-check-PO-BMS-26-0112.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "has been waiting on the 44-B/7 bolts since last week.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-09_RE_INV-2026-0347_past-due.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "needs the 44-B/7 bolts by 3/9.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "call-notes-bellwether-2026-03.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Line is down 44-B/7 since 9 Mar.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dispute-timeline-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "hull line 2",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-02-09_PO-BMS-26-0112.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Privileged memo - Harrowgate shipment dispute",
+   "cited": null,
+   "verdict": "uncited",
+   "closest": "2025-08-04_Audit-planning-w-Hartwell-Lowe.eml"
+  }
+ ]
+}

@@ -810,8 +810,11 @@ def find_words(m: Matter, where: str | None, words: list[str], view: str | None 
         raise PageError(f"the words weren't found {scope}, exactly once and in order{hint}. "
                         "They must be the document's own words; whitespace and quote marks may differ.")
     if len(found) > 1:
-        names = "; ".join(_describe(m, d) for d in list(found)[:10])
-        raise PageError(f"the words occur in {len(found)} documents; pick one with --in: {names}")
+        # identical copies (one email in two mailboxes) are one source: quote the first
+        texts = {t for _, t, _ in found.values()}
+        if len(texts) > 1:
+            names = "; ".join(_describe(m, d) for d in list(found)[:10])
+            raise PageError(f"the words occur in {len(found)} documents; pick one with --in: {names}")
     doc, (layer, text, spans) = next(iter(found.items()))
     return [{"doc": doc, "layer": layer.id, "select": {"char": [a, b]}, "quote": locators.make_quote(text, a, b)}
             for a, b in spans]

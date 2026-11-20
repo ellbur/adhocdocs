@@ -16,7 +16,8 @@ the layer's text at a range: nothing typed reaches the page, so loose
 matching can pick the wrong passage but never change its words. To guard
 against the wrong passage, it is found only when it is clear:
 
-- the best match is good and no other is close, or the other close matches
+- the best match is good and no other is close (the same passage in an
+  identical copy of the document isn't another), or the other close matches
   are outside what Claude read last (the read log, readlog.py: a passage
   shown by ``text`` is the context the words came from);
 - otherwise nothing is written, and the candidates come back, each with its
@@ -41,6 +42,7 @@ FLOOR = 0.7                 # below this, a match isn't offered at all
 RECENT = 20                 # reads that count as "recently"
 MAX_WORDS = 6000            # the farthest --to is looked for after --from
 PREVIEW = 12
+LONG = 120                  # a paragraph found in text without blank lines, longer than this, is asked about
 
 # a numbered item at a line start: (a) (1) (A) (i) (iv) …, 1. a. A.
 MARKER = re.compile(r"^[ \t]*\((?P<m>[0-9]{1,3}|[a-zA-Z]{1,5})\)[ \t]|^[ \t]*(?P<d>[0-9]{1,3}|[A-Z])\.[ \t]+(?=[A-Z])", re.M)
@@ -327,13 +329,23 @@ def locate(scopes: list[tuple[str, list[tuple[Layer, int, int]]]], start: str, e
         if not ms:
             continue
         ms.sort(key=lambda m: -m.score)
-        # the same place reached through two scopes' ranges is one match
-        uniq = []
+        # the same place reached through two scopes' ranges is one match, and so is the same
+        # place in an identical copy of the document (one email in two mailboxes)
+        uniq, copies = [], {}
         for m in ms:
-            if not any(u.layer.layer == m.layer.layer and u.first == m.first for u in uniq):
+            same = next((u for u in uniq if u.first == m.first and
+                         (u.layer.layer == m.layer.layer or u.layer.text == m.layer.text)), None)
+            if same is None:
                 uniq.append(m)
-        cands = [_extent(m, qe, paras, item, section) for m in uniq]
-        cands = [c for c in cands if c]
+            elif same.layer.layer != m.layer.layer:
+                copies.setdefault(id(same), []).append(m.layer.name)
+        cands = []
+        for m in uniq:
+            c = _extent(m, qe, paras, item, section)
+            if c and copies.get(id(m)):
+                c["preview"]["copies"] = copies[id(m)]
+            if c:
+                cands.append(c)
         if not cands:
             continue
         cands.sort(key=lambda c: (c["missed"], -c["score"], c["span"][0]))      # as listed, for --pick
@@ -349,11 +361,13 @@ def locate(scopes: list[tuple[str, list[tuple[Layer, int, int]]]], start: str, e
             same = [c for c in [best] + rivals if _literally(c, start)]
             if len(same) == 1:
                 best, rivals = same[0], []
-        if best["score"] >= GOOD and not rivals and not best.get("end_unsure"):
+        if best["score"] >= GOOD and not rivals and not best.get("end_unsure") and not best.get("long"):
             return {"status": "found", **best, "found_in": name}
         seen = cands
         why = ("several passages match about as well" if rivals else
                "the end words matched loosely" if best.get("end_unsure") else
+               f"it runs {best['preview']['words']} words: this text has no blank lines to end a paragraph "
+               "(a log, a table, a transcript), so say where it ends with --to" if best.get("long") else
                "the best match is loose")
         return {"status": "confirm", "found_in": name, "why": why,
                 "candidates": [{"n": i + 1, **{k: v for k, v in c.items() if k != "layer"},
@@ -404,8 +418,11 @@ def _extent(m: Match, qe, paras, item, section=False) -> dict | None:
         score = m.score
     if b <= a:
         return None
+    long = not qe and not item and not section and not layer.blank_lines and len(layer.text[a:b].split()) > LONG
     out = {"layer": layer, "span": [a, b], "score": score, "missed": missed if qe else m.missed,
            "preview": preview(layer, a, b)}
     if unsure:
         out["end_unsure"] = True
+    if long:
+        out["long"] = True
     return out

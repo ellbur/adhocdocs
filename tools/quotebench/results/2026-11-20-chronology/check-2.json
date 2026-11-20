@@ -1,0 +1,157 @@
+{
+ "summary": {
+  "quotations": 100,
+  "words_quoted": 1426,
+  "verdicts": {
+   "verbatim": 82,
+   "unverifiable": 4,
+   "uncited": 13,
+   "misquoted": 1
+  },
+  "by_kind": {
+   "typed-inline": 100
+  },
+  "words_wrong": 7
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "Driver in a hurry, would not wait for supervisor. Driver had me sign his handheld, I wrote TK because Tom is the supervisor of record.",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "deposition-kettering-2026-04-28.pdf",
+   "reason": "cited to a document with no text; the words are also in deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "I told you as much when I called on the 2nd.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-03-09_RE_INV-2026-0347_past-due.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "notified Ms. Okafor by telephone on March 2, 2026 that the order had not arrived.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "response-to-demand-2026-04-02.docx"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "I didn't know it was Harrowgate's.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Pickup is scheduled for Wednesday 3/4 … driver R. Ames, truck 4471",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "RE_ Unclaimed pallet at Bellwether Dock 4 - please pick up.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "We will hold the pallet at our Richmond terminal as refused freight until the shipper tells us what to do with it.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "RE_ Unclaimed pallet at Bellwether Dock 4 - please pick up.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Quarantined freight isn't opened until it's identified.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "released a Harrowgate pallet to the carrier as “unclaimed.”",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "demand-letter-2026-03-25.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Bellwether’s first communication disputing delivery",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "demand-letter-2026-03-25.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "That was the first I heard of it.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "deposition-kettering-2026-04-28.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "only the initials “TK” and an illegible scrawl",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "response-to-demand-2026-04-02.docx",
+   "reason": "cited to a document with no text; the words are also in response-to-demand-2026-04-02.docx"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "the signed delivery receipt",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "demand-letter-2026-03-25.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "We should not reship until the location of the original pallet is confirmed.",
+   "cited": null,
+   "verdict": "misquoted",
+   "closest": "memo-collection-bellwether-2026-03-18-rev.pdf",
+   "errors": [
+    {
+     "type": "dropped",
+     "source": "Harrowgate Fastener Supply Co Internal Page 1",
+     "quote": "",
+     "context": "by March 24. We should not reship until the location of the Harrowgate Fastener Supply Co. - Internal - Page 1\foriginal ",
+     "at": 2098
+    }
+   ]
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Footage exported to USB, given to M. Delacroix-Hale 3/27.",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "dock4-camera-review-notes.txt"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Signed by: TK",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "2026-02-24_delivered-PRO-0047-2219-6.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "HFS label on two sides",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "INV-2026-0347.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "proof of delivery",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "2026-02-24_delivered-PRO-0047-2219-6.eml",
+   "reason": "cited to a document with no text; the words are also in 2026-02-24_delivered-PRO-0047-2219-6.eml"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "note … on Friday",
+   "cited": null,
+   "verdict": "unverifiable",
+   "found_in": "2026-03-09_RE_INV-2026-0347_past-due.eml",
+   "reason": "cited to a document with no text; the words are also in 2026-03-09_RE_INV-2026-0347_past-due.eml"
+  }
+ ]
+}

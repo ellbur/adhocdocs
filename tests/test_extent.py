@@ -167,3 +167,16 @@ def test_filename_cite_style(m, tmp_path):
     pages.add_ref(m, p, "a", [locators.char_locator(doc, lay.id, text, s, s + 31)])
     html, _ = pages.render(pages.Page(m, p))
     assert EMAIL in html
+
+
+def test_identical_copies_are_one_passage_and_a_long_default_is_asked_about():
+    A, B = layer(PROSE, "a"), layer(PROSE, "b")
+    scopes = [("the matter", [(A, 0, len(A.keys)), (B, 0, len(B.keys))])]
+    text, r = found(scopes, "The Agency proposes to amend the rule")
+    assert r["preview"]["copies"] == ["b"]
+    log = layer("\n".join(f"2026-02-{d:02d}, Dock 4, pallet {d}, received by T. Kettering, no exceptions noted on the receipt"
+                          for d in range(1, 28)), "log")
+    r = extent.locate(whole(log), "2026-02-03, Dock 4, pallet 3")
+    assert r["status"] == "confirm" and "--to" in r["why"]
+    text, _ = found(whole(log), "2026-02-03, Dock 4, pallet 3", end="noted on the receipt")
+    assert text.count("\n") == 0
