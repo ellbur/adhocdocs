@@ -22,7 +22,9 @@ file name (the whole name, extension and all), then those its entry names:
 
 A chronology cites by entry: a "Sources:" line under an entry covers every
 quotation in it, so a quotation counts as cited to any document its entry
-names.
+names; failing that, to the documents the memo names anywhere (a reference
+memo may name its sources once). Leaving out a page's running head or
+number that falls inside a passage is not a misquotation.
 """
 
 import argparse
@@ -151,8 +153,9 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
     names = list(corpus.names)
     loc_names = {d["loc"].removeprefix("doc:"): d["doc"]["name"] for d in corpus.docs}
     out = []
+    memo_sources = cited_in(check.strip_markdown(prose), names)
     for start, block in paragraphs(prose):
-        entry_sources = cited_in(check.strip_markdown(block), names)
+        entry_sources = cited_in(check.strip_markdown(block), names) or memo_sources
         # page references
         for q in check.ref_quotations(block, refs, m):
             q["cited"] = loc_names.get(str(q.get("doc", "")).removeprefix("doc:"))
@@ -176,6 +179,15 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
             out.append({"kind": "typed-inline", "text": q, "where": start, "cited": near,
                         "own_sources": [near] if near else [], "sources": entry_sources})
     return out
+
+
+FURNITURE = re.compile(r"^(?:\d+ )?(?:Rule \d+(?:\.\d+)? )?FEDERAL RULES OF CIVIL PROCEDURE(?: Rule \d+(?:\.\d+)?)?(?: \d+)?$"
+                       r"|^(?:.* )?Internal (?:- )?Page \d+$|^\d+$|^Page \d+(?: of \d+)?$", re.I)
+
+
+def furniture(e: dict) -> bool:
+    """A dropped run of words that is a page's running head, footer or number."""
+    return e.get("type") == "dropped" and bool(FURNITURE.match(" ".join(e.get("source", "").split())))
 
 
 def same_message(corpus: Corpus, a: str, b: str) -> bool:
@@ -223,8 +235,12 @@ def judge(q: dict, corpus: Corpus) -> dict:
     if textless:
         return {**q, "verdict": "unverifiable", "reason": f"no text for {', '.join(textless)}"}
     if best and best["words"] and best["matched"] >= best["words"] / 2:
-        return {**q, "verdict": "misquoted", "closest": best_name, "errors": best["errors"],
-                "words_wrong": best["words_wrong"]}
+        errors = [e for e in best["errors"] if not furniture(e)]
+        if not errors:
+            # all it leaves out is a page's running head or number, inside the passage
+            return {**q, "verdict": "verbatim", "source": best_name, "furniture_left_out": len(best["errors"])}
+        return {**q, "verdict": "misquoted", "closest": best_name, "errors": errors,
+                "words_wrong": sum(max(len(e.get("source", "").split()), len(e.get("quote", "").split())) for e in errors)}
     return {**q, "verdict": "not found", "closest": best_name}
 
 

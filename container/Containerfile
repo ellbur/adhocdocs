@@ -25,6 +25,8 @@ RUN python -c "from adhocdocs.index.semantic import model_hash; print(model_hash
 
 COPY container/managed-settings.json /etc/claude-code/managed-settings.json
 COPY container/CLAUDE.md /etc/claude-code/CLAUDE.md
+# subagents the session instructions name (the reader): installed into Claude Code's config at session start
+COPY container/agents /etc/adhocdocs/agents
 COPY container/adhoc-session /usr/local/bin/adhoc-session
 COPY container/audit-hook /usr/local/bin/adhoc-audit-hook
 COPY container/adhoc-browser /usr/local/bin/adhoc-browser

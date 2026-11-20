@@ -104,8 +104,9 @@ def test_shell_scripts_have_unix_line_endings():
     """The image copies these; a Windows checkout must not turn them into CRLF."""
     attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
     assert "eol=lf" in attrs
-    for p in (ROOT / "container").iterdir():
-        assert b"\r\n" not in p.read_bytes(), p
+    for p in (ROOT / "container").rglob("*"):
+        if p.is_file():
+            assert b"\r\n" not in p.read_bytes(), p
     out = subprocess.run(["git", "check-attr", "eol", "container/adhoc-session"], cwd=ROOT,
                          capture_output=True, text=True, encoding="utf-8")
     if out.returncode == 0:

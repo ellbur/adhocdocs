@@ -84,11 +84,9 @@ NO_TOOL_EDITS = [
     # the page tool's row in the table of tools
     ("| `page` | literate pages: memos and chronologies whose quotations are references |\n", ""),
     # rule 1, and the others renumbered
-    ("""1. **Never type a quotation into durable work.** In pages, notes and
-   exports, quotations are references: `page ref add --from "<roughly its
-   first words>"` (with `--to`, `--paras`, `--item` or `--section`) finds
-   the passage, looking first in what you just read, and shows what it
-   found; or a locator. In chat, quote freely but say when you paraphrase.
+    ("""1. **Never type a quotation into durable work.** In pages and notes it's a
+   reference: `page ref add --from "<roughly its first words>"` (`--to …`)
+   finds it, first in what you just read. In chat, say when you paraphrase.
 """, ""),
     ("2. **Searches have coverage.**", "1. **Searches have coverage.**"),
     ("3. **Locators are the currency.**", "2. **Locators are the currency.**"),

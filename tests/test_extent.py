@@ -180,3 +180,24 @@ def test_identical_copies_are_one_passage_and_a_long_default_is_asked_about():
     assert r["status"] == "confirm" and "--to" in r["why"]
     text, _ = found(whole(log), "2026-02-03, Dock 4, pallet 3", end="noted on the receipt")
     assert text.count("\n") == 0
+
+
+def test_batch_from_ranges_and_resolved_rows(m, tmp_path):
+    doc = m.state.live_documents()[0]
+    lay = m.state.primary_layer(m.state.documents[doc])
+    text = m.objects.get_text(lay.text)
+    s = text.index("the shipment was never received")
+    p = tmp_path / "page.md"
+    p.write_text("# T\n\n::q{#a}\n", encoding="utf-8")
+    rows = [{"id": "a", "doc": doc[7:19], "start": s, "end": s + 31, "note": "Mar 9 — Müller — denies receipt"},
+            {"id": "b", "doc": doc[7:19], "start": 5, "end": 10 ** 9}]
+    out = pages.add_passages(m, p, rows, dry_run=True)
+    assert out[0]["status"] == "found" and out[0]["note"].startswith("Mar 9") and out[0]["words"] == 5
+    assert out[0]["start"] == s and out[1]["status"] == "error"
+    assert pages.brief(out[0]) == {"id": "a", "ok": True, "words": 5, "starts": "the shipment was never received",
+                                   "ends": "the shipment was never received"}
+    # a resolved row adds as it is
+    res = pages.add_passages(m, p, [{k: out[0][k] for k in ("id", "doc", "start", "end")}])
+    assert res[0].get("written")
+    html, results = pages.render(pages.Page(m, p))
+    assert results == [{"id": "a", "status": "exact"}]
