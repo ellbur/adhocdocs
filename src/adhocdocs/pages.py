@@ -810,8 +810,11 @@ def find_words(m: Matter, where: str | None, words: list[str], view: str | None 
         raise PageError(f"the words weren't found {scope}, exactly once and in order{hint}. "
                         "They must be the document's own words; whitespace and quote marks may differ.")
     if len(found) > 1:
-        names = "; ".join(_describe(m, d) for d in list(found)[:10])
-        raise PageError(f"the words occur in {len(found)} documents; pick one with --in: {names}")
+        # identical copies (one email in two mailboxes) are one source: quote the first
+        texts = {t for _, t, _ in found.values()}
+        if len(texts) > 1:
+            names = "; ".join(_describe(m, d) for d in list(found)[:10])
+            raise PageError(f"the words occur in {len(found)} documents; pick one with --in: {names}")
     doc, (layer, text, spans) = next(iter(found.items()))
     return [{"doc": doc, "layer": layer.id, "select": {"char": [a, b]}, "quote": locators.make_quote(text, a, b)}
             for a, b in spans]
@@ -901,16 +904,59 @@ def find_passage(m: Matter, where: str | None, start: str, end: str | None = Non
     return res
 
 
+def _words_of(text: str, n: int, tail=False) -> str:
+    ws = text.split()
+    return " ".join(ws[-n:] if tail else ws[:n])
+
+
+def range_ref(m: Matter, where: str, start: int, end: int, layer_id: str | None = None) -> dict:
+    """A locator for characters ``start``–``end`` of a document's text (its
+    primary layer, or ``layer_id``): what a script that sliced the text
+    already knows. ``where`` is a doc locator, hash prefix or file name; a
+    name shared by identical copies is the first copy."""
+    docs = _docs_for(m, where)
+    texts = {}
+    for d in docs:
+        content = m.state.documents.get(d)
+        layers = m.state.layers.get(content, []) if content else []
+        layer = next((l for l in layers if l.id == layer_id), None) if layer_id else \
+            (m.state.primary_layer(content) if content else None)
+        if layer is not None:
+            texts.setdefault(m.objects.get_text(layer.text), (d, layer))
+    if not texts:
+        raise PageError(f"no text for {where!r}")
+    if len(texts) > 1:
+        names = "; ".join(_describe(m, d) for d in docs[:10])
+        raise PageError(f"{where!r} names {len(docs)} documents with different text; give a hash prefix: {names}")
+    text, (doc, layer) = next(iter(texts.items()))
+    if not (0 <= start < end <= len(text)):
+        raise PageError(f"characters {start}–{end} are outside {_doc_name(m, doc)} (its text has {len(text)})")
+    return locators.char_locator(doc, layer.id, text, start, end)
+
+
 def add_passages(m: Matter, path: Path, rows: list[dict], replace=False, dry_run=False) -> list[dict]:
-    """``page ref add --batch``: one reference per row, ``{"id", "from", "to",
-    "paras", "item", "section", "in", "pick"}`` (or ``"loc"``, or ``"words"``). Each row's
-    answer, in order; rows that need a choice are left out of the page."""
+    """``page ref add --batch``: one reference per row, each one of
+
+    - ``{"id", "from", "to"|"paras"|"item"|"section", "in", "pick"}``: found
+      from roughly its words (find_passage);
+    - ``{"id", "doc", "start", "end"}``: a range of the document's text, as a
+      script that sliced it knows it (``"layer"`` optional);
+    - ``{"id", "in", "words"}``: the exact words; ``{"id", "loc"}``: a locator.
+
+    Other keys (a ``"note"``) are kept in the answer. Each row's answer comes
+    back in order, with the range found (``doc``, ``layer``, ``start``,
+    ``end``) and its first and last words; rows that need a choice or failed
+    are left out of the page."""
     out = []
     for row in rows:
         rid = row.get("id")
+        extra = {k: v for k, v in row.items() if k in ("note", "date", "who")}
         try:
             if "loc" in row or "locs" in row:
                 locs = row.get("locs") or [row["loc"]]
+                res = {"status": "found"}
+            elif "start" in row and "end" in row:
+                locs = [range_ref(m, row.get("doc") or row["in"], int(row["start"]), int(row["end"]), row.get("layer"))]
                 res = {"status": "found"}
             elif "words" in row:
                 ws = row["words"] if isinstance(row["words"], list) else [row["words"]]
@@ -922,9 +968,33 @@ def add_passages(m: Matter, path: Path, rows: list[dict], replace=False, dry_run
                 locs = [res["loc"]] if res.get("status") == "found" else None
             if locs and not dry_run:
                 add_ref(m, path, rid, locs, replace or bool(row.get("replace")))
-            out.append({"id": rid, **{k: v for k, v in res.items() if k != "loc"}, **({"written": True} if locs and not dry_run else {})})
-        except (PageError, KeyError) as e:
-            out.append({"id": rid, "status": "error", "error": str(e) if isinstance(e, PageError) else f"row needs {e}"})
+            if locs and len(locs) == 1 and isinstance(locs[0], dict) and "char" in (locs[0].get("select") or {}):
+                L = locs[0]
+                q = (L.get("quote") or {}).get("exact") or ""
+                res = {**res, "doc": L["doc"], "layer": L["layer"], "start": L["select"]["char"][0],
+                       "end": L["select"]["char"][1], "words": len(q.split()),
+                       "starts": _words_of(q, 6), "ends": _words_of(q, 6, tail=True)}
+            out.append({"id": rid, **{k: v for k, v in res.items() if k != "loc"}, **extra,
+                        **({"written": True} if locs and not dry_run else {})})
+        except (PageError, KeyError, ValueError) as e:
+            out.append({"id": rid, "status": "error", **extra,
+                        "error": str(e) if isinstance(e, PageError) else f"row needs {e}"})
+    return out
+
+
+def brief(r: dict) -> dict:
+    """One short line for a row that went as expected: id, length, first and last words."""
+    if r.get("status") != "found":
+        return r
+    out = {"id": r.get("id"), "ok": True}
+    for k in ("words", "starts", "ends", "found_in"):
+        if r.get(k) or (k in r.get("preview", {}) and r["preview"][k]):
+            out[k] = r.get(k) or r["preview"][k]
+    pv = r.get("preview") or {}
+    if pv.get("page_break"):
+        out["page_break"] = True
+    if pv.get("copies"):
+        out["copies"] = len(pv["copies"])
     return out
 
 
