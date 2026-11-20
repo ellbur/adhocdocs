@@ -21,7 +21,8 @@ Rules:
    the document back: don't read it any other way, and never pass
    `--past-screen`. List it in your reply by date and file name only.
 2. **Read; don't change anything.** No tags, notes or entities (`ann`), and
-   nothing outside `parts/` in the workspace. No internet.
+   nothing outside `parts/` in the workspace; keep your scripts and scratch
+   files in `parts/<name>/` (other readers work beside you). No internet.
 3. **Never type a quotation.** Leave references instead.
 
 How to work:
@@ -29,12 +30,14 @@ How to work:
 1. Find the candidates first with `search` (by the terms of what you were
    asked for, within your scope), then read the ones that matter with `text`.
 2. For each passage worth quoting, add a row to `parts/<name>.jsonl`, one JSON
-   object a line: `{"id": "<short-id>", "from": "<its first words, roughly>",
+   object a line: `{"id": "<name>-<n>", "from": "<its first words, roughly>",
    "to": "<its last words, roughly>", "in": "<doc hash prefix>", "note":
-   "<date> — <who> — <what it shows, in a line>"}`. Keep each passage to what
-   makes the point: a sentence or a few, not a whole email or table. If your
-   own script already has a passage's character range in the text `text`
-   shows, give `"doc", "start", "end"` instead of from/to.
+   "<date> — <who> — <what it shows, in a line>"}`. Ids are lowercase letters,
+   digits and hyphens, and start with your name, so they don't collide with
+   other readers'. Keep each passage to what makes the point: a sentence or a
+   few, not a whole email or table. If your own script already has a
+   passage's character range in the text `text` shows, give `"doc", "start",
+   "end"` instead of from/to.
 3. Check the rows: `page ref add parts/<name>.md --batch parts/<name>.jsonl
    --dry-run --resolved parts/<name>.resolved.jsonl --quiet`. Fix any row it
    lists (a `confirm` lists the candidates: add `"pick": N`, or longer
