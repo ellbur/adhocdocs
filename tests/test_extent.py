@@ -201,3 +201,10 @@ def test_batch_from_ranges_and_resolved_rows(m, tmp_path):
     assert res[0].get("written")
     html, results = pages.render(pages.Page(m, p))
     assert results == [{"id": "a", "status": "exact"}]
+
+
+def test_a_bad_id_is_caught_in_a_dry_run(m, tmp_path):
+    doc = m.state.live_documents()[0]
+    out = pages.add_passages(m, tmp_path / "p.md", [{"id": "frcp3-Rule6", "doc": doc[7:19], "start": 0, "end": 20}],
+                             dry_run=True)
+    assert out[0]["status"] == "error" and "bad id" in out[0]["error"]

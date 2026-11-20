@@ -1,0 +1,15 @@
+{
+ "summary": {
+  "quotations": 102,
+  "words_quoted": 4528,
+  "verdicts": {
+   "verbatim": 102
+  },
+  "by_kind": {
+   "ref": 101,
+   "typed-inline": 1
+  },
+  "words_wrong": 0
+ },
+ "not_verbatim": []
+}

@@ -181,7 +181,7 @@ def quotations(memo: str, m, corpus: Corpus) -> list[dict]:
     return out
 
 
-FURNITURE = re.compile(r"^(?:\d+ )?(?:Rule \d+(?:\.\d+)? )?FEDERAL RULES OF CIVIL PROCEDURE(?: Rule \d+(?:\.\d+)?)?(?: \d+)?$"
+FURNITURE = re.compile(r"^(?:\d+ )?(?:Rule [\w.]+ )?FEDERAL RULES OF CIVIL PROCEDURE(?: Rule [\w.]+)?(?: \d+)?$"
                        r"|^(?:.* )?Internal (?:- )?Page \d+$|^\d+$|^Page \d+(?: of \d+)?$", re.I)
 
 

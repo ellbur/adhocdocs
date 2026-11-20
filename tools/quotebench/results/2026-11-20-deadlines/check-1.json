@@ -1,0 +1,111 @@
+{
+ "summary": {
+  "quotations": 164,
+  "words_quoted": 3959,
+  "verdicts": {
+   "verbatim": 152,
+   "uncited": 10,
+   "misattributed": 1,
+   "misquoted": 1
+  },
+  "by_kind": {
+   "typed-inline": 164
+  },
+  "words_wrong": 1
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "not later than May 1",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "uscourts-federal-rules-of-civil-procedure.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "shall take effect no earlier than December 1",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "uscourts-federal-rules-of-civil-procedure.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "at least 18 years old",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "uscourts-federal-rules-of-civil-procedure.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "fees for 1 day’s attendance",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "uscourts-federal-rules-of-civil-procedure.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "within three years",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "usc-title9-arbitration-2023.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "must be served",
+   "cited": "scotus-smith-v-spizzirri-2024.pdf",
+   "verdict": "misattributed",
+   "found_in": "usc-title9-arbitration-2023.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "shall be made in the manner provided by the Federal Rules of Civil Procedure",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "usc-title9-arbitration-2023.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "shall be made and heard in the manner provided by law for the making and hearing of motions",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "usc-title9-arbitration-2023.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "within the time/period",
+   "cited": null,
+   "verdict": "misquoted",
+   "closest": "uscourts-federal-rules-of-civil-procedure.pdf",
+   "errors": [
+    {
+     "type": "changed",
+     "source": "allowed",
+     "quote": "period",
+     "context": "for having the summons and complaint served within the time allowed by Rule 4(m) and must furnish the necessary copies t",
+     "at": 46478
+    }
+   ]
+  },
+  {
+   "kind": "typed-inline",
+   "text": "no later than",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "fr-2026-03266-water-carriers.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "at any time",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "usc-title9-arbitration-2023.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "as soon as",
+   "cited": null,
+   "verdict": "uncited",
+   "found_in": "uscourts-federal-rules-of-civil-procedure.pdf"
+  }
+ ]
+}

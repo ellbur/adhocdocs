@@ -952,6 +952,9 @@ def add_passages(m: Matter, path: Path, rows: list[dict], replace=False, dry_run
         rid = row.get("id")
         extra = {k: v for k, v in row.items() if k in ("note", "date", "who")}
         try:
+            if not isinstance(rid, str) or not literate.ID.match(rid):
+                # caught in a dry run too, not first when the rows are added
+                raise PageError(f"bad id {rid!r}: use lowercase letters, digits and hyphens")
             if "loc" in row or "locs" in row:
                 locs = row.get("locs") or [row["loc"]]
                 res = {"status": "found"}
