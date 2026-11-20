@@ -1,0 +1,43 @@
+# Claude API list prices, US dollars per million tokens, as of 2026-11-03
+# (Anthropic first-party rates). Check https://platform.claude.com/docs/en/about-claude/pricing
+# before publishing numbers, and change `as_of` with the prices.
+#
+# Cache writes are priced from the input price: 1.25x for the 5-minute TTL,
+# 2x for the 1-hour TTL. A model is matched by the longest key that its
+# id starts with.
+
+as_of = "2026-11-03"
+cache_write_5m = 1.25
+cache_write_1h = 2.0
+
+[models."claude-opus-5-5"]
+input = 4.00
+output = 20.00
+cache_read = 0.20
+
+[models."claude-sonnet-5-5"]
+input = 2.00
+output = 10.00
+cache_read = 0.10
+
+# Haiku is used by Claude Code for side requests (titles, command checks).
+# Its prices are for prompts up to 100K tokens; cache reads assumed at 0.1x.
+[models."claude-haiku-5-5"]
+input = 0.10
+output = 0.50
+cache_read = 0.01
+long_prompt = 100000
+long_input = 0.50
+long_output = 2.50
+
+# In case Claude Code's "sonnet" or its side requests resolve to an earlier model
+# (cache reads at the usual 0.1x).
+[models."claude-sonnet-5"]
+input = 2.00
+output = 10.00
+cache_read = 0.20
+
+[models."claude-haiku-4-5"]
+input = 1.00
+output = 5.00
+cache_read = 0.10
