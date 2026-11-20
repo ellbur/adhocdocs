@@ -166,3 +166,21 @@ cares about.
   doesn't need them.
 - **Prices change.** `pricing.toml` says when its prices were read; update
   it before publishing numbers.
+
+## What the first run changed
+
+In the first run ([`results/2026-11-20/`](../tools/quotebench/results/2026-11-20)),
+neither tool cell used `page ref add --words`, which means typing the passage
+out. Both wrote scripts against the store to find where paragraphs and rule
+subdivisions end, built locators by hand, added the 48 references in a loop,
+and worked around the default citations. That was about three quarters of
+their effort. So `page ref add` now takes roughly where a passage starts
+(`--from`) and how far it goes (`--to`, `--paras`, `--item`, `--section`),
+looks first in what Claude just read, and shows what it found
+([PAGES.md](PAGES.md), [`extent.py`](../src/adhocdocs/extent.py)). On this
+bench's 48 requests, one `--batch` call with each request's opening words gets
+47 exact passages and asks about the 48th: "(2) With Leave." is in Rule 30 and
+in Rule 31, and the candidates say which rule each is under. Citations got
+`cite-style: filename`, and a PDF page without a printed number is cited "at
+PDF p. N".
+

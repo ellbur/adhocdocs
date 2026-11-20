@@ -40,7 +40,7 @@ SEED = 20261120
 def doc_texts(matter: str) -> dict[str, tuple[str, str]]:
     """name -> (locator, text) for the documents above."""
     out = {}
-    r = subprocess.run([str(BIN / "search"), "--matter", matter, "all"], capture_output=True, text=True, check=True)
+    r = subprocess.run([str(BIN / "search"), "all", "--matter", matter], capture_output=True, text=True, check=True)
     for line in r.stdout.splitlines()[1:]:
         d = json.loads(line)
         name = d["doc"]["name"]

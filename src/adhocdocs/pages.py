@@ -9,8 +9,11 @@ Citations come from the reference's locator, the document's cite-as name
 and the page's ``cite-style``. Cite-as names live in
 ``workspace/cite-as.jsonl`` (``{"doc": ..., "cite": "Müller Email"}``),
 outside the document's identity; without one, a name is made from the
-metadata. A cite style is ``default`` or the path of a Python file defining
-``cite(info: dict) -> str``.
+metadata. A cite style is ``default``, ``filename`` (the default, naming each
+document by its file name), or the path of a Python file defining
+``cite(info: dict) -> str``. A page of a PDF that has printed page numbers
+elsewhere but none on that page is cited by its place in the file ("at PDF
+p. 37"), never as if that were its printed number.
 """
 
 import html
@@ -124,6 +127,7 @@ class Page:
                         labels[locators.page_of(r.text, s["start"])] = s["label"]
                 if all(p in labels for p in info["pages"]):
                     info["page_labels"] = [labels[p] for p in info["pages"]]
+                info["has_page_labels"] = bool(labels)
         elif r.kind == "bytes":
             info["bytes"] = list(r.select["bytes"])
         elif r.kind == "interp":
@@ -160,6 +164,10 @@ class Page:
             return "Claude’s reading of " + self.cite(_doc_only(r), signal) + f" ({html.escape(r.interp['title'])})"
         style = self.meta.get("cite-style", "default")
         info = self.cite_info(r, signal)
+        if style == "filename":
+            # the document by its file name (a cite-as name still wins)
+            info["cite_as"] = info.get("cite_as") or info.get("name") or info["doc"][7:19]
+            return default_cite(info)
         if style == "default":
             return default_cite(info)
         spec = importlib.util.spec_from_file_location("cite_style", (self.path.parent / style).resolve())
@@ -174,7 +182,7 @@ class Page:
         ``documents``, and can cite them one by one)."""
         md = r.meta
         style = self.meta.get("cite-style", "default")
-        if style != "default":
+        if style not in ("default", "filename"):
             info = {"metadocument": {k: md[k] for k in ("ref", "grain", "name", "first", "last") if k in md},
                     "documents": [self.cite_info(Resolved(r.id, "exact", doc=d)) for d in md["docs"]], "signal": signal}
             spec = importlib.util.spec_from_file_location("cite_style", (self.path.parent / style).resolve())
@@ -269,9 +277,18 @@ def default_cite(info: dict) -> str:
         return f"<i>{html.escape(info['signal'])}</i> " + html.escape(s) if info.get("signal") else html.escape(s)
     if info.get("lines"):
         s += " " + _range(*info["lines"])
-    elif info.get("pages") and (info.get("kind") in ("pdf", "image") or info.get("page_labels")):
-        a, b = info.get("page_labels") or info["pages"]
+    elif info.get("page_labels"):
+        a, b = info["page_labels"]
         s += f" at {a}" if a == b else f" at {a}–{b}"
+    elif info.get("pages") and info.get("kind") in ("pdf", "image"):
+        # a document with printed page numbers, at a page without one: its place in the file, said
+        # so, not passed off as a printed number
+        a, b = info["pages"]
+        at = "PDF p." if a == b else "PDF pp."
+        if info.get("has_page_labels"):
+            s += f" at {at} {a}" if a == b else f" at {at} {a}–{b}"
+        else:
+            s += f" at {a}" if a == b else f" at {a}–{b}"
     elif info.get("cells"):
         s += f" ({'sheet ' + info['sheet'] + ', ' if info.get('sheet') else ''}cells {info['cells']})"
     elif info.get("bytes"):
@@ -798,6 +815,117 @@ def find_words(m: Matter, where: str | None, words: list[str], view: str | None 
     doc, (layer, text, spans) = next(iter(found.items()))
     return [{"doc": doc, "layer": layer.id, "select": {"char": [a, b]}, "quote": locators.make_quote(text, a, b)}
             for a, b in spans]
+
+
+def find_passage(m: Matter, where: str | None, start: str, end: str | None = None, paras: int | None = None,
+                 item: bool = False, pick: int | None = None, view: str | None = None, section: bool = False) -> dict:
+    """A passage found from roughly its opening words (extent.py): where to
+    look, in order, is what Claude read last, what it read recently, and
+    then the documents ``where`` names (all of them, without it). Returns
+    extent.locate's answer, with a locator when one passage is clearly it."""
+    from . import extent, readlog
+    cache: dict[str, extent.Layer] = {}
+
+    def layer_of(doc, layer_id=None):
+        content = m.state.documents.get(doc)
+        if content is None:
+            return None
+        if view:
+            ls = [l for l in m.state.layers.get(content, []) if l.view == view]
+            layer = ls[-1] if ls else None
+        elif layer_id:
+            layer = next((l for l in m.state.layers.get(content, []) if l.id == layer_id), None) \
+                or m.state.primary_layer(content)
+        else:
+            layer = m.state.primary_layer(content)
+        if layer is None:
+            return None
+        if layer.id not in cache:
+            cache[layer.id] = extent.Layer(doc, layer.id, _doc_name(m, doc), m.objects.get_text(layer.text))
+        return cache[layer.id]
+
+    rows = readlog._rows(m) if readlog.exists(m) else []
+    if where == "last":
+        if not rows:
+            raise PageError("--in last: nothing has been read with `text` yet")
+        docs = [rows[-1]["doc"]]
+    else:
+        docs = _docs_for(m, where)
+    allowed = set(docs)
+
+    def read_ranges(rs):
+        out = []
+        for r in rs:
+            if r["doc"] not in allowed:
+                continue
+            L = layer_of(r["doc"], r.get("layer"))
+            if L is None:
+                continue
+            if r.get("span"):
+                a, b = r["span"]
+                out.append((L, max(0, L.index_at(a) - 2), min(len(L.keys), L.index_at(b) + 1)))
+            else:
+                out.append((L, 0, len(L.keys)))
+        return out
+
+    scopes = []
+    if rows:
+        scopes.append(("what you read last", read_ranges(rows[-1:])))
+        scopes.append(("what you read recently", read_ranges(rows[-extent.RECENT:-1])))
+        read_docs = list(dict.fromkeys(r["doc"] for r in rows if r["doc"] in allowed))
+        scopes.append(("documents you have read", [(L, 0, len(L.keys)) for L in map(layer_of, read_docs) if L]))
+    # every document named: only those that have the opening's longest word, to keep it quick
+    longest = max(extent.query_keys(start) or [""], key=len)
+    rest = []
+    for d in docs:
+        content = m.state.documents.get(d)
+        layer = m.state.primary_layer(content) if content else None
+        if layer is None and not view:
+            continue
+        if layer is not None and layer.id not in cache and len(docs) > 1:
+            if longest and longest not in m.objects.get_text(layer.text).lower():
+                continue
+        L = layer_of(d)
+        if L:
+            rest.append((L, 0, len(L.keys)))
+    scopes.append((f"{where or 'the matter'}" if where != "last" else "the document you read last", rest))
+    scopes = [(n, r) for n, r in scopes if r]
+    try:
+        res = extent.locate(scopes, start, end, paras, item, pick, section)
+    except extent.ExtentError as e:
+        raise PageError(str(e))
+    if res.get("status") == "found":
+        L, (a, b) = res.pop("layer"), res["span"]
+        res["loc"] = {"doc": L.doc, "layer": L.layer, "select": {"char": [a, b]}, "quote": locators.make_quote(L.text, a, b)}
+        res["name"] = L.name
+    return res
+
+
+def add_passages(m: Matter, path: Path, rows: list[dict], replace=False, dry_run=False) -> list[dict]:
+    """``page ref add --batch``: one reference per row, ``{"id", "from", "to",
+    "paras", "item", "section", "in", "pick"}`` (or ``"loc"``, or ``"words"``). Each row's
+    answer, in order; rows that need a choice are left out of the page."""
+    out = []
+    for row in rows:
+        rid = row.get("id")
+        try:
+            if "loc" in row or "locs" in row:
+                locs = row.get("locs") or [row["loc"]]
+                res = {"status": "found"}
+            elif "words" in row:
+                ws = row["words"] if isinstance(row["words"], list) else [row["words"]]
+                locs = find_words(m, row.get("in"), ws)
+                res = {"status": "found"}
+            else:
+                res = find_passage(m, row.get("in"), row["from"], row.get("to"), row.get("paras"),
+                                   bool(row.get("item")), row.get("pick"), section=bool(row.get("section")))
+                locs = [res["loc"]] if res.get("status") == "found" else None
+            if locs and not dry_run:
+                add_ref(m, path, rid, locs, replace or bool(row.get("replace")))
+            out.append({"id": rid, **{k: v for k, v in res.items() if k != "loc"}, **({"written": True} if locs and not dry_run else {})})
+        except (PageError, KeyError) as e:
+            out.append({"id": rid, "status": "error", "error": str(e) if isinstance(e, PageError) else f"row needs {e}"})
+    return out
 
 
 CHECK_SHOWN = 40           # documents listed under a check; the rest are a re-run of the search away

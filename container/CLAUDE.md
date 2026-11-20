@@ -34,8 +34,10 @@ mark inference as inference, and ask the user when the evidence is thin.
 ## Rules that matter
 
 1. **Never type a quotation into durable work.** In pages, notes and
-   exports, quotations are references (`page ref add`: a locator, or `--in
-   <doc> --words "…"`); in chat, quote freely but say when you paraphrase.
+   exports, quotations are references: `page ref add --from "<roughly its
+   first words>"` (with `--to`, `--paras`, `--item` or `--section`) finds
+   the passage, looking first in what you just read, and shows what it
+   found; or a locator. In chat, quote freely but say when you paraphrase.
 2. **Searches have coverage.** When you tell the user nothing was found,
    say what was searched and what wasn't (`coverage`, `exhaustive`).
 3. **Locators are the currency.** Pass them whole; never edit offsets or quotes.

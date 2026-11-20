@@ -38,6 +38,25 @@ through to its source.
   straight or curly quote marks, so the quotation is still the layer's. A hand-written
   fingerprint that doesn't match makes the reference broken; it can't
   change the text.
+- **Or from roughly where a passage starts** ([`extent.py`](../src/adhocdocs/extent.py)).
+  `--from "…"` gives the opening as Claude remembers it, matched loosely
+  (case, punctuation, quote marks, line-end hyphens and about one word in
+  five may differ). How far it goes is `--to "…"` (roughly its last
+  words), `--paras N`, `--item` (a numbered item such as "(b) …", with the
+  items under it) or `--section` (to the section's or rule's source credit,
+  history note or next heading). Without `--in` it looks first in what
+  Claude read last with `text` (the read log), then what it read recently,
+  then everywhere, so a passage just read needs only a few words. When one
+  passage is clearly it, the reference is written and its first and last
+  words, the words just outside it, its length, the heading it is under
+  and any page break inside are shown, so it can be checked without
+  reading it back. Otherwise nothing is written and the candidates are
+  listed with the same, for `--pick N`. `--batch refs.jsonl` adds many.
+
+  Loose matching can only pick the wrong passage, never change its words.
+  `--words` means typing the passage out, so rather than use it, Claude
+  writes scripts to find where a paragraph ends and builds locators by
+  hand; `--from` is for saying which passage, not what it says.
 - **Every change to the words is marked** (`[T]`, `[the vendor]`, `[sic]`,
   `…`, emphasis noted in the citation), so a quotation reads back into its
   source by removing the marks. A line-end hyphen is joined only by an

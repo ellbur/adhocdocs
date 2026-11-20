@@ -36,7 +36,7 @@ SAME_WORK = [{"usc-title9-arbitration-2023.htm", "usc-title9-arbitration-2023.pd
 
 
 def all_documents(matter: str) -> list[dict]:
-    r = subprocess.run([str(BIN / "search"), "--matter", matter, "all"], capture_output=True, text=True, check=True)
+    r = subprocess.run([str(BIN / "search"), "all", "--matter", matter], capture_output=True, text=True, check=True)
     return [json.loads(l) for l in r.stdout.splitlines()[1:]]
 
 
