@@ -69,6 +69,8 @@ def items_of(prose: str) -> dict[int, str]:
 
 
 def strip_markdown(s: str) -> str:
+    # an escaped character is that character: "\\[o\\]nly" renders as "[o]nly"
+    s = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~])", r"\1", s)
     s = re.sub(r"(?<!\w)[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}(?!\w)", "", s)
     return s
 

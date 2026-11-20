@@ -1,12 +1,14 @@
 # Quotation Bench
 
-*Status: built, not yet run against the API: [`tools/quotebench/`](../tools/quotebench)
+*Status: built: [`tools/quotebench/`](../tools/quotebench)
 chooses the passages ([`passages.py`](../tools/quotebench/passages.py), written to
 [`tasks.json`](../tools/quotebench/tasks.json)), runs a cell of the grid
 ([`run.py`](../tools/quotebench/run.py)), checks a memo ([`check.py`](../tools/quotebench/check.py),
 [`align.py`](../tools/quotebench/align.py)), prices it ([`cost.py`](../tools/quotebench/cost.py),
 [`pricing.toml`](../tools/quotebench/pricing.toml)) and tabulates the runs
-([`report.py`](../tools/quotebench/report.py)). Running it needs a Claude API credential.*
+([`report.py`](../tools/quotebench/report.py)). `run.py` needs a Claude API credential. The first
+run, one cloud session per cell driven by another session, is in
+[`results/2026-11-20/`](../tools/quotebench/results/2026-11-20): no misquotation in any cell.*
 
 Pages make a quotation a reference, so the words a reader sees are the
 document's ([PAGES.md](PAGES.md)). This bench measures what that buys: how

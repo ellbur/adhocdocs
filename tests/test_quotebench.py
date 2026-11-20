@@ -104,6 +104,8 @@ The text says “a long inline quotation of more than twelve words that runs on 
     assert check.cited_name(q1[0]["citation"], ["uscourts-federal-rules-of-civil-procedure.pdf"])
     assert check.typed_quotations(secs[2])[0]["kind"] == "typed-inline"
     assert check.typed_quotations(secs[3]) == []
+    # Markdown escapes are the characters they escape
+    assert check.strip_markdown(r"and “\[o\]nly where”") == "and “[o]nly where”"
 
 
 def test_cost():
