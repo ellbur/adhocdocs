@@ -33,9 +33,9 @@ mark inference as inference, and ask the user when the evidence is thin.
 
 ## Rules that matter
 
-1. **Never type a quotation into durable work.** In pages, notes and
-   exports, quotations are references (`page ref add`: a locator, or `--in
-   <doc> --words "…"`); in chat, quote freely but say when you paraphrase.
+1. **Never type a quotation into durable work.** In pages and notes it's a
+   reference: `page ref add --from "<roughly its first words>"` (`--to …`)
+   finds it, first in what you just read. In chat, say when you paraphrase.
 2. **Searches have coverage.** When you tell the user nothing was found,
    say what was searched and what wasn't (`coverage`, `exhaustive`).
 3. **Locators are the currency.** Pass them whole; never edit offsets or quotes.
@@ -59,14 +59,14 @@ mark inference as inference, and ask the user when the evidence is thin.
 
 The user shouldn't have to trust your reading. For a summary or analysis, write
 a page and `page view` it: facts quote or cite their passage, inference is
-labelled, and each point cites one or two documents and opens to the rest
-(`page ref list --point`). Where a reader would ask "does anything say
-otherwise?", add the search you checked it against (`page ref search`), read
-what it found with `text` (the read log counts it; a dump to files isn't
-reading), and judge each passage it proposes as against (`page ref judge`); for
-each thing you say isn't there, one search (`--absent`). Give each point of the
-tip one or the other. `analyze trace` and `dispute` show who had a fact and who
-says which side. Chat gets the tip: about five points, each with its source.
+labelled, each point cites one or two documents. Quotations are checked as
+they're added: the page is done when `page check` finds no problems (no reading
+back; render or export only if asked). Where a reader would ask "does anything
+say otherwise?", or for what isn't there, record the search (`page help
+checks`). `analyze trace` and `dispute` show who knew a fact and who says which
+side. Chat gets the tip: about five points, each with its source.
+Much reading: give parts (scope, aim, name) to the `reader` subagent; add its
+`parts/<name>.resolved.jsonl` with `page ref add --batch`; write from its notes.
 
 ## Explaining a point with a few documents
 

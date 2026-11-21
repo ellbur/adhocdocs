@@ -23,8 +23,9 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 INVISIBLE = dict.fromkeys(map(ord, "­​‌‍⁠﻿"), None)
+# a dash between words separates them ("sent—or"); only a hyphen joins ("well-known")
 QUOTES = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'", "′": "'", "“": '"', "”": '"', "„": '"', "″": '"',
-                        "–": "-", "—": "-", "‑": "-", "‒": "-", "―": "-", " ": " "})
+                        "–": " – ", "—": " – ", "‑": "-", "‒": " – ", "―": " – ", "\u00a0": " "})
 # a hyphen at a line end, between letters: the word may be joined or kept
 LINE_HYPHEN = re.compile(r"(?<=[^\W\d_])-[ \t]*\n[ \t]*(?=[^\W\d_])")
 # a word may carry a source's own bracketed alteration: "[o]nly"

@@ -36,7 +36,7 @@ SAME_WORK = [{"usc-title9-arbitration-2023.htm", "usc-title9-arbitration-2023.pd
 
 
 def all_documents(matter: str) -> list[dict]:
-    r = subprocess.run([str(BIN / "search"), "--matter", matter, "all"], capture_output=True, text=True, check=True)
+    r = subprocess.run([str(BIN / "search"), "all", "--matter", matter], capture_output=True, text=True, check=True)
     return [json.loads(l) for l in r.stdout.splitlines()[1:]]
 
 
@@ -69,6 +69,8 @@ def items_of(prose: str) -> dict[int, str]:
 
 
 def strip_markdown(s: str) -> str:
+    # an escaped character is that character: "\\[o\\]nly" renders as "[o]nly"
+    s = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~])", r"\1", s)
     s = re.sub(r"(?<!\w)[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}(?!\w)", "", s)
     return s
 
@@ -87,8 +89,8 @@ def typed_quotations(section: str) -> list[dict]:
                 j += 1
             # a citation line inside the block quote ("— 9 U.S.C. § 4") is not part of the quotation
             cite_in = []
-            while body and re.match(r"^\s*(?:—|--|-|\(|Source:|\[Source|Cited)", body[-1].strip() or "x") and \
-                    len(body[-1].split()) < 40 and not body[-1].strip().startswith(("(1)", "(a)", "(A)", "(i)")):
+            while body and re.match(r"^\s*(?:—|--|Source:|\(Source|\[Source|Cited)", body[-1].strip() or "x") and \
+                    len(body[-1].split()) < 40:
                 cite_in.insert(0, body.pop())
             while body and not body[-1].strip():
                 body.pop()

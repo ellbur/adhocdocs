@@ -104,6 +104,8 @@ The text says “a long inline quotation of more than twelve words that runs on 
     assert check.cited_name(q1[0]["citation"], ["uscourts-federal-rules-of-civil-procedure.pdf"])
     assert check.typed_quotations(secs[2])[0]["kind"] == "typed-inline"
     assert check.typed_quotations(secs[3]) == []
+    # Markdown escapes are the characters they escape
+    assert check.strip_markdown(r"and “\[o\]nly where”") == "and “[o]nly where”"
 
 
 def test_cost():
@@ -125,3 +127,19 @@ def test_instructions_without_the_page_tool():
     assert "page ref add" in with_tool and "/m/store" in with_tool
     assert "`page" not in without and "Never type a quotation" not in without
     assert "1. **Searches have coverage.**" in without and "7. **Everything is recorded**" in without
+
+
+def test_free_form_quotations_and_their_citations():
+    import freecheck
+    names = ["2026-03-17_RE_proof-of-delivery.eml", "2026-03-12_proof-of-delivery.eml"]
+    block = ('She said it "shows delivery to Dock 4" (2026-03-12_proof-of-delivery.eml), and Müller that '
+             '“TK” is “not a signature anyone here would accept” (2026-03-17_RE_proof-of-delivery.eml).')
+    qs = [m for m in freecheck.INLINE.finditer(block)]
+    texts = [m.group(1) or m.group(2) for m in qs]
+    assert "shows delivery to Dock 4" in texts and "not a signature anyone here would accept" in texts
+    i = block.index("not a signature")
+    assert freecheck.cited_near(block, i, names) == "2026-03-17_RE_proof-of-delivery.eml"
+    assert freecheck.cited_near(block, block.index("Dock 4") + 8, names) == "2026-03-12_proof-of-delivery.eml"
+    # a name cites a quotation only if no other quotation stands between them
+    two = 'He said "first thing here" and "second thing there" (2026-03-12_proof-of-delivery.eml).'
+    assert freecheck.cited_near(two, two.index("here") + 5, names) is None

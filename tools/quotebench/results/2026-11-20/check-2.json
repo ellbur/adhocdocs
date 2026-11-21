@@ -1,0 +1,19 @@
+{
+ "items": 48,
+ "answered": 48,
+ "items_misquoted": 0,
+ "items_verbatim": 48,
+ "quotations": 48,
+ "by_kind": {
+  "typed": 48
+ },
+ "quotations_misquoted": 0,
+ "broken_references": 0,
+ "words_quoted": 7321,
+ "words_wrong": 0,
+ "words_wrong_per_1000": 0.0,
+ "citations_wrong": 0,
+ "case_differences": 0,
+ "punctuation_differences": 0,
+ "mean_coverage": 1.0
+}

@@ -2362,23 +2362,35 @@ def _entity_reads(m, a):
 
 PAGE_HELP = """\
 Literate pages: Markdown whose quotations are references to document text.
+Write the prose with directives (::q{#id} a block quotation, :q{#id} inline,
+:cite{#id} a citation), then add the references; the words are always the
+document's.
 
-  page ref add page.md <id> <locator>...   add a reference (several locators: an elided quotation)
-  page ref add page.md <id> --in <doc> --words "<the document's words>" [--words …]
-                                           the same, found from the words to quote
-  page check page.md                       resolve every reference and lint
-  page refs update page.md                 rewrite re-anchored references
-  page render page.md [-o out.html]        static HTML (the viewer fills in quotations)
-  page view page.md [--pane P]             render it into a viewer pane
-  page export page.md --format html|docx|pdf -o out
+  page ref add page.md <id> --from "<roughly its first words>" [--to "<roughly its last>" | --paras N | --item | --section]
+                                           a passage: matched loosely, in what you read last first
+  page ref add page.md --batch refs.jsonl  many at once, also from ranges a script found ({"id","doc","start","end"})
+  page ref add page.md <id> <locator>...   from locators (several: an elided quotation)
+  page ref add page.md <id> --in <doc> --words "<the document's words>"   from the exact words
+  page check page.md [--show]              resolve every reference and lint: the page is done when
+                                           it reports no problems (--show: each quotation in a line)
+  page render | view | export …            HTML, the viewer, docx/pdf: only when the user asks
 
+Front matter `cite-style: filename` cites each document by its file name.
+`page ref add --help` has the details; `page help checks|lists|threads|locators|format`
+the rest: what a claim was checked against, the documents behind a point,
+citing a thread, kinds of references, the directives.
+"""
+
+PAGE_HELP_TOPICS = {
+    "locators": """\
 References can be text ranges (from search hits or `view selection`),
 spreadsheet cells (`sheet=…&cells=B2:D10`, e.g. a grid selection), page
 regions (`page=3&xywh=…`, e.g. an Alt-drag selection), values in JSON
 (`ptr=/a/0/b`) or XML (`xpath=/a/b[2]`), which become text ranges, cells
 by their column's header (`col=Amount&row=7`), an original's bytes (`bytes=0,16`,
 from `raw hex`), or interpretations (`--interp NAME`; see `interp --help`).
-
+""",
+    "checks": """\
 A claim can carry what it was checked against: `page ref search page.md
 nr '"never received" OR "not received"' --read all --against LOC --why "…"`
 records the search, and the passages tools find denying the claim (the
@@ -2393,11 +2405,13 @@ documents now, the check is re-anchored (read the new ones, then `page
 refs update`). Use it where the reader would ask "does anything say
 otherwise?", and for things you say are not in the documents (--absent: one
 search per missing thing, so each absence shows what ruled it out).
-
+""",
+    "lists": """\
 The documents behind a point, beyond the one or two the prose cites: `page
 ref list page.md arrived lists/x.set.list.jsonl --point arrived`, shown
 with :listed{#arrived} as a count that opens to each document and its why.
-
+""",
+    "threads": """\
 A reference can also be a metadocument (docs/METADOCS.md): `page ref add page.md
 chase thread:<doc>` (or family:, copies:, versions:, new:, bundle:) cites
 the whole thread, so the reader knows the scope is the conversation, not
@@ -2405,9 +2419,9 @@ one email. Use it with :cite{#chase} or [the thread](ref:chase); it can't
 be quoted (quote a passage of one of its documents). If the thread gains a
 reply or the bundle changes, `page check` reports it re-anchored, and
 `page refs update` takes the new list.
-
-Format:
-""" + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1]
+""",
+    "format": "Format:\n" + __import__("adhocdocs.literate", fromlist=["x"]).__doc__.split("\n", 1)[1],
+}
 
 
 @run
@@ -2429,11 +2443,16 @@ def page(argv=None):
         print(json.dumps({"error": "page ref what? page ref add | ref search | ref judge | ref list "
                                    "(or ref-add, ref-search, ref-judge, ref-list); each has --help"}), file=sys.stderr)
         sys.exit(2)
+    if argv[i:i + 1] == ["help"]:
+        topic = argv[i + 1] if len(argv) > i + 1 else None
+        print(PAGE_HELP_TOPICS.get(topic) or "page help " + "|".join(PAGE_HELP_TOPICS))
+        return
     p = parser("page", PAGE_HELP)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("check")
     s.add_argument("file")
     s.add_argument("--all", action="store_true", help="also print references that are fine")
+    s.add_argument("--show", action="store_true", help="one line per quotation: its citation, length, first and last words")
     s = sub.add_parser("render")
     s.add_argument("file")
     s.add_argument("-o", "--out", help="default: stdout")
@@ -2446,18 +2465,59 @@ def page(argv=None):
     s.add_argument("--format", choices=["html", "docx", "pdf"], required=True)
     s.add_argument("-o", "--out", required=True)
     s.add_argument("--allow-reanchored", action="store_true")
-    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>... | --in DOC --words WORDS...",
-                       description="Add a reference from locators, or from the words to quote: "
-                       "--words is matched exactly in the document's text, except that whitespace "
-                       "(line breaks too) and straight/curly quote marks may differ, and must occur "
-                       "once. Repeat --words for an elided quotation (in order).")
+    s = sub.add_parser("ref-add", help="page ref add <file> <id> <locator>... | --from WORDS [--to WORDS | --paras N | --item] | --words WORDS...",
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       description="""Add a reference: from locators (a search hit's loc), from roughly where the
+passage starts, or from its exact words.
+
+  page ref add memo.md q7 --from "The fifth question posed related to"            one paragraph
+  page ref add memo.md q7 --from "The fifth question posed" --paras 2             two paragraphs
+  page ref add memo.md q7 --from "In its comments on" --to "the petitions."     up to the end words
+  page ref add memo.md q7 --from "(b) Representations to the court" --item        a numbered item, with
+                                                                                  the items under it
+  page ref add memo.md q7 --from "In either of the following cases" --section     to the end of the section
+                                                                                  or rule (its source credit,
+                                                                                  history, or next heading)
+  page ref add memo.md --batch refs.jsonl                                         many at once: one JSON
+     object a line: {"id", "from", "to"|"paras"|"item"|"section", "in", "pick"}, or a range your
+     script already has, {"id", "doc", "start", "end"} (characters of the text `text` shows), or
+     {"id", "in", "words"}, or {"id", "loc"}; a "note" is kept. --resolved FILE writes the rows found
+     as exact ranges, to add elsewhere as they are.
+
+--from and --to are matched loosely: case, punctuation, quote marks, line-end
+hyphens and about one word in five may differ, so give the opening as you
+remember it; don't copy the passage out. The quotation is the document's own
+text at the range found, never your words. Without --in, it looks first in
+what you read last with `text`, then in what you read recently, then in every
+document. When one passage is clearly it, the reference is written and one
+line shows its length and first and last words (--verbose: the words around
+it, its heading, the scope it was found in). A written reference is the
+document's text at that range, checked: there is nothing to read back. When it
+isn't clear, nothing is written and the candidates are listed: pick one with
+--pick N.
+
+--words is matched exactly, except that whitespace (line breaks too) and
+straight/curly quote marks may differ, and must occur once. Repeat --words for
+an elided quotation (in order).""")
     s.add_argument("file")
-    s.add_argument("id")
+    s.add_argument("id", nargs="?")
     s.add_argument("locators", nargs="*", help="string or JSON locators (e.g. a search hit's loc)")
     s.add_argument("--in", dest="in_doc", metavar="DOC",
                    help="with --words: a doc locator or hash prefix, or part of its file name; "
                         "default: whichever one document has the words")
     s.add_argument("--words", action="append", help="the words to quote, as they appear in the document")
+    s.add_argument("--from", dest="from_", metavar="WORDS", help="roughly the passage's first words (five to ten)")
+    s.add_argument("--to", metavar="WORDS", help="with --from: roughly its last words")
+    s.add_argument("--paras", type=int, metavar="N", help="with --from: N paragraphs (default 1)")
+    s.add_argument("--item", action="store_true", help="with --from: the numbered item it starts, with the items under it")
+    s.add_argument("--section", action="store_true", help="with --from: to the end of the section or rule it is in")
+    s.add_argument("--pick", type=int, metavar="N", help="with --from: candidate N of a previous answer")
+    s.add_argument("--dry-run", action="store_true", help="with --from or --batch: show what would be added")
+    s.add_argument("--batch", metavar="JSONL", help="add many: one JSON object a line (see above)")
+    s.add_argument("--resolved", metavar="JSONL", help="with --batch: write each row found as an exact range "
+                   "(doc, layer, start, end, and its note), for adding as is with another --batch")
+    s.add_argument("--quiet", action="store_true", help="with --batch: print only rows that need attention and the total")
+    s.add_argument("--verbose", action="store_true", help="print each row's full answer (preview, score, scope)")
     s.add_argument("--layer", metavar="VIEW", help="with --words: search this layer view (e.g. ocr), not the primary")
     s.add_argument("--interp", metavar="NAME", help="a reference to an interpretation (interp --help), shown with :interp")
     s.add_argument("--ptr", help="with --interp: a JSON pointer into its output")
@@ -2507,9 +2567,25 @@ def page(argv=None):
     m = Matter.find(a.matter)
     try:
         if a.cmd == "check":
-            results = pages.Page(m, a.file).check()
-            for r in results if a.all else literate.problems(results):
+            page = pages.Page(m, a.file)
+            results = page.check()
+            probs = literate.problems(results)
+            for r in results if a.all else probs:
                 out(r)
+            if a.show:
+                import html as _html
+                import re as _re
+                for rid in page.refs:
+                    r = page.resolved(rid)
+                    if r.status == "broken" or not r.parts:
+                        continue
+                    q = literate.plain(literate.pieces(r, inline=False))
+                    out({"id": rid, "cite": _html.unescape(_re.sub(r"<[^>]+>", "", page.cite(r))),
+                         "words": len(q.split()), "starts": " ".join(q.split()[:8]),
+                         "ends": " ".join(q.split()[-8:])})
+            refs = [r for r in results if "id" in r and "lint" not in r]
+            out({"references": len(refs), "exact": sum(r.get("status") == "exact" for r in refs),
+                 "problems": len(probs), **({"done": True} if not probs else {})})
             if any(r.get("status") == "broken" or r.get("lint") in ("missing-ref", "bad-ref", "duplicate-ref") for r in results):
                 sys.exit(1)
         elif a.cmd == "render":
@@ -2535,13 +2611,49 @@ def page(argv=None):
             if a.locators or a.words:
                 raise pages.PageError("--interp makes a reference to an interpretation; don't give locators or --words too")
             out(pages.add_interp_ref(m, a.file, a.id, a.interp, a.ptr, a.replace))
+        elif a.cmd == "ref-add" and a.batch:
+            rows = [json.loads(l) for l in Path(a.batch).read_text(encoding="utf-8").splitlines() if l.strip()]
+            res = pages.add_passages(m, a.file, rows, a.replace, a.dry_run)
+            for r in res:
+                if a.verbose:
+                    out(r)
+                elif r.get("status") != "found":
+                    out(r)
+                elif not a.quiet:
+                    out(pages.brief(r))
+            if a.resolved:
+                keep = ("id", "doc", "layer", "start", "end", "words", "starts", "ends", "note", "date", "who")
+                Path(a.resolved).write_text("".join(json.dumps({k: r[k] for k in keep if k in r}, ensure_ascii=False) + "\n"
+                                                    for r in res if r.get("status") == "found"), encoding="utf-8")
+            found = sum(1 for r in res if r.get("status") == "found")
+            out({"rows": len(res), ("found" if a.dry_run else "written"): found,
+                 **({"all_exact": True} if found == len(res) else {}),
+                 "to_confirm": [r["id"] for r in res if r.get("status") == "confirm"],
+                 "errors": [r["id"] for r in res if r.get("status") == "error"],
+                 **({"resolved": a.resolved} if a.resolved else {})})
         elif a.cmd == "ref-add":
             if a.ptr:
                 raise pages.PageError("--ptr goes with --interp; for a JSON document, use a ptr= locator (doc:…#ptr=/a/b)")
-            if bool(a.locators) == bool(a.words):
-                raise pages.PageError("give locators, or --words (with --in), not both")
-            locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
-            out(pages.add_ref(m, a.file, a.id, locs, a.replace))
+            if not a.id:
+                raise pages.PageError("give the reference's id (or --batch)")
+            if sum(map(bool, (a.locators, a.words, a.from_))) != 1:
+                raise pages.PageError("give one of: locators, --from (with --to, --paras or --item), --words")
+            if (a.to or a.paras or a.item or a.section or a.pick) and not a.from_:
+                raise pages.PageError("--to, --paras, --item, --section and --pick go with --from")
+            if sum(map(bool, (a.to, a.paras, a.item, a.section))) > 1:
+                raise pages.PageError("give one of --to, --paras, --item, --section")
+            if a.from_:
+                res = pages.find_passage(m, a.in_doc, a.from_, a.to, a.paras, a.item, a.pick, a.layer, a.section)
+                if res.get("status") == "found" and not a.dry_run:
+                    pages.add_ref(m, a.file, a.id, [res["loc"]], a.replace)
+                    res["written"] = True
+                res.pop("loc", None)
+                res = {"id": a.id, **res}
+                out(res if a.verbose or res.get("status") != "found" else
+                    {**pages.brief(res), **({"written": True} if res.get("written") else {})})
+            else:
+                locs = a.locators or pages.find_words(m, a.in_doc, a.words, a.layer)
+                out(pages.add_ref(m, a.file, a.id, locs, a.replace))
         elif a.cmd == "ref-judge":
             out(pages.judge_ref(m, a.file, a.id, a.loc, a.verdict, a.why))
         elif a.cmd == "ref-list":

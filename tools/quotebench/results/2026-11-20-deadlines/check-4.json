@@ -1,0 +1,24 @@
+{
+ "summary": {
+  "quotations": 294,
+  "words_quoted": 6729,
+  "verdicts": {
+   "not found": 1,
+   "verbatim": 293
+  },
+  "by_kind": {
+   "ref": 293,
+   "typed-inline": 1
+  },
+  "words_wrong": 0
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "Court may change",
+   "cited": null,
+   "verdict": "not found",
+   "closest": "usc-title9-arbitration-2023.pdf"
+  }
+ ]
+}

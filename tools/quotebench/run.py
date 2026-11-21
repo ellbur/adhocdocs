@@ -68,6 +68,14 @@ DELEGATE = {
                "Write the memo from what they bring back."),
 }
 
+# the same, for the chronology (prompt-chronology.md, checked with freecheck.py)
+DELEGATE_CHRONOLOGY = {
+    "no": "Do all the reading yourself, in this conversation. Don't hand any of it to subagents.",
+    "sonnet": ("There is a lot to read, so to keep the cost down, hand the reading to subagents running Sonnet "
+               "(the Agent tool, with model \"sonnet\"): for example, one for each custodian's documents. "
+               "Write the chronology from what they bring back."),
+}
+
 
 # -- the session's instructions, with and without the page tool ----------------------------------------------
 
@@ -76,9 +84,9 @@ NO_TOOL_EDITS = [
     # the page tool's row in the table of tools
     ("| `page` | literate pages: memos and chronologies whose quotations are references |\n", ""),
     # rule 1, and the others renumbered
-    ("""1. **Never type a quotation into durable work.** In pages, notes and
-   exports, quotations are references (`page ref add`: a locator, or `--in
-   <doc> --words "…"`); in chat, quote freely but say when you paraphrase.
+    ("""1. **Never type a quotation into durable work.** In pages and notes it's a
+   reference: `page ref add --from "<roughly its first words>"` (`--to …`)
+   finds it, first in what you just read. In chat, say when you paraphrase.
 """, ""),
     ("2. **Searches have coverage.**", "1. **Searches have coverage.**"),
     ("3. **Locators are the currency.**", "2. **Locators are the currency.**"),
