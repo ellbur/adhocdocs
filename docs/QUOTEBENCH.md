@@ -184,3 +184,81 @@ in Rule 31, and the candidates say which rule each is under. Citations got
 `cite-style: filename`, and a PDF page without a printed number is cited "at
 PDF p. N".
 
+
+## Results so far
+
+Three tasks, four cells each, one run per cell, all on Claude Opus 5.5 in
+Claude Code cloud sessions driven by another session (`create_session`,
+`send_message`) from branches holding the sample matter without the bench.
+Each results directory has the work products, the checker's findings and a
+README.
+
+| task | quotations per memo | wrong words, all cells | cheapest cell |
+|---|---|---|---|
+| [48 long block quotations](../tools/quotebench/results/2026-11-20) | 48 | 0 | no tool, Opus alone ($1.77) |
+| [a chronology of the dispute](../tools/quotebench/results/2026-11-20-chronology) | 70–124 | 0 | no tool, Opus alone ($2.42) |
+| [every deadline in the FRCP and Title 9](../tools/quotebench/results/2026-11-20-deadlines) | 101–486 | 0 | **page tool**, Opus alone ($2.51) |
+
+- **Opus 5.5 doesn't misquote here**, typed or not: 0 wrong words in some
+  1,100 typed quotations. When asked for exact quotations it extracts them
+  with scripts; otherwise it types them, from what it read, and they still
+  come out right. It can overstate what it checked.
+- **So the page tool's value is that nobody has to trust that**: without it,
+  a third of a chronology's quotations had no adjacent citation or came
+  from a scan read by eye; with it, every quotation is the document's text
+  at a recorded range, checked by `page check`.
+- **The tool's overhead is now small.** It was re-reading passages (nothing
+  said they were checked), big previews and help, rendering to see
+  citations, and instructions asking for extra checks. Since `--from`,
+  ranges from scripts, quiet batches and "done when `page check` passes",
+  the tool cell was the cheapest on the deadlines task.
+- **Delegating reading to Sonnet hasn't saved money yet**: the lead's large
+  fixed context, its handback turns and its review of what came back cost
+  as much as reading alone, and Sonnet adds its own. With the `reader`
+  subagent (checked references with notes, a short reply) the handoff
+  works, but the delegated leads also took on more scope, so the deadline
+  costs aren't like for like.
+
+## Next: a large FTC docket
+
+A stress test on a real collection: about 500 quotations, from thousands of
+pages, for a question that needs reading rather than a keyword search.
+
+- **The docket:** *In the Matter of Benco Dental Supply Co., Henry Schein,
+  Inc. and Patterson Companies, Inc.*, FTC Docket No. 9379: an alleged
+  agreement among the three largest dental distributors to refuse to deal
+  with buying groups. The ALJ found Benco and Patterson liable and dismissed
+  the complaint against Schein (Initial Decision, October 2019). Public: the
+  case page's filings (complaint, motions, orders, the Commission's opinion
+  on summary decision, post-trial briefs, the Initial Decision) and the
+  trial transcripts listed on the FTC's transcripts page.
+- **The question:** for each distributor, what evidence complaint counsel
+  relied on to show it joined the agreement, how that company explained the
+  same conduct as its own independent decision, and how the ALJ weighed each
+  piece (and why it came out differently for Schein). Answering it means
+  following the same emails through both sides' briefs, the testimony and
+  the decision, quoting each link.
+- **Fetching it**, from a session whose network allows `www.ftc.gov`, with
+  [`tools/corpus/fetch_docket.py`](../tools/corpus/fetch_docket.py). It
+  follows only links from the pages it starts from (no URL is guessed),
+  honours robots.txt, waits between requests, and records which page linked
+  to each file:
+
+  ```sh
+  uv run python tools/corpus/fetch_docket.py --out corpus-ftc/benco-9379 \
+    --start https://www.ftc.gov/legal-library/browse/cases-proceedings/151-0190-bencoscheinpatterson-matter \
+    --start https://www.ftc.gov/legal-library/browse/frequently-requested-foia-records/transcripts-adjudicative-proceedings \
+    --follow /legal-library/browse/cases-proceedings/ \
+    --follow /transcripts-adjudicative-proceedings/benco \
+    --keep 9379 --keep benco --keep schein --keep patterson --dry-run
+  ```
+
+  Look at the dry run's list first, then run it without `--dry-run`.
+- **Then:** check the PDFs have text (scanned ones need OCR, which the
+  cloud sessions lack: OCR them where the files are fetched, or leave them
+  out and say so); put the docket on a base branch as its own matter (a
+  manifest like `corpus/manifest.toml`, the workspace hook and the reader
+  agent, no bench files); run the four cells with a prompt in the style of
+  the chronology's (`prompt-chronology.md`), checked with `freecheck.py`.
+  A cell will likely run for an hour or more and cost tens of dollars, so
+  start with the two Opus-alone cells.
