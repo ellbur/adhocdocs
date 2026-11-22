@@ -39,10 +39,11 @@ docstrings.*
   tokenizer never decides a result.
 - **`semantic`**: passages of about 200 words, never across a page,
   embedded by a local model (`BAAI/bge-small-en-v1.5`, MIT) on the CPU, and
-  searched by brute force. It has to be local: the container's network
-  allows only Claude Code's hosts, and sending text to an embedding service
-  would breach Principle 2. Using one anyway would be a change to the
-  allowlist, made by the user on the host.
+  searched by brute force. By default it runs locally: the container's
+  network allows only Claude Code's hosts. An embedding service would be
+  one more third party receiving matter text, like Anthropic, needing a
+  suitable contract with the provider; turning one on is the user's
+  change, made on the host (see [Remote embedding](#remote-embedding-not-built)).
 - **`threads`**: each email's Message-ID, In-Reply-To, References and
   normalized subject. Threads are assembled from it at query time.
 - **`neardup`**: a MinHash signature of each text's word 5-shingles, for
@@ -131,6 +132,56 @@ CPU. The 51-file test corpus (about 950 passages, mostly one 142-page PDF)
 takes 2–3 minutes. Keyword indexing of the same corpus takes under a
 second. Each command replays the feeds to know what is live, which is fine
 at this size but will want a cache for large matters.
+
+## Remote embedding (not built)
+
+Embedding the FTC docket (33,000 distinct passages) takes about 50 minutes
+on a laptop CPU; a GPU does it in a minute or two. This is how a hosted
+endpoint, such as a Hugging Face Inference Endpoint, would be wired in.
+Testing it needs a Hugging Face account, an endpoint and a token.
+
+- **The endpoint** runs the same model, `BAAI/bge-small-en-v1.5`, at the
+  revision fastembed uses, served by Text Embeddings Inference (TEI):
+  `POST <url>/embed` with `{"inputs": [...], "normalize": true}` returns
+  one vector per input. bge takes passages without a prefix (only queries
+  get one), CLS pooling, as fastembed does. A dedicated endpoint, rather
+  than the shared serverless API, gives a fixed model revision and can
+  scale to zero between runs.
+- **Turned on by the user, on the host** (Principle 2): the matter's
+  config (`adhoc setup`) takes the endpoint URL and the name of an
+  environment variable on the host that holds the token. `adhoc open` then
+  adds the endpoint's host name to the session's allowlist (next to
+  `proxy.CLAUDE_CODE_HOSTS`; the proxy passes it through like the others
+  and logs each connection), and passes `ADHOC_EMBED_ENDPOINT` and
+  `ADHOC_EMBED_TOKEN` into the container. The session start in the audit
+  log already records the allowlist, so it shows when the endpoint was on.
+  Claude can read the token inside the session, as it can the Claude API's.
+  A token scoped to that one endpoint keeps it from being of use for
+  anything else. Run on the host (the bench, `ftc_matter.sh`), the same two
+  variables are just set in the shell.
+- **In `semantic.py`**: `_embed(texts)` calls `_embed_remote(texts)` when
+  `ADHOC_EMBED_ENDPOINT` is set. It posts batches of 64 through
+  `HTTPS_PROXY` with the token as a bearer header, retries with backoff on
+  429/5xx and while a scaled-to-zero endpoint starts (503), normalizes,
+  and returns float16 like the local path. Everything above it is
+  unchanged: `passage_vectors` still checks the embedding cache first, so
+  only missing passages go out, and `idx update --background` inherits the
+  variables. Queries stay local (one short text, and searching then needs
+  no network).
+- **Same vectors, checked**: `model_hash()` still names the local weights,
+  so the index and the cache don't change key with the endpoint. That only
+  holds while the endpoint gives the same vectors, so
+  `idx check-embedder` (new) embeds a sample of the matter's passages both
+  ways and requires a cosine of at least 0.999 for each, as float16
+  rounding and GPU arithmetic allow. Bit-for-bit equality isn't to be
+  expected. `_embed_remote` refuses to run until that check has passed for
+  this endpoint and model hash, recorded in the models directory. The
+  index settings gain `"embedder": "local"` or the endpoint's host, shown
+  by `idx status`; that is information, not part of the key.
+- **Tests**: a stand-in TEI server on localhost (the `/embed` contract,
+  a 503 then success, a 429) and the check refusing an endpoint whose
+  vectors differ. The real endpoint is tried by hand, timed against the
+  docket.
 
 ## Not built yet
 
