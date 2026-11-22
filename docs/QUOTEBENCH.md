@@ -239,7 +239,8 @@ pages, for a question that needs reading rather than a keyword search.
   following the same emails through both sides' briefs, the testimony and
   the decision, quoting each link.
 - **Getting it:** it has been fetched (Nov 2026) and is kept, with its OCR,
-  in a private bucket. With gcloud signed in to an account that can read it:
+  in a public bucket, `gs://ellbur-adhocdocs-corpora/ftc/` (about 400 MB),
+  so anyone can replicate the runs; no account or gcloud is needed:
 
   ```sh
   uv run python tools/corpus/pull_corpus.py        # into corpus-ftc/ (git-ignored), checked against sources.jsonl
