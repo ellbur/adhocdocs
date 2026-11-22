@@ -213,13 +213,56 @@ def list_html(m: Matter, path) -> tuple[dict, list[str]]:
 
 # -- launching (host side) -------------------------------------------------------------------
 
+VIEWER_SOURCES = ("src", "shell", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+
+
+def _newest_source_mtime(viewer_dir: Path) -> float:
+    newest = 0.0
+    for name in VIEWER_SOURCES:
+        p = viewer_dir / name
+        if p.is_file():
+            newest = max(newest, p.stat().st_mtime)
+        elif p.is_dir():
+            for f in p.rglob("*"):
+                if f.is_file():
+                    newest = max(newest, f.stat().st_mtime)
+    return newest
+
+
+def _rebuild_viewer(viewer_dir: Path, release: Path) -> bool:
+    """``cargo build --release``, its output on stderr (stdout may be a
+    JSON reply). False if cargo is missing or the build fails."""
+    if not shutil.which("cargo"):
+        return False
+    print("the viewer is older than its source: rebuilding it (cargo build --release in viewer/)",
+          file=sys.stderr, flush=True)
+    r = subprocess.run(["cargo", "build", "--release"], cwd=viewer_dir, stdout=sys.stderr)
+    if r.returncode != 0 or not release.exists():
+        return False
+    # cargo leaves the binary alone when nothing it builds from changed (a
+    # stray file in shell/, say): mark it current so this isn't tried every launch
+    release.touch()
+    return True
+
+
 def viewer_binary() -> str:
+    """The viewer to run: ``$ADHOC_VIEWER_BIN``, else this repo's build
+    (rebuilt first if its source has changed since, e.g. after a pull),
+    else one on PATH."""
     if os.environ.get("ADHOC_VIEWER_BIN"):
         return os.environ["ADHOC_VIEWER_BIN"]
     exe = "adhoc-viewer.exe" if WINDOWS else "adhoc-viewer"
+    viewer_dir = REPO / "viewer"
+    release = viewer_dir / "target" / "release" / exe
     for profile in ("release", "debug"):
-        p = REPO / "viewer" / "target" / profile / exe
+        p = viewer_dir / "target" / profile / exe
         if p.exists():
+            if p.stat().st_mtime >= _newest_source_mtime(viewer_dir):
+                return str(p)
+            if _rebuild_viewer(viewer_dir, release):
+                return str(release)
+            print(f"warning: {p} is older than the viewer's source and couldn't be rebuilt; "
+                  "using it anyway (`uv run adhoc setup` rebuilds it)", file=sys.stderr, flush=True)
             return str(p)
     found = shutil.which("adhoc-viewer")
     if found:
