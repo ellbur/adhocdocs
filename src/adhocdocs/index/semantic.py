@@ -100,6 +100,57 @@ def passages(text: str):
     return out
 
 
+def _embed(texts: list[str]) -> np.ndarray:
+    """Passage vectors from the model, unit length, as stored: float16."""
+    vecs = np.array(list(model().passage_embed(texts, batch_size=EMBED_BATCH)))
+    return (vecs / np.linalg.norm(vecs, axis=1, keepdims=True)).astype(np.float16)
+
+
+def _embed_cache():
+    """``$ADHOC_EMBED_CACHE``, when set: a folder whose ``embeddings.sqlite``
+    keeps each passage's vector, keyed by the model's weights and the
+    passage's text, so embedding the same text again (a test corpus indexed
+    in a fresh matter) is a lookup. None when it isn't set."""
+    d = os.environ.get("ADHOC_EMBED_CACHE")
+    if not d:
+        return None
+    import sqlite3
+    Path(d).mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(Path(d) / "embeddings.sqlite", timeout=60)
+    db.execute("CREATE TABLE IF NOT EXISTS vectors(key BLOB PRIMARY KEY, vec BLOB NOT NULL)")
+    return db
+
+
+def embed_cache_key(text: str) -> bytes:
+    return hashlib.sha256(f"{model_hash()}\0passage\0".encode() + text.encode("utf-8")).digest()
+
+
+def passage_vectors(texts: list[str]) -> np.ndarray:
+    """Vectors for passages, from the embedding cache where it has them and
+    the model for the rest (adding those to the cache)."""
+    db = _embed_cache()
+    if db is None:
+        return _embed(texts)
+    try:
+        keys = [embed_cache_key(t) for t in texts]
+        found = {}
+        for i in range(0, len(keys), 500):
+            chunk = keys[i:i + 500]
+            q = f"SELECT key, vec FROM vectors WHERE key IN ({','.join('?' * len(chunk))})"
+            found.update(db.execute(q, chunk).fetchall())
+        missing = [i for i, k in enumerate(keys) if k not in found]
+        if missing:
+            new = _embed([texts[i] for i in missing])
+            db.executemany("INSERT OR IGNORE INTO vectors VALUES(?, ?)",
+                           [(keys[i], new[j].tobytes()) for j, i in enumerate(missing)])
+            db.commit()
+            for j, i in enumerate(missing):
+                found[keys[i]] = new[j].tobytes()
+        return np.stack([np.frombuffer(found[k], dtype=np.float16) for k in keys])
+    finally:
+        db.close()
+
+
 class SemanticIndex(TextIndex):
     kind = "semantic"
 
@@ -141,8 +192,7 @@ class SemanticIndex(TextIndex):
         self.db.execute("INSERT INTO texts(text_hash) VALUES(?)", (text_hash,))
         if not spans:
             return
-        vecs = np.array(list(model().passage_embed([text[s:e] for s, e in spans], batch_size=EMBED_BATCH)))
-        vecs = (vecs / np.linalg.norm(vecs, axis=1, keepdims=True)).astype(np.float16)
+        vecs = passage_vectors([text[s:e] for s, e in spans])
         first = self._next_id()
         with open(self.vectors_path, "ab") as f:
             f.write(vecs.tobytes())

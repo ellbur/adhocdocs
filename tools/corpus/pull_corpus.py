@@ -1,5 +1,5 @@
 """Download a fetched test corpus from its public bucket instead of from the
-agency, with its OCR cache. See docs/QUOTEBENCH.md.
+agency, with its OCR and embedding caches. See docs/QUOTEBENCH.md.
 
     uv run python tools/corpus/pull_corpus.py            # the FTC docket into corpus-ftc/
     ADHOC_OCR_CACHE=corpus-ftc/ocr-cache uv run adhoc ...  # then ingest reads OCR from the cache
@@ -24,7 +24,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BUCKET = "ellbur-adhocdocs-corpora"
-PREFIX = "ftc/"                       # the docket (benco-9379/) and its OCR cache (ocr-cache/)
+PREFIX = "ftc/"                       # the docket (benco-9379/), its OCR cache (ocr-cache/), its embeddings (embed-cache/)
 API = "https://storage.googleapis.com"
 
 
@@ -97,12 +97,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bucket", default=os.environ.get("ADHOC_CORPUS_BUCKET", BUCKET))
     ap.add_argument("--out", default=str(REPO / "corpus-ftc"), help="where to put it (default corpus-ftc/)")
-    ap.add_argument("--no-ocr-cache", action="store_true", help="only the documents")
+    ap.add_argument("--no-ocr-cache", action="store_true", help="not the OCR cache")
+    ap.add_argument("--no-embed-cache", action="store_true", help="not the embedding cache (the semantic index is then built from scratch)")
     ap.add_argument("--jobs", type=int, default=8, help="downloads at once")
     a = ap.parse_args()
     bucket = a.bucket.removeprefix("gs://").rstrip("/")
     out = Path(a.out)
-    objs = [o for o in listing(bucket, PREFIX) if not (a.no_ocr_cache and o[0].startswith(PREFIX + "ocr-cache/"))]
+    skip = [PREFIX + d for d, no in (("ocr-cache/", a.no_ocr_cache), ("embed-cache/", a.no_embed_cache)) if no]
+    objs = [o for o in listing(bucket, PREFIX) if not any(o[0].startswith(s) for s in skip)]
     if not objs:
         sys.exit(f"nothing under gs://{bucket}/{PREFIX}")
     total = sum(size for _, size, _ in objs)
