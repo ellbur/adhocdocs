@@ -238,7 +238,27 @@ pages, for a question that needs reading rather than a keyword search.
   piece (and why it came out differently for Schein). Answering it means
   following the same emails through both sides' briefs, the testimony and
   the decision, quoting each link.
-- **Fetching it**, from a session whose network allows `www.ftc.gov`, with
+- **Getting it:** it has been fetched (Nov 2026) and is kept, with its OCR,
+  in a private bucket. With gcloud signed in to an account that can read it:
+
+  ```sh
+  uv run python tools/corpus/pull_corpus.py        # into corpus-ftc/ (git-ignored), checked against sources.jsonl
+  export ADHOC_OCR_CACHE=$PWD/corpus-ftc/ocr-cache # ingest then reads OCR from it instead of running tesseract
+  ```
+
+  91 files: the case page's 87 and the trial transcripts' volumes 17–20,
+  the only ones ftc.gov posts (volumes 1–16 aren't linked anywhere on it).
+  Three of complaint counsel's filings (the pre-trial brief, and the
+  oppositions to Patterson's motions to dismiss and for summary decision,
+  70–100 MB each, mostly scanned exhibits) were cut off every time the
+  script fetched them and were downloaded in a browser; `sources.jsonl`
+  says so. About 1,300 pages are scans, OCRed by
+  [`tools/corpus/ocr_cache.py`](../tools/corpus/ocr_cache.py) into the cache,
+  keyed by page image, each entry naming the tesseract and model that read
+  it. Where the same ones are installed, a hit is what tesseract would say
+  again; where another one is, the page is OCRed afresh; where there is no
+  tesseract (the cloud sessions), the cache is the scanned pages' only text.
+- **Fetching it again**, from a session whose network allows `www.ftc.gov`, with
   [`tools/corpus/fetch_docket.py`](../tools/corpus/fetch_docket.py). It
   follows only links from the pages it starts from (no URL is guessed),
   honours robots.txt, waits between requests, and records which page linked
@@ -254,9 +274,11 @@ pages, for a question that needs reading rather than a keyword search.
   ```
 
   Look at the dry run's list first, then run it without `--dry-run`.
-- **Then:** check the PDFs have text (scanned ones need OCR, which the
-  cloud sessions lack: OCR them where the files are fetched, or leave them
-  out and say so); put the docket on a base branch as its own matter (a
+  Then fill the OCR cache (`uv run python tools/corpus/ocr_cache.py
+  corpus-ftc/benco-9379 --cache corpus-ftc/ocr-cache --check`) and copy
+  both to the bucket (`gcloud storage rsync -r corpus-ftc
+  gs://ellbur-adhocdocs-corpora/ftc`).
+- **Then:** put the docket on a base branch as its own matter (a
   manifest like `corpus/manifest.toml`, the workspace hook and the reader
   agent, no bench files); run the four cells with a prompt in the style of
   the chronology's (`prompt-chronology.md`), checked with `freecheck.py`.

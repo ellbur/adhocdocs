@@ -28,10 +28,12 @@ browser shows only the links in its HTML.
 
 import argparse
 import hashlib
+import http.client
 import json
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import urllib.robotparser
@@ -114,6 +116,10 @@ def file_name(url: str, taken: set[str]) -> str:
     return out
 
 
+class FetchError(OSError):
+    """A download that kept failing part way."""
+
+
 class Fetcher:
     def __init__(self, delay: float):
         self.delay, self.last, self.robots = delay, 0.0, {}
@@ -122,24 +128,70 @@ class Fetcher:
         u = urllib.parse.urlparse(url)
         root = f"{u.scheme}://{u.netloc}"
         if root not in self.robots:
+            # fetched with our own User-Agent, not RobotFileParser.read()'s
+            # Python-urllib one: some sites (www.ftc.gov) answer that with 403,
+            # which the parser takes as "disallow everything"
             rp = urllib.robotparser.RobotFileParser(root + "/robots.txt")
             try:
-                rp.read()
+                req = urllib.request.Request(root + "/robots.txt", headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    rp.parse(r.read().decode("utf-8", "replace").splitlines())
+                # the site's Crawl-delay, when it asks for longer than --delay
+                self.delay = max(self.delay, float(rp.crawl_delay(UA) or 0))
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    rp.disallow_all = True
+                else:
+                    rp.allow_all = True    # no robots.txt (404 etc.): as RobotFileParser.read() does
             except OSError:
                 rp = None          # no robots.txt reachable: the start pages were named by a person
             self.robots[root] = rp
         rp = self.robots[root]
         return rp is None or rp.can_fetch(UA, url)
 
-    def get(self, url: str) -> tuple[bytes, str]:
-        wait = self.last + self.delay - time.time()
-        if wait > 0:
-            time.sleep(wait)
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            body, ctype = r.read(), r.headers.get("content-type", "")
-        self.last = time.time()
-        return body, ctype
+    def get(self, url: str, tries: int = 3, max_requests: int = 30) -> tuple[bytes, str]:
+        """The body and content type. A dropped connection (a large file cut
+        off part way, a reset, a timeout) is tried again; when the server takes
+        byte ranges (www.ftc.gov does, and cuts off long downloads), from where
+        it stopped. It gives up after ``tries`` attempts in a row that get no
+        further, or ``max_requests`` in all. An HTTP error status isn't retried."""
+        body, ctype, total = b"", "", None
+        stalled = 0
+        for n in range(1, max_requests + 1):
+            wait = self.last + self.delay * (stalled + 1) - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            headers = {"User-Agent": UA}
+            if body:
+                headers["Range"] = f"bytes={len(body)}-"
+            before = len(body)
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as r:
+                    if body and r.status != 206:
+                        body = b""                      # the range was ignored: this is the whole file again
+                    ctype = ctype or r.headers.get("content-type", "")
+                    if total is None:
+                        cr = r.headers.get("content-range", "")
+                        total = int(cr.rsplit("/", 1)[1]) if "/" in cr and not cr.endswith("*") else \
+                            (int(r.headers["content-length"]) if r.headers.get("content-length") else None)
+                    try:
+                        body += r.read()
+                    except http.client.IncompleteRead as e:
+                        body += e.partial
+                        raise
+                if total is None or len(body) >= total:
+                    return body, ctype
+                raise FetchError(f"short body: {len(body)} of {total} bytes")
+            except urllib.error.HTTPError:
+                raise
+            except (OSError, http.client.HTTPException) as e:
+                stalled = 0 if len(body) > before else stalled + 1
+                if stalled >= tries or n == max_requests:
+                    raise FetchError(f"{type(e).__name__}: {e}") from e
+                where = f", resuming at byte {len(body)}" if body else ""
+                print(f"retrying {url} ({type(e).__name__}{where})", file=sys.stderr, flush=True)
+            finally:
+                self.last = time.time()
 
 
 def crawl(start: list[str], out: Path, follow: list[str], keep: list[str], depth: int, delay: float,
