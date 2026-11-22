@@ -5,6 +5,9 @@ record of spacing); lines are joined with ``\\n`` and pages with ``\\f``.
 Line-end hyphens and OCR errors are kept as they are.
 """
 
+import functools
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -64,8 +67,58 @@ def tessdata() -> list[str]:
     return ["--tessdata-dir", str(d)] if (d / "eng.traineddata").exists() else []
 
 
+@functools.cache
+def _ocr_engine() -> str | None:
+    """What else, beside the image, decides tesseract's output: its version
+    and the English model's bytes. None when tesseract can't run here."""
+    try:
+        r = subprocess.run([tesseract(), "--version"], capture_output=True)
+    except OSError:
+        return None
+    if r.returncode != 0:
+        return None
+    version = (r.stdout or r.stderr).decode(errors="replace").splitlines()[0].strip()
+    td = tessdata()
+    model = Path(td[1]) / "eng.traineddata" if td else None
+    model_id = hashlib.sha256(model.read_bytes()).hexdigest() if model else "tesseract's own"
+    return f"{version}; eng.traineddata {model_id}"
+
+
+def _ocr_cache_path(png: bytes, psm: int) -> Path | None:
+    """``$ADHOC_OCR_CACHE``, when set, keeps tesseract's words for each page
+    image it has read, so OCRing the same pages again (a test corpus
+    ingested into a fresh matter) is a lookup. The key is the rendered image
+    and the settings; each entry records the engine that read it."""
+    d = os.environ.get("ADHOC_OCR_CACHE")
+    if not d:
+        return None
+    key = hashlib.sha256(png + b"\0psm=%d" % psm).hexdigest()
+    return Path(d) / key[:2] / f"{key}.json"
+
+
 def ocr_png(png: bytes, psm: int = 3) -> list:
-    """Words from tesseract, grouped into lines: (word, box, conf)."""
+    """Words from tesseract, grouped into lines: (word, box, conf).
+
+    With an OCR cache, an entry is used when the same tesseract and model
+    made it, so the words are what tesseract would say again; or when there
+    is no tesseract here at all (a session without OCR), as the only text
+    the page can have. A different engine reads the page afresh."""
+    cached = _ocr_cache_path(png, psm)
+    if cached is not None and cached.exists():
+        entry = json.loads(cached.read_text(encoding="utf-8"))
+        engine = _ocr_engine()
+        if engine is None or entry["engine"] == engine:
+            return [[(w, box, conf) for w, box, conf in line] for line in entry["lines"]]
+    lines = _tesseract_lines(png, psm)
+    if cached is not None:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cached.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"engine": _ocr_engine(), "lines": lines}), encoding="utf-8")
+        os.replace(tmp, cached)
+    return lines
+
+
+def _tesseract_lines(png: bytes, psm: int) -> list:
     r = subprocess.run([tesseract(), "stdin", "stdout", *tessdata(), "-l", "eng", "--psm", str(psm), "-c", "tessedit_create_tsv=1"],
                        input=png, capture_output=True)
     if r.returncode:

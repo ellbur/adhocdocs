@@ -156,6 +156,34 @@ def test_ocr(matter):
     assert "kettering-t/receiving-discrepancy-report-RDR-0224-02.pdf" in got
 
 
+@needs_ocr
+def test_ocr_cache_gives_the_same_extraction_without_tesseract(tmp_path, monkeypatch):
+    from adhocdocs.extract import pdf
+    data = (CORPUS / "okafor-d" / "pod-TCF-889104.pdf").read_bytes()
+    monkeypatch.setenv("ADHOC_OCR_CACHE", str(tmp_path / "ocr"))
+    first = pdf.extract_pdf(data)
+    assert any(l.view == "ocr" for l in first.layers)
+    assert list((tmp_path / "ocr").rglob("*.json"))
+
+    def no_tesseract(png, psm):
+        raise AssertionError("tesseract ran: the cache missed")
+    real_lines = pdf._tesseract_lines
+    monkeypatch.setattr(pdf, "_tesseract_lines", no_tesseract)
+    again = pdf.extract_pdf(data)
+    assert [(l.view, l.text, l.geometry) for l in again.layers] == [(l.view, l.text, l.geometry) for l in first.layers]
+
+    # no tesseract here at all (a session without OCR): the cache is the page's text
+    monkeypatch.setattr(pdf, "_ocr_engine", lambda: None)
+    assert [l.text for l in pdf.extract_pdf(data).layers] == [l.text for l in first.layers]
+
+    # another tesseract or model: read afresh, not taken from the cache
+    calls = []
+    monkeypatch.setattr(pdf, "_ocr_engine", lambda: "tesseract 9.9; eng.traineddata other")
+    monkeypatch.setattr(pdf, "_tesseract_lines", lambda png, psm: calls.append(1) or real_lines(png, psm))
+    pdf.extract_pdf(data)
+    assert calls
+
+
 def test_withdraw_removes_from_index(tmp_path):
     m = Matter.create(tmp_path / "m")
     ingest_paths(m, [CORPUS / "muller-z" / "dispute-timeline-notes.txt"], "muller-z", "c")
