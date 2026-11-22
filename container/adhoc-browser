@@ -1,0 +1,6 @@
+#!/bin/sh
+# $BROWSER in the session. Claude Code opens its sign-in page with it: the
+# host opens the page in the user's own browser, once per `adhoc open`, and
+# passes the browser's callback back here (adhocdocs.signin). Anything else
+# is refused, and Claude Code falls back to showing the link.
+exec python -m adhocdocs.signin browser "$@"

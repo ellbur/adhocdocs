@@ -1,0 +1,15 @@
+EMPLOYEE SURVEY — QUESTIONS (DRAFT)
+
+Scale: Strongly disagree (1) — Strongly agree (5)
+
+1. I would recommend this company as a place to work.
+
+2. I understand how my work contributes to company goals.
+
+3. What is one thing we should stop doing?
+
+4. I feel safe at work.
+
+5. What is one thing we should start doing?
+
+6. Communication between departments is effective.

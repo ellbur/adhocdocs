@@ -1,0 +1,27 @@
+{
+  "about": "Cases for the entity alias matcher. src/adhocdocs/entities.py and viewer/shell/entities.js must both give `expect`: [start, end, entity IDs] in code points.",
+  "cases": [
+    {"text": "Raymond Voss signed. Voss's letter.", "entities": [{"entity": "a", "aliases": ["Raymond Voss", "Voss"]}],
+     "expect": [[0, 12, ["a"]], [21, 25, ["a"]]]},
+    {"text": "José Ibáñez and JOSE IBANEZ and jose ibanez", "entities": [{"entity": "j", "aliases": ["Jose Ibanez"]}],
+     "expect": [[0, 11, ["j"]], [16, 27, ["j"]]]},
+    {"text": "a brown pallet from Will Brown", "entities": [{"entity": "b", "aliases": ["Brown"]}],
+     "expect": [[25, 30, ["b"]]]},
+    {"text": "invoice inv-2026-0347 and INV-2026-03470", "entities": [{"entity": "i", "aliases": ["inv-2026-0347"]}],
+     "expect": [[8, 21, ["i"]]]},
+    {"text": "Thomas\nKettering at the dock; Kettering again", "entities": [{"entity": "t", "aliases": ["Thomas Kettering", "Kettering"]}],
+     "expect": [[0, 16, ["t"]], [30, 39, ["t"]]]},
+    {"text": "Harrowgate Fastener Supply Co. (Harrowgate)", "entities": [{"entity": "h", "aliases": ["Harrowgate"]}, {"entity": "hf", "aliases": ["Harrowgate Fastener Supply Co."]}],
+     "expect": [[0, 30, ["hf"]], [32, 42, ["h"]]]},
+    {"text": "Dana Okafor wrote to Dana.", "entities": [{"entity": "d1", "aliases": ["Dana"]}, {"entity": "d2", "aliases": ["Dana"]}],
+     "expect": [[0, 4, ["d1", "d2"]], [21, 25, ["d1", "d2"]]]},
+    {"text": "Stroudsburg is not Stroud", "entities": [{"entity": "s", "aliases": ["Stroud"]}],
+     "expect": [[19, 25, ["s"]]]},
+    {"text": "📦 shipped to Zoë Müller", "entities": [{"entity": "z", "aliases": ["Zoe Muller"]}],
+     "expect": [[13, 23, ["z"]]]},
+    {"text": "ﬁnance team (Fin.) and Finance", "entities": [{"entity": "f", "aliases": ["Finance"]}],
+     "expect": [[23, 30, ["f"]]]},
+    {"text": "the C++ code and c++", "entities": [{"entity": "c", "aliases": ["C++"]}],
+     "expect": [[4, 7, ["c"]]]}
+  ]
+}

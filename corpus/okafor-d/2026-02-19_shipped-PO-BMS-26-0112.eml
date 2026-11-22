@@ -1,0 +1,35 @@
+From: Harrowgate Order Portal <noreply@portal.harrowgatefastener.example>
+To: =?utf-8?q?Zo=C3=AB_M=C3=BCller?= <zoe.muller@bellwethermarine.example>
+Cc: Dana Okafor <dana.okafor@harrowgatefastener.example>
+Date: Thu, 19 Feb 2026 16:07:00 -0500
+Subject: Your order PO-BMS-26-0112 has shipped
+Message-ID: <portal.20260219160700.3391@harrowgatefastener.example>
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<html><body style=3D"font-family:Arial,sans-serif">
+<table width=3D"600" cellpadding=3D"8" style=3D"border:1px solid #ccc">
+<tr><td style=3D"background:#1d3b5c;color:#fff;font-size:20px">Harrowgate Fas=
+tener Supply Co.</td></tr>
+<tr><td>
+<p>Hello Zo&euml; M&uuml;ller,</p>
+<p>Good news &mdash; your order <b>PO-BMS-26-0112</b> left our Columbus wareh=
+ouse today.</p>
+<table cellpadding=3D"4" style=3D"border-collapse:collapse">
+<tr><td><b>Carrier</b></td><td>Tri-County Freight Lines</td></tr>
+<tr><td><b>Bill of lading</b></td><td>TCF-889104</td></tr>
+<tr><td><b>PRO number</b></td><td>0047-2219-6</td></tr>
+<tr><td><b>Pallets</b></td><td>1 (1,410 lb)</td></tr>
+<tr><td><b>Estimated delivery</b></td><td>Tuesday, February 24, 2026</td></tr>
+</table>
+<p>Lines shipped: PN&nbsp;44-B/7 &times; 12,000 &middot; PN&nbsp;44-C/2 &time=
+s; 20,000 &middot; PN&nbsp;17-K.3/A &times; 20,000 &middot; PN&nbsp;90-T/12 &=
+times; 120</p>
+<p>Your invoice will follow separately. Track this order any time in the <a h=
+ref=3D"https://portal.harrowgatefastener.example/orders/PO-BMS-26-0112">order=
+ portal</a>.</p>
+<p style=3D"color:#777;font-size:11px">This is an automated message. Please d=
+on&rsquo;t reply &mdash; contact your account manager, Dana Okafor, instead.<=
+/p>
+</td></tr></table></body></html>

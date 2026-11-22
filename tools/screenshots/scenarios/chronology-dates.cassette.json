@@ -1,0 +1,124 @@
+{
+ "version": 1,
+ "claude_code": "2.1.325",
+ "model": "claude-opus-5-5",
+ "note": "Claude's side written in a development session (docs/SCREENSHOTS.md, Writing a recording); what the tools print, from scenario.py replay --direct --accept.",
+ "turns": [
+  {
+   "prompt": "Write a chronology of the key events about the Q-3 pallet, as a list with dates.",
+   "results": [],
+   "response": {
+    "content": [
+     {
+      "type": "text",
+      "text": "I'll write it as a list whose entries point at their evidence: the order, the shipment, the dock records, and the letters that followed."
+     },
+     {
+      "type": "tool_use",
+      "id": "toolu_chr_01",
+      "name": "Bash",
+      "input": {
+       "command": "list new chronology.list.jsonl --title \"The Q-3 pallet: key events\" <<'LOCS'\ndoc:sha256:c0d3e3d48231bd45bf01a43ec1e82de38647dbe032463df417b1b05eb39d1f02\ndoc:sha256:a25f5f1d73f70ff4cc2170c0818d96602a040a38b56c3af58e6d7da1e9d962a5\ndoc:sha256:d90ba2d59320cd6c859b6daa9deb9d60cb1bf9f6273a576e58560c4db17169b3@sha256:4ca4b42349747a96fc6adbb62c55c65a0b48ef2afd63b6c66245f4b376c958fd#char=4374,4388\ndoc:sha256:9d0211c680289099dc531b8d2520c0e445f45b682b853252d5e9a908da3aa3d8\ndoc:sha256:46b3f84243bcbee0e9f8d70e6371685ec84eb013c7b9e5cf71a30c084fa190a0@sha256:4123042a14016305fcb8d125166a0ab962458e87fae16615aa1f6e95a1d34d18#char=538,552\ndoc:sha256:9b1d7cdbabb109c3cdb8b45c698fda42707cff02e37e2b655e030d2ded47371c\ndoc:sha256:796fb3131510bc2aa1ade92a9962c718631cf0333b7e4afaf148b4f8f325cfa1\ndoc:sha256:b7172f6ab8cfc2a07ef3d45a2bdcaa36dafd8503a1b3abc071b609a462d0dc42\ndoc:sha256:0c008dd002a436ac26e57199531db62a63226a2fa518f1aa200687aa459d3b09\ndoc:sha256:31ab1f6a4265792294758cf2730f5bb5ba04b6bc5e2a43f68e22e067f1a10a82\nLOCS",
+       "description": "Make the chronology list from the evidence for each event"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+     "input_tokens": 12000,
+     "output_tokens": 300
+    }
+   }
+  },
+  {
+   "results": [
+    {
+     "tool_use_id": "toolu_chr_01",
+     "content": "{\"written\": \"chronology.list.jsonl\", \"items\": 10}"
+    }
+   ],
+   "response": {
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_chr_02",
+      "name": "Bash",
+      "input": {
+       "command": "f=chronology.list.jsonl\nlist set $f @1 date=2026-02-09 event=\"Bellwether orders one pallet of bolts (PO-BMS-26-0112)\" &&\nlist set $f @2 date=2026-02-19 event=\"Harrowgate ships it with Tri-County Freight\" &&\nlist set $f @3 date=2026-02-24 event=\"Delivered to Dock 4; Ibáñez quarantines it in Q-3, signs TK\" &&\nlist set $f @4 date=2026-03-02 event=\"Kettering asks the carrier to collect an unclaimed pallet\" &&\nlist set $f @5 date=2026-03-04 event=\"The pallet goes back to the carrier\" &&\nlist set $f @6 date=2026-03-09 event=\"Bellwether: the shipment was never received\" &&\nlist set $f @7 date=2026-03-12 event=\"Harrowgate sends the proof of delivery\" &&\nlist set $f @8 date=2026-03-25 event=\"Harrowgate's demand letter\" &&\nlist set $f @9 date=2026-04-02 event=\"Bellwether's response to the demand\" &&\nlist set $f @10 date=2026-04-28 event=\"Kettering's deposition\"",
+       "description": "Give each entry its date and what happened"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+     "input_tokens": 12000,
+     "output_tokens": 300
+    }
+   }
+  },
+  {
+   "results": [
+    {
+     "tool_use_id": "toolu_chr_02",
+     "content": "{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}\n{\"written\": \"chronology.list.jsonl\", \"items\": 10, \"covered\": 0}"
+    }
+   ],
+   "response": {
+    "content": [
+     {
+      "type": "text",
+      "text": "The chronology is in `chronology.list.jsonl`: ten events, from the order on **Feb 9** to Kettering's deposition on **Apr 28**. Each entry points at its evidence, so it's checked like any quotation.\n\nThe turning points:\n- **Feb 24:** the carrier delivers to Dock 4, and Ibáñez quarantines the unlabeled pallet in Q-3 and signs TK.\n- **Mar 2 and Mar 4:** Kettering asks the carrier to collect an \"unclaimed pallet\", and it goes back.\n- **Mar 9:** Bellwether tells Harrowgate the shipment was never received.\n\nThe dated entries also show up on the viewer's date cards, near any date you hover."
+     }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+     "input_tokens": 12000,
+     "output_tokens": 300
+    }
+   }
+  },
+  {
+   "prompt": "Show it to me as a timeline.",
+   "results": [],
+   "response": {
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_chr_03",
+      "name": "Bash",
+      "input": {
+       "command": "view timeline chronology.list.jsonl --scale month",
+       "description": "Show the chronology as a timeline"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "usage": {
+     "input_tokens": 12000,
+     "output_tokens": 300
+    }
+   }
+  },
+  {
+   "results": [
+    {
+     "tool_use_id": "toolu_chr_03",
+     "content": "{\"pane\": \"p2\", \"preview\": \"p3\", \"timeline\": {\"items\": 10, \"dated\": 10, \"undated\": 0, \"lanes\": \"custodian\", \"segments\": [[\"2026-02-09\", \"2026-04-28\"]], \"truncated\": false}}"
+    }
+   ],
+   "response": {
+    "content": [
+     {
+      "type": "text",
+      "text": "It's beside the chat, by date. Click an event to open its evidence; `j`/`k` steps through them in order."
+     }
+    ],
+    "stop_reason": "end_turn",
+    "usage": {
+     "input_tokens": 12000,
+     "output_tokens": 300
+    }
+   }
+  }
+ ]
+}

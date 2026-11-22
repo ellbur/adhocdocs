@@ -1,0 +1,29 @@
+BEGIN:VCALENDAR
+PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN
+VERSION:2.0
+METHOD:PUBLISH
+BEGIN:VEVENT
+UID:6433C48EAC038B70CB597A70B16A6DE7
+SEQUENCE:0
+DTSTAMP:20260627T191500Z
+DTSTART:20260630T191500Z
+DTEND:20260630T211500Z
+SUMMARY:Coffee chat
+LOCATION:Plant floor — meet at Bay C
+ORGANIZER;CN="Marcus Delacroix-Hale":mailto:mdelacroix-hale@bellwethermarine.example
+ATTENDEE;CN="Gus Whitcomb";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:gwhitcomb@bellwethermarine.example
+ATTENDEE;CN="Hollis Brandt";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:hbrandt@bellwethermarine.example
+ATTENDEE;CN="Shonda Rhee";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:srhee@bellwethermarine.example
+ATTENDEE;CN="Desmond Pryor";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:dpryor@bellwethermarine.example
+ATTENDEE;CN="Renata Szabo";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:rszabo@bellwethermarine.example
+ATTENDEE;CN="Fritz Albrecht";ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:falbrecht@bellwethermarine.example
+DESCRIPTION:Lunch will be provided.  Bring your laptop.
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+END:VALARM
+END:VEVENT
+END:VCALENDAR

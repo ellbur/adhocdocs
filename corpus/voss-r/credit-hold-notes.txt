@@ -1,0 +1,15 @@
+Credit hold log -- Harrowgate Fastener Supply Co. -- Finance
+
+2026-03-19  BELLWETHER MARINE SYSTEMS (cust 1187)
+            Hold reason: INV-2026/0347 disputed, $48,612.50, 12 days past due.
+            Approved: R. Voss.  Open orders affected: PO-BMS-26-0131 (shipped
+            3/4, INV-2026/0388), PO-BMS-26-0140 (not yet released).
+            Do not release PO-BMS-26-0140 without Controller sign-off.
+
+2026-03-24  BELLWETHER -- no payment. Referred to Pellham & Stroud (E. Stroud).
+
+2026-04-13  BELLWETHER -- TCFL claim TC-26-01953 declined 4/10. Pallet at
+            TCFL Richmond, storage RS-2026-0412, $35/day from 3/11. Asked
+            counsel whether we should take the pallet back without prejudice.
+
+2026-04-20  RIDGEWAY TRACTOR -- hold lifted, paid INV-2026/0290 in full.

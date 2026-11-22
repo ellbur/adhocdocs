@@ -1,0 +1,40 @@
+# Dates: a chronology Claude wrote, shown as a timeline, and the date cards
+# that put a document's dates among its events. Claude writes the chronology
+# off camera (setup); the video starts with asking to see it.
+caption = "A chronology as a timeline, and a date in an email placed among its events."
+
+[screen]
+size = [1600, 1000]
+
+[pace]
+think = 1.2
+cps = 180
+typing_ms = 45
+
+[[setup]]
+prompt = "Write a chronology of the key events about the Q-3 pallet, as a list with dates."
+
+[[step]]
+prompt = "Show it to me as a timeline."
+
+[[step]]
+shot = "timeline"
+caption = "The chronology Claude wrote, by date, beside the chat."
+
+[[step]]
+click = { text = "Bellwether: the shipment was never received", pane = { kind = "timeline" }, scroll = true }
+
+[[step]]
+pause = 1.5
+
+# "...when I called on the 2nd": the date card puts March 2 among the events.
+[[step]]
+hover = { text = "the 2nd", pane = { kind = "document" } }
+wait = 1.8
+
+[[step]]
+shot = "date-card"
+caption = "Hovering \"the 2nd\" in Zoë's email: that day, Bellwether's dock was asking the carrier to collect an unclaimed pallet."
+
+[[step]]
+pause = 2.0

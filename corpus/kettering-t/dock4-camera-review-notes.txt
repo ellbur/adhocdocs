@@ -1,0 +1,19 @@
+DOCK 4 CAMERA REVIEW -- 2026-02-24 -- reviewed by T. Kettering 2026-03-11
+
+Camera D4-EXT (exterior, facing door 4)
+  14:41:06  Tri-County tractor #4471 backs to door 4.
+  14:43:30  Driver opens trailer, pallet jack out. One pallet, white wrap.
+  14:45:58  Pallet staged inside door, left side (in front of Q-3 cage).
+  14:46:40  Driver and Jose Ibanez at podium. Jose signs handheld.
+  14:48:15  Truck departs.
+
+Camera D4-INT (interior)
+  14:52:10  Jose moves pallet into Q-3 cage, attaches orange QUARANTINE tag.
+  Label on wrap visible but not readable at this resolution. Logo looks like
+  the Harrowgate "HFS" mark (compare PO-BMS-26-0098 delivery 2/12).
+
+I was at the forklift recert in Chesapeake from 12:30 to 17:00 (sign-in sheet
+from Tidewater Safety Training on file).
+
+Footage exported to USB, given to M. Delacroix-Hale 3/27. Retention on the
+NVR is 45 days so the original will be gone after 4/10.

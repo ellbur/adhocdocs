@@ -1,0 +1,13 @@
+Employee survey — questions (draft)
+
+Scale: Strongly disagree (1) — Strongly agree (5)
+
+1. I would recommend this company as a place to work.
+
+2. I feel safe at work.
+
+3. Communication between departments is effective.
+
+4. What is one thing we should stop doing?
+
+5. My supervisor gives me useful feedback.
