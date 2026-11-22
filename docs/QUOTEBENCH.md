@@ -238,13 +238,25 @@ pages, for a question that needs reading rather than a keyword search.
   piece (and why it came out differently for Schein). Answering it means
   following the same emails through both sides' briefs, the testimony and
   the decision, quoting each link.
-- **Getting it:** it has been fetched (Nov 2026) and is kept, with its OCR,
-  in a public bucket, `gs://ellbur-adhocdocs-corpora/ftc/` (about 400 MB),
-  so anyone can replicate the runs; no account or gcloud is needed:
+- **Getting it:** it has been fetched (Nov 2026) and is kept, with its OCR
+  and its passages' embeddings, in a public bucket,
+  `gs://ellbur-adhocdocs-corpora/ftc/` (about 430 MB), so anyone can
+  replicate the runs; no account or gcloud is needed. To make it a matter,
+  ready to search:
 
   ```sh
-  uv run python tools/corpus/pull_corpus.py        # into corpus-ftc/ (git-ignored), checked against sources.jsonl
-  export ADHOC_OCR_CACHE=$PWD/corpus-ftc/ocr-cache # ingest then reads OCR from it instead of running tesseract
+  sh tools/corpus/ftc_matter.sh                    # matter/ here, or MATTER=<dir>
+  ```
+
+  That pulls it into `corpus-ftc/` (git-ignored, checked against
+  `sources.jsonl`), ingests it with
+  [`tools/corpus/benco-9379.toml`](../tools/corpus/benco-9379.toml) and
+  builds the indexes. Or step by step:
+
+  ```sh
+  uv run python tools/corpus/pull_corpus.py                # [--no-ocr-cache] [--no-embed-cache]
+  export ADHOC_OCR_CACHE=$PWD/corpus-ftc/ocr-cache         # ingest reads OCR from it instead of running tesseract
+  export ADHOC_EMBED_CACHE=$PWD/corpus-ftc/embed-cache     # the semantic index looks passages up in it instead of embedding them
   ```
 
   91 files: the case page's 87 and the trial transcripts' volumes 17–20,
@@ -259,6 +271,13 @@ pages, for a question that needs reading rather than a keyword search.
   it. Where the same ones are installed, a hit is what tesseract would say
   again; where another one is, the page is OCRed afresh; where there is no
   tesseract (the cloud sessions), the cache is the scanned pages' only text.
+  The embedding cache holds the semantic index's vector for each passage
+  (33,000 distinct ones), keyed by the model's weights and the passage's
+  text, so a fresh matter's semantic index takes about a minute instead of
+  about an hour of CPU; another model, or text that differs, is embedded
+  as usual. Without it, `ftc_matter.sh` builds the keyword index and leaves
+  the semantic one building in the background (`idx status` shows how far
+  it is; searches say what they cover meanwhile).
 - **Fetching it again**, from a session whose network allows `www.ftc.gov`, with
   [`tools/corpus/fetch_docket.py`](../tools/corpus/fetch_docket.py). It
   follows only links from the pages it starts from (no URL is guessed),
@@ -276,8 +295,11 @@ pages, for a question that needs reading rather than a keyword search.
 
   Look at the dry run's list first, then run it without `--dry-run`.
   Then fill the OCR cache (`uv run python tools/corpus/ocr_cache.py
-  corpus-ftc/benco-9379 --cache corpus-ftc/ocr-cache --check`) and copy
-  both to the bucket (`gcloud storage rsync -r corpus-ftc
+  corpus-ftc/benco-9379 --cache corpus-ftc/ocr-cache --check`), make the
+  matter, fill the embedding cache from its finished semantic index
+  (`uv run python tools/corpus/embed_cache.py --matter matter --cache
+  corpus-ftc/embed-cache --check`, which also rebuilds the index from the
+  cache alone and compares), and copy them all to the bucket (`gcloud storage rsync -r corpus-ftc
   gs://ellbur-adhocdocs-corpora/ftc`).
 - **Then:** put the docket on a base branch as its own matter (a
   manifest like `corpus/manifest.toml`, the workspace hook and the reader
