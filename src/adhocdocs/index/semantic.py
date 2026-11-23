@@ -31,21 +31,56 @@ def models_dir() -> Path:
 
 _model = None
 
+BUNDLE_MANIFEST = "model.json"
+
+
+def bundle_dir() -> Path | None:
+    """A folder holding the model's files as they are, with ``model.json``
+    (tools/corpus/model_bundle.py makes one), so the model loads with no
+    download: ``$ADHOC_EMBED_MODEL_PATH``, or the one installed in the models
+    directory under ``bundles/`` (pull_corpus.py puts the test corpus's there).
+    None when there is neither; the model then comes from Hugging Face, or the
+    image's copy."""
+    p = os.environ.get("ADHOC_EMBED_MODEL_PATH")
+    if p:
+        return Path(p)
+    d = models_dir() / "bundles" / MODEL.replace("/", "--")
+    return d if (d / BUNDLE_MANIFEST).exists() else None
+
+
+def bundle_model_file(d: Path) -> Path:
+    m = d / BUNDLE_MANIFEST
+    name = json.loads(m.read_text(encoding="utf-8")).get("model_file") if m.exists() else None
+    return d / (name or "model_optimized.onnx")
+
 
 def model():
     global _model
     if _model is None:
         from fastembed import TextEmbedding
-        _model = TextEmbedding(MODEL, cache_dir=str(models_dir()))
+        b = bundle_dir()
+        if b is not None:
+            _model = TextEmbedding(MODEL, cache_dir=str(models_dir()), specific_model_path=str(b))
+        else:
+            _model = TextEmbedding(MODEL, cache_dir=str(models_dir()))
     return _model
 
 
 def model_hash() -> str:
     """SHA-256 of the model's weights. Cached by resolved path and size (the
     Hugging Face cache stores files by content), in the models directory when
-    it is writable; the image's copy is read-only and hashed at build time."""
-    model()
-    files = sorted(models_dir().rglob("*.onnx"))
+    it is writable; the image's copy is read-only and hashed at build time.
+    A bundle's weights are the same bytes as the download's, so they hash the
+    same, and hashing them doesn't load the model."""
+    b = bundle_dir()
+    if b is not None:
+        files = [bundle_model_file(b)]
+        if not files[0].exists():
+            return "unknown"
+    else:
+        model()
+        files = sorted(p for p in models_dir().rglob("*.onnx")
+                       if p.relative_to(models_dir()).parts[0] != "bundles")
     if not files:
         return "unknown"
     f = files[0].resolve()

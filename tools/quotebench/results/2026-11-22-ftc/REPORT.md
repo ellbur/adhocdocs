@@ -262,8 +262,10 @@ doesn't feel like a quotation to the writer. That suggests two changes:
 2. Add a check to `page check` (or `freecheck.py`) for three or more words
    in quotation marks outside a reference, and add a line on labels to rule
    1.
-3. Put the model's weights in the bucket and have `pull_corpus.py` fetch
-   them, so the semantic index builds from the cache with no network.
+3. Upload the model to the bucket (`tools/corpus/model_bundle.py export`,
+   then `gcloud storage rsync`; the commands are in QUOTEBENCH.md).
+   `pull_corpus.py` now installs it when it's there, so the semantic index
+   builds from the cache with no Hugging Face access.
 4. Run each cell three times or more, with semantic search working, to
    turn the sighting into a rate. Start with the no-tool Opus cell and the
    delegated tool cell, the most error-prone and the cheapest per word

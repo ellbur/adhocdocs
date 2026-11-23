@@ -1,5 +1,6 @@
 """Download a fetched test corpus from its public bucket instead of from the
-agency, with its OCR and embedding caches. See docs/QUOTEBENCH.md.
+agency, with its OCR and embedding caches and the embedding model. See
+docs/QUOTEBENCH.md.
 
     uv run python tools/corpus/pull_corpus.py            # the FTC docket into corpus-ftc/
     ADHOC_OCR_CACHE=corpus-ftc/ocr-cache uv run adhoc ...  # then ingest reads OCR from the cache
@@ -9,6 +10,12 @@ bucket and downloads over HTTPS, skipping files already here with the same
 MD5, then checks every document against the SHA-256 that ``sources.jsonl``
 recorded when it was fetched from the agency. ``--bucket`` (or
 ``$ADHOC_CORPUS_BUCKET``) points it at another copy.
+
+When the bucket has the semantic index's model (``model/``, made by
+model_bundle.py), it is checked and installed in the models directory, so
+the semantic index builds from the embedding cache, and searches run, with
+no Hugging Face access. Without it the model is downloaded from Hugging Face
+when it's first needed, as before.
 """
 
 import argparse
@@ -24,7 +31,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 BUCKET = "ellbur-adhocdocs-corpora"
-PREFIX = "ftc/"                       # the docket (benco-9379/), its OCR cache (ocr-cache/), its embeddings (embed-cache/)
+PREFIX = "ftc/"                       # the docket (benco-9379/), its OCR cache (ocr-cache/), its embeddings (embed-cache/), the model (model/)
 API = "https://storage.googleapis.com"
 
 
@@ -99,11 +106,13 @@ def main():
     ap.add_argument("--out", default=str(REPO / "corpus-ftc"), help="where to put it (default corpus-ftc/)")
     ap.add_argument("--no-ocr-cache", action="store_true", help="not the OCR cache")
     ap.add_argument("--no-embed-cache", action="store_true", help="not the embedding cache (the semantic index is then built from scratch)")
+    ap.add_argument("--no-model", action="store_true", help="not the embedding model (it then comes from Hugging Face)")
     ap.add_argument("--jobs", type=int, default=8, help="downloads at once")
     a = ap.parse_args()
     bucket = a.bucket.removeprefix("gs://").rstrip("/")
     out = Path(a.out)
-    skip = [PREFIX + d for d, no in (("ocr-cache/", a.no_ocr_cache), ("embed-cache/", a.no_embed_cache)) if no]
+    skip = [PREFIX + d for d, no in (("ocr-cache/", a.no_ocr_cache), ("embed-cache/", a.no_embed_cache),
+                                     ("model/", a.no_model)) if no]
     objs = [o for o in listing(bucket, PREFIX) if not any(o[0].startswith(s) for s in skip)]
     if not objs:
         sys.exit(f"nothing under gs://{bucket}/{PREFIX}")
@@ -121,9 +130,19 @@ def main():
         print(b, file=sys.stderr)
     if bad:
         sys.exit(1)
+    model = None
+    if not a.no_model and (out / "model" / "model.json").exists():
+        import model_bundle
+        try:
+            model = str(model_bundle.install(out / "model"))
+        except ValueError as e:
+            sys.exit(f"the model in the bucket: {e}")
+        except OSError as e:                 # a read-only models directory (the session image has its own)
+            print(f"the model wasn't installed ({e}); it will come from Hugging Face", file=sys.stderr)
     n = sum(1 for l in (out / "benco-9379" / "sources.jsonl").read_text(encoding="utf-8").splitlines() if l)
     print(json.dumps({"docket": str(out / "benco-9379"), "files": n, "verified": True,
-                      "ocr_cache": None if a.no_ocr_cache else str(out / "ocr-cache")}))
+                      "ocr_cache": None if a.no_ocr_cache else str(out / "ocr-cache"),
+                      "model": model}))
 
 
 if __name__ == "__main__":

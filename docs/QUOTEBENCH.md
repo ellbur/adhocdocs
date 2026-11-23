@@ -261,7 +261,7 @@ pages, for a question that needs reading rather than a keyword search.
   builds the indexes. Or step by step:
 
   ```sh
-  uv run python tools/corpus/pull_corpus.py                # [--no-ocr-cache] [--no-embed-cache]
+  uv run python tools/corpus/pull_corpus.py                # [--no-ocr-cache] [--no-embed-cache] [--no-model]
   export ADHOC_OCR_CACHE=$PWD/corpus-ftc/ocr-cache         # ingest reads OCR from it instead of running tesseract
   export ADHOC_EMBED_CACHE=$PWD/corpus-ftc/embed-cache     # the semantic index looks passages up in it instead of embedding them
   ```
@@ -308,6 +308,24 @@ pages, for a question that needs reading rather than a keyword search.
   corpus-ftc/embed-cache --check`, which also rebuilds the index from the
   cache alone and compares), and copy them all to the bucket (`gcloud storage rsync -r corpus-ftc
   gs://ellbur-adhocdocs-corpora/ftc`).
+- **The embedding model, in the bucket.** The embedding cache is keyed by the
+  model's weights' hash, and queries are embedded with the model, so
+  semantic search needs the model too. Its only source is huggingface.co,
+  which cloud sessions may not reach. A copy in the bucket (`model/`, about
+  67 MB, MIT) is installed by `pull_corpus.py`, and the tools then load it
+  with no download. To make and upload it, on a machine that can reach
+  huggingface.co and is signed in to gcloud with write access:
+
+  ```sh
+  uv run python tools/corpus/model_bundle.py export --out corpus-ftc/model --matter matter
+  uv run python tools/corpus/model_bundle.py check corpus-ftc/model
+  gcloud storage rsync -r corpus-ftc/model gs://ellbur-adhocdocs-corpora/ftc/model
+  ```
+
+  `--matter` checks that the weights are the ones the matter's semantic
+  index, and so the embedding cache, was built with. A Hugging Face
+  Inference Endpoint ([INDEXING.md](INDEXING.md), "Remote embedding") is a
+  separate, optional speedup for embedding new text, and isn't built.
 - **Run:** `ftc-matter` holds it as its own matter (the workspace hook and
   the reader agent, no bench files). The four cells, with
   `prompt-ftc.md`, are in
@@ -315,8 +333,6 @@ pages, for a question that needs reading rather than a keyword search.
   (the write-up: [REPORT.md](../tools/quotebench/results/2026-11-22-ftc/REPORT.md)):
   7 to 22 minutes and $4 to $15 a cell. Before running from `ftc-matter`
   again, start each session on its own branch (`git checkout -b …`): the
-  workspace hook pushes to the branch the session is on. The bucket's
-  embedding cache made it through, but the model's weights aren't in the
-  bucket: the cache is keyed by their hash, and queries are embedded with
-  them, so a session that can't fetch the model (from huggingface.co, its
-  only source) has keyword search only. The weights belong in the bucket.
+  workspace hook pushes to the branch the session is on. The run had
+  keyword search only: the embedding cache was pulled, but the model wasn't
+  yet in the bucket (see above).
