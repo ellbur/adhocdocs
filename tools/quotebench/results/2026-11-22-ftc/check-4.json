@@ -1,0 +1,27 @@
+{
+ "summary": {
+  "quotations": 84,
+  "words_quoted": 9040,
+  "verdicts": {
+   "uncited": 1,
+   "verbatim": 83
+  },
+  "by_kind": {
+   "ref": 83,
+   "typed-inline": 1
+  },
+  "words_wrong": 0
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "Benco / Schein / Patterson (FTC Dkt. 9379): how the buying-group agreement was proved, or not, against each distributor",
+   "where": 0,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "closest": "respondenthenryscheinmotion592037.pdf"
+  }
+ ]
+}

@@ -76,6 +76,14 @@ DELEGATE_CHRONOLOGY = {
                "Write the chronology from what they bring back."),
 }
 
+# the same, for the FTC docket's analysis (prompt-ftc.md, checked with freecheck.py)
+DELEGATE_FTC = {
+    "no": "Do all the reading yourself, in this conversation. Don't hand any of it to subagents.",
+    "sonnet": ("There is a lot to read, so to keep the cost down, hand the reading to subagents running Sonnet "
+               "(the Agent tool, with model \"sonnet\"): for example, one for each brief, the transcripts, "
+               "and the Initial Decision. Write the analysis from what they bring back."),
+}
+
 
 # -- the session's instructions, with and without the page tool ----------------------------------------------
 

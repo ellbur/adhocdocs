@@ -187,9 +187,10 @@ PDF p. N".
 
 ## Results so far
 
-Three tasks, four cells each, one run per cell, all on Claude Opus 5.5 in
+Four tasks, four cells each, one run per cell, all on Claude Opus 5.5 in
 Claude Code cloud sessions driven by another session (`create_session`,
-`send_message`) from branches holding the sample matter without the bench.
+`send_message`) from branches holding the matter without the bench: the
+sample matter for the first three, the FTC docket for the fourth.
 Each results directory has the work products, the checker's findings and a
 README.
 
@@ -198,12 +199,18 @@ README.
 | [48 long block quotations](../tools/quotebench/results/2026-11-20) | 48 | 0 | no tool, Opus alone ($1.77) |
 | [a chronology of the dispute](../tools/quotebench/results/2026-11-20-chronology) | 70–124 | 0 | no tool, Opus alone ($2.42) |
 | [every deadline in the FRCP and Title 9](../tools/quotebench/results/2026-11-20-deadlines) | 101–486 | 0 | **page tool**, Opus alone ($2.51) |
+| [the FTC docket: how the agreement was proved against each distributor](../tools/quotebench/results/2026-11-22-ftc) | 83–251 | **2**, both in the no-tool Opus cell | no tool, Opus alone ($4.19) |
 
-- **Opus 5.5 doesn't misquote here**, typed or not: 0 wrong words in some
-  1,100 typed quotations. When asked for exact quotations it extracts them
-  with scripts; otherwise it types them, from what it read, and they still
-  come out right. It can overstate what it checked.
-- **So the page tool's value is that nobody has to trust that**: without it,
+- **Opus 5.5 rarely misquotes, but it can**: 0 wrong words in some 1,100
+  typed quotations from the sample matter, then 2 in 251 on the FTC docket
+  (an omission without an ellipsis, and a paraphrase in quotation marks,
+  both plausible enough to pass a reviewer). When asked for exact
+  quotations it extracts them with scripts; otherwise it types them from
+  what it read. It can overstate what it checked.
+- **So the page tool's value is that nobody has to trust that**: on the FTC
+  docket, 224 references in the two tool cells, 0 wrong. What it doesn't
+  cover is what's typed around them: a short phrase in quotation marks used
+  as a label (one of eleven in a tool cell was a paraphrase). Without it,
   a third of a chronology's quotations had no adjacent citation or came
   from a scan read by eye; with it, every quotation is the document's text
   at a recorded range, checked by `page check`.
@@ -301,9 +308,13 @@ pages, for a question that needs reading rather than a keyword search.
   corpus-ftc/embed-cache --check`, which also rebuilds the index from the
   cache alone and compares), and copy them all to the bucket (`gcloud storage rsync -r corpus-ftc
   gs://ellbur-adhocdocs-corpora/ftc`).
-- **Then:** put the docket on a base branch as its own matter (a
-  manifest like `corpus/manifest.toml`, the workspace hook and the reader
-  agent, no bench files); run the four cells with a prompt in the style of
-  the chronology's (`prompt-chronology.md`), checked with `freecheck.py`.
-  A cell will likely run for an hour or more and cost tens of dollars, so
-  start with the two Opus-alone cells.
+- **Run:** `ftc-matter` holds it as its own matter (the workspace hook and
+  the reader agent, no bench files). The four cells, with
+  `prompt-ftc.md`, are in
+  [`results/2026-11-22-ftc/`](../tools/quotebench/results/2026-11-22-ftc)
+  (the write-up: [REPORT.md](../tools/quotebench/results/2026-11-22-ftc/REPORT.md)):
+  7 to 22 minutes and $4 to $15 a cell. Before running from `ftc-matter`
+  again, start each session on its own branch (`git checkout -b …`): the
+  workspace hook pushes to the branch the session is on. Cloud environments
+  need `huggingface.co` for the semantic index's model; without it search is
+  keyword only.
