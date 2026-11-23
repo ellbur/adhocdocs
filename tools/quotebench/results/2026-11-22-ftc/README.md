@@ -55,8 +55,9 @@ Every flag was read by hand against the source.
     in); "The only communications …" (cited "BB", the memo's abbreviation for
     Benco's post-trial brief, where it is verbatim).
 - **analysis-2, none.** Two flags are the memo's own section titles ("How to
-  read this"); "no- GPO" is the source's line-end hyphen ("no-\nGPO") copied
-  with its break; "essentially rest[s]" is a marked alteration of "rest".
+  read this"); "no- GPO" is the source's line-end hyphen ("no-\nGPO"), which
+  the cell's own rendering script turned into "no- " by collapsing
+  whitespace (four other words in the memo have the same); "essentially rest[s]" is a marked alteration of "rest".
 - **analysis-3.** The 141 references are verbatim by construction. Besides
   them it typed 11 short phrases in quotation marks, as headings and table
   labels ("Open the floodgates", "hold their positions", "signed an

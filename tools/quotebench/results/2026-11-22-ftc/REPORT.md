@@ -1,6 +1,8 @@
 # Quotation accuracy on a real docket: report
 
-*FTC Docket No. 9379, four cells, one run each, 22–23 November 2026. The
+*FTC Docket No. 9379, four cells, one run each, 22–23 November 2026. What the
+transcripts show could be better in the tools is in
+[IMPROVEMENTS.md](IMPROVEMENTS.md). The
 data are in this directory: the four memos (`analysis-N.md`), what the
 checker flagged in each (`check-N.json`), the task (`prompt.md`) and the
 setup messages. A shorter summary is in [README.md](README.md).*
@@ -150,7 +152,7 @@ repeat words the page also gives as references, on another line.
 | 1 | "…not going to bid on Smile Source" | the source has "Smile Source270", with a footnote number run into the last word |
 | 1 | "The only communications that Chuck Cohen has ever even had…" | cited as "BB", the memo's own abbreviation for Benco's post-trial brief, where the words are verbatim |
 | 2 | "How to read this", "What was and wasn't read" | the memo's own section titles |
-| 2 | "…Benco's no- GPO policy…" | the source breaks the line after "no-"; copied with the break |
+| 2 | "…Benco's no- GPO policy…" | the source breaks the line after "no-"; the cell's own `render.py` collapsed the line break to a space |
 | 2 | "essentially rest[s]" | an alteration marked with brackets |
 | 3 | ten short labels | the words are a document's, on a line that doesn't name it |
 | 4 | the page title | it repeats the question |
