@@ -96,9 +96,11 @@ Every flag was read by hand against the source.
 ## Limits and what went wrong
 
 - **One run per cell.** Two errors in one cell is a sighting, not a rate.
-- **No semantic index.** Neither this environment nor the cells' could reach
-  huggingface.co for the embedding model, so `--index semantic` failed and
-  search was keyword only, in every cell alike.
+- **No semantic index.** The embedding cache was pulled, but the model's
+  weights aren't in the bucket, and fastembed's only source for them is
+  huggingface.co, which neither environment allowed. The cache is keyed by
+  the weights' hash and queries need the model, so `--index semantic`
+  failed and search was keyword only, in every cell alike.
 - **The workspace hook pushed to the base branch.** The cells ran on
   `ftc-matter` itself, so the Stop hook's `git push origin HEAD` sent cell 3's
   setup and finished analysis to `ftc-matter` (f765e20, 3591020) before it

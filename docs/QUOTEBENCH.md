@@ -315,6 +315,8 @@ pages, for a question that needs reading rather than a keyword search.
   (the write-up: [REPORT.md](../tools/quotebench/results/2026-11-22-ftc/REPORT.md)):
   7 to 22 minutes and $4 to $15 a cell. Before running from `ftc-matter`
   again, start each session on its own branch (`git checkout -b …`): the
-  workspace hook pushes to the branch the session is on. Cloud environments
-  need `huggingface.co` for the semantic index's model; without it search is
-  keyword only.
+  workspace hook pushes to the branch the session is on. The bucket's
+  embedding cache made it through, but the model's weights aren't in the
+  bucket: the cache is keyed by their hash, and queries are embedded with
+  them, so a session that can't fetch the model (from huggingface.co, its
+  only source) has keyword search only. The weights belong in the bucket.

@@ -210,9 +210,10 @@ doesn't feel like a quotation to the writer. That suggests two changes:
 - **The instructions differ beyond the tool.** The no-tool cells' summary
   section describes a Markdown memo, not a page. That is the bench's
   standing design, but it is a second difference.
-- **No semantic search.** Neither environment could reach huggingface.co
-  for the embedding model, so every cell searched by keyword only. This
-  was the same for all cells.
+- **No semantic search.** The bucket's embedding cache (33,000 passage
+  vectors) was pulled in every cell, but the model's weights aren't in the
+  bucket, and the cells couldn't fetch them (see below). Every cell
+  searched by keyword only.
 - **A message arrived during the work.** Cells 2–4 got a note about git
   branches while working. It said nothing about the task, but it did
   interrupt them.
@@ -239,9 +240,17 @@ doesn't feel like a quotation to the writer. That suggests two changes:
   That is right for work product, but it means a driven run needs the user
   at the end, or a setup that has the user approve the push in the first
   message.
-- **Environments need `huggingface.co`** for the semantic index's model.
-  The embedding cache holds the passages' vectors, but queries still need
-  the model.
+- **The bucket needs the model's weights.** The embedding cache made it
+  through, but it can't be used without the model: its keys are the
+  weights' hash and each passage's text (`embed_cache_key`, which loads the
+  model to hash it), and queries are embedded locally. The session image
+  has the model built in; a cloud session gets it from fastembed's one
+  source for `BAAI/bge-small-en-v1.5`, huggingface.co, which these
+  environments block. Putting the weights (about 67 MB, MIT) in the bucket
+  and pointing `ADHOC_MODELS` at them would make a fresh matter's semantic
+  index a lookup with no Hugging Face access at all. (A Hugging Face
+  Inference Endpoint, INDEXING.md's "Remote embedding", is a separate,
+  optional speedup for embedding new text, and isn't built.)
 - **Cost reporting.** Each session's result events carry cumulative
   `modelUsage` by model. The task's cost is the cumulative figure when the
   memo was done minus the figure after setup.
@@ -253,7 +262,9 @@ doesn't feel like a quotation to the writer. That suggests two changes:
 2. Add a check to `page check` (or `freecheck.py`) for three or more words
    in quotation marks outside a reference, and add a line on labels to rule
    1.
-3. Run each cell three times or more, with `huggingface.co` allowed, to
+3. Put the model's weights in the bucket and have `pull_corpus.py` fetch
+   them, so the semantic index builds from the cache with no network.
+4. Run each cell three times or more, with semantic search working, to
    turn the sighting into a rate. Start with the no-tool Opus cell and the
    delegated tool cell, the most error-prone and the cheapest per word
    quoted.
