@@ -104,8 +104,8 @@ Every flag was read by hand against the source.
   setup and finished analysis to `ftc-matter` (f765e20, 3591020) before it
   moved to its own branch. The other cells' pushes were refused (non-fast-
   forward) and they were told not to pull; cell 2's branch starts from
-  26a1933, and its memo doesn't use cell 3's. `ftc-matter` needs resetting to
-  26a1933 before it's used again, and the next run's setup should start with
+  26a1933, and its memo doesn't use cell 3's. `ftc-matter` has since been reset to
+  26a1933, and the next run's setup should start with
   `git checkout -b <cell branch>`.
 - **The cells wouldn't push without the user.** Each refused to publish work
   product on the word of another session; the user approved in each.

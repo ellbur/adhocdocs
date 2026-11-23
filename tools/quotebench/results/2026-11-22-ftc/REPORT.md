@@ -231,8 +231,9 @@ doesn't feel like a quotation to the writer. That suggests two changes:
   (`f765e20`, `3591020`) before it switched branches. The other cells'
   pushes were refused, and they were told not to pull. Cell 2's branch
   starts from the original commit, so no cell used another's work. The next
-  setup message should start with `git checkout -b <cell branch>`, and
-  `ftc-matter` needs resetting to `26a1933`.
+  setup message should start with `git checkout -b <cell branch>`.
+  `ftc-matter` has been reset to `26a1933` (23 November), after archiving
+  cell 2's session, whose local `ftc-matter` held unpushed sync commits.
 - **Sessions won't publish work product on another session's word.** Every
   cell refused to push its memo until the user approved in its own session.
   That is right for work product, but it means a driven run needs the user
@@ -247,8 +248,8 @@ doesn't feel like a quotation to the writer. That suggests two changes:
 
 ## Next
 
-1. Reset `ftc-matter` to `26a1933`, and make the setup put each cell on its
-   own branch.
+1. Make the setup put each cell on its own branch. (`ftc-matter` is already
+   reset to `26a1933`.)
 2. Add a check to `page check` (or `freecheck.py`) for three or more words
    in quotation marks outside a reference, and add a line on labels to rule
    1.
