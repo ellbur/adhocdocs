@@ -1,5 +1,8 @@
 # Fourth run: the FTC docket, four cells, one run each (2026-11-22)
 
+The full write-up, with the errors quoted against their sources, what it
+means and what to do next, is [REPORT.md](REPORT.md).
+
 The stress test QUOTEBENCH.md planned: a real collection, *In the Matter of
 Benco Dental Supply Co., Henry Schein, Inc. and Patterson Companies, Inc.*
 (FTC Docket No. 9379), 91 public filings and transcripts, several thousand

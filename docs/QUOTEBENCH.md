@@ -311,7 +311,8 @@ pages, for a question that needs reading rather than a keyword search.
 - **Run:** `ftc-matter` holds it as its own matter (the workspace hook and
   the reader agent, no bench files). The four cells, with
   `prompt-ftc.md`, are in
-  [`results/2026-11-22-ftc/`](../tools/quotebench/results/2026-11-22-ftc):
+  [`results/2026-11-22-ftc/`](../tools/quotebench/results/2026-11-22-ftc)
+  (the write-up: [REPORT.md](../tools/quotebench/results/2026-11-22-ftc/REPORT.md)):
   7 to 22 minutes and $4 to $15 a cell. Before running from `ftc-matter`
   again, start each session on its own branch (`git checkout -b …`): the
   workspace hook pushes to the branch the session is on. Cloud environments
