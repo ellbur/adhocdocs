@@ -1,0 +1,127 @@
+{
+ "summary": {
+  "quotations": 152,
+  "words_quoted": 3640,
+  "verdicts": {
+   "uncited": 11,
+   "verbatim": 141
+  },
+  "by_kind": {
+   "ref": 141,
+   "typed-inline": 11
+  },
+  "words_wrong": 0
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "Benco / Schein / Patterson (FTC Dkt. 9379): How the Buying-Group Agreement Was Proved, or Not, Against Each Distributor",
+   "where": 0,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "closest": "respondenthenryscheinmotion592037.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "partnered with Patterson,",
+   "where": 5055,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "10-second email",
+   "where": 5055,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_r_pattersons_post-hearing_briefpublic594398.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "signed an agreement",
+   "where": 9498,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "docket_no_9379_bsp_part_3_complaint_provisionally_redacted_public_version.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Open the floodgates",
+   "where": 13119,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "hold their positions,",
+   "where": 20713,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "docket_no_9379_bsp_part_3_complaint_provisionally_redacted_public_version.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "I believe I did,",
+   "where": 21530,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "everyone says no",
+   "where": 21530,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "closest": "respondenthenryscheinmotion592037.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "opportunity to be huge",
+   "where": 24507,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "we've signed an agreement",
+   "where": 24898,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "docket_no_9379_bsp_part_3_complaint_provisionally_redacted_public_version.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Open the floodgates",
+   "where": 25386,
+   "cited": null,
+   "own_sources": [],
+   "sources": [],
+   "verdict": "uncited",
+   "found_in": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf"
+  }
+ ]
+}

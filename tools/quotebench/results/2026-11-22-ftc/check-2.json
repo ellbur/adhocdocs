@@ -1,0 +1,100 @@
+{
+ "summary": {
+  "quotations": 206,
+  "words_quoted": 6842,
+  "verdicts": {
+   "misquoted": 2,
+   "verbatim": 202,
+   "not found": 2
+  },
+  "by_kind": {
+   "typed-inline": 206
+  },
+  "words_wrong": 3
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "How to read this",
+   "where": 0,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379bencotrialvol17.pdf",
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf",
+    "d09379bencotrialvol20.pdf"
+   ],
+   "verdict": "misquoted",
+   "closest": "d09379_-_complaint_counsels_opposition_to_respondent_patterson_companies_incs_motion_for_summary_decision_-_public.pdf",
+   "errors": [
+    {
+     "type": "changed",
+     "source": "moment",
+     "quote": "How",
+     "context": "d ask that you take a 23 A. Caroline, and don't remember 23 moment to read this and when you've read 24 her last name. 2",
+     "at": 3780409
+    }
+   ],
+   "words_wrong": 1
+  },
+  {
+   "kind": "typed-inline",
+   "text": "What was and wasn't read",
+   "where": 4540,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379bencoinitialdecisionpublic.pdf"
+   ],
+   "verdict": "not found",
+   "closest": "d09379bencoinitialdecisionpublic.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "Q. So just to be clear, is it your testimony that you cannot think of any business reasons for you to tell Mr. Guggenheim Benco’s no- GPO policy, as you sit here today? A. Yes.",
+   "where": 10555,
+   "cited": "06132019ccpost-trailbrief594963.pdf",
+   "own_sources": [
+    "06132019ccpost-trailbrief594963.pdf"
+   ],
+   "sources": [
+    "06132019ccpost-trailbrief594963.pdf"
+   ],
+   "verdict": "misquoted",
+   "closest": "06132019ccpost-trailbrief594963.pdf",
+   "errors": [
+    {
+     "type": "changed",
+     "source": "no-GPO",
+     "quote": "no GPO",
+     "context": "any business reasons for you to tell Mr. Guggenheim Benco's no-GPO policy, as you sit here today? A. Yes.321 Benco sugge",
+     "at": 163943
+    }
+   ],
+   "words_wrong": 2
+  },
+  {
+   "kind": "typed-inline",
+   "text": "essentially rest[s]",
+   "where": 72621,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379bencoinitialdecisionpublic.pdf"
+   ],
+   "verdict": "not found",
+   "closest": "d09379bencoinitialdecisionpublic.pdf"
+  }
+ ]
+}

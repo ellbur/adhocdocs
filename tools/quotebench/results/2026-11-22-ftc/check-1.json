@@ -1,0 +1,152 @@
+{
+ "summary": {
+  "quotations": 251,
+  "words_quoted": 3013,
+  "verdicts": {
+   "verbatim": 246,
+   "uncited": 2,
+   "misquoted": 3
+  },
+  "by_kind": {
+   "typed-inline": 251
+  },
+  "words_wrong": 30
+ },
+ "not_verbatim": [
+  {
+   "kind": "typed-inline",
+   "text": "The only communications that Chuck Cohen has ever even had with anyone at Patterson about buying groups is limited to two brief e-mail exchanges… The only communications… with anyone at Schein… is limited to one exchange with Tim Sullivan regarding Atlantic Dental Care",
+   "where": 7519,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf"
+   ],
+   "verdict": "uncited",
+   "found_in": "d09379_-_r_benco_proposed_fof_and_colpublic594375.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "no company policy",
+   "where": 21904,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf"
+   ],
+   "verdict": "uncited",
+   "found_in": "d09379_r_pattersons_pre-trial_brief_public592641.pdf"
+  },
+  {
+   "kind": "typed-inline",
+   "text": "if you go back to the wrath [sic] of text messages… I think that the policy that Henry Schein had was that they do not recognize GPOs.",
+   "where": 24527,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf"
+   ],
+   "verdict": "misquoted",
+   "closest": "d09379_cc_post-trial_brief_public_594349.pdf",
+   "errors": [
+    {
+     "type": "dropped",
+     "source": "sic",
+     "quote": "",
+     "context": "ated September 2013]? A. Well, if you go back to the wrath [sic] of text messages [with Tim Sullivan], I think that the ",
+     "at": 79940
+    }
+   ],
+   "words_wrong": 1
+  },
+  {
+   "kind": "typed-inline",
+   "text": "By July 2011, Sullivan's position had changed: 'I don't think you will ever see a full service dealer get involved with GPOs.'",
+   "where": 27173,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf"
+   ],
+   "verdict": "misquoted",
+   "closest": "06132019ccpost-trailbrief594963.pdf",
+   "errors": [
+    {
+     "type": "dropped",
+     "source": "In spite of Sullivan's previous enthusiasm for working with the buying group Smile Source Sullivan informed his bosses",
+     "quote": "",
+     "context": "ying Groups. By July 2011, Sullivan's position had changed. In spite of Sullivan's previous enthusiasm for working with ",
+     "at": 399045
+    }
+   ],
+   "words_wrong": 18
+  },
+  {
+   "kind": "typed-inline",
+   "text": "told him that Benco was not going to bid on Smile Source",
+   "where": 37194,
+   "cited": null,
+   "own_sources": [],
+   "sources": [
+    "d09379_cc_post-trial_brief_public_594349.pdf",
+    "d09379_r_henry_scheins_post-trial_brief_public_594359.pdf",
+    "d09379_r_benco_dental_supply_co_post-trial_briefpublic594376.pdf",
+    "d09379_r_pattersons_post-hearing_briefpublic594398.pdf",
+    "06132019ccpost-trailbrief594963.pdf",
+    "d09379_benco_schein_patterson_henry_scheins_post-trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_benco_dental_supply_cos_post_trial_reply_brief_6-11-19.pdf",
+    "d09379_benco_schein_patterson_respondent_pattersons_reply_to_complaint_counsels_post-hearing_brief_6-11-19.pdf",
+    "d09379bencoinitialdecisionpublic.pdf",
+    "d09379bencotrialvol18.pdf"
+   ],
+   "verdict": "misquoted",
+   "closest": "d09379_cc_post-trial_brief_public_594349.pdf",
+   "errors": [
+    {
+     "type": "dropped",
+     "source": "Source270 and wanted to know if Schein would bid on Smile",
+     "quote": "",
+     "context": "\"269 Ryan told him that Benco was not going to bid on Smile Source270 and wanted to know if Schein would bid on Smile So",
+     "at": 93213
+    }
+   ],
+   "words_wrong": 11
+  }
+ ]
+}

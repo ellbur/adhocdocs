@@ -1,0 +1,5 @@
+I'm meeting with the partner tomorrow about the dental distributors case, In the Matter of Benco Dental Supply Co., Henry Schein, Inc. and Patterson Companies, Inc. (FTC Docket No. 9379). Please write an analysis of how the agreement not to deal with buying groups was proved, or not, against each of the three distributors.
+
+For each distributor, set out the evidence complaint counsel relied on to show it joined the agreement, how that company explained the same conduct as its own independent decision, and how the Administrative Law Judge weighed each piece in the Initial Decision, and why it came out differently for Schein. Follow the same emails, documents and testimony through both sides' briefs, the trial transcripts and the decision, and quote each in its own words, so the partner can see who said what about it. Cite each document by its file name, so I can pull it. Where the parties or the decision characterize a piece of evidence differently, say so. Write it to analysis.md in the workspace.
+
+{{DELEGATE}}
