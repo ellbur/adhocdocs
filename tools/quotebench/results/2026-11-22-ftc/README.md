@@ -55,8 +55,9 @@ Every flag was read by hand against the source.
     in); "The only communications …" (cited "BB", the memo's abbreviation for
     Benco's post-trial brief, where it is verbatim).
 - **analysis-2, none.** Two flags are the memo's own section titles ("How to
-  read this"); "no- GPO" is the source's line-end hyphen ("no-\nGPO") copied
-  with its break; "essentially rest[s]" is a marked alteration of "rest".
+  read this"); "no- GPO" is the source's line-end hyphen ("no-\nGPO"), which
+  the cell's own rendering script turned into "no- " by collapsing
+  whitespace (four other words in the memo have the same); "essentially rest[s]" is a marked alteration of "rest".
 - **analysis-3.** The 141 references are verbatim by construction. Besides
   them it typed 11 short phrases in quotation marks, as headings and table
   labels ("Open the floodgates", "hold their positions", "signed an
@@ -96,9 +97,11 @@ Every flag was read by hand against the source.
 ## Limits and what went wrong
 
 - **One run per cell.** Two errors in one cell is a sighting, not a rate.
-- **No semantic index.** Neither this environment nor the cells' could reach
-  huggingface.co for the embedding model, so `--index semantic` failed and
-  search was keyword only, in every cell alike.
+- **No semantic index.** The embedding cache was pulled, but the model's
+  weights aren't in the bucket, and fastembed's only source for them is
+  huggingface.co, which neither environment allowed. The cache is keyed by
+  the weights' hash and queries need the model, so `--index semantic`
+  failed and search was keyword only, in every cell alike.
 - **The workspace hook pushed to the base branch.** The cells ran on
   `ftc-matter` itself, so the Stop hook's `git push origin HEAD` sent cell 3's
   setup and finished analysis to `ftc-matter` (f765e20, 3591020) before it
